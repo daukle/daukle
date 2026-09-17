@@ -1,5 +1,5 @@
-#ifndef FERRULE_SOURCE_PATH_H
-#define FERRULE_SOURCE_PATH_H
+#ifndef TIESTONE_SOURCE_PATH_H
+#define TIESTONE_SOURCE_PATH_H
 
 #include "registry.h"
 

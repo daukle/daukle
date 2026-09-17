@@ -1,5 +1,5 @@
-#ifndef FERRULE_RESOLVE_H
-#define FERRULE_RESOLVE_H
+#ifndef TIESTONE_RESOLVE_H
+#define TIESTONE_RESOLVE_H
 
 #include "types.h"
 #include "registry.h"

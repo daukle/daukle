@@ -1,5 +1,5 @@
-#ifndef FERRULE_LANG_NPM_H
-#define FERRULE_LANG_NPM_H
+#ifndef TIESTONE_LANG_NPM_H
+#define TIESTONE_LANG_NPM_H
 
 #include "registry.h"
 #include "resolve.h"

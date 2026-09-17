@@ -1,5 +1,5 @@
-#ifndef FERRULE_LANG_REGION_H
-#define FERRULE_LANG_REGION_H
+#ifndef TIESTONE_LANG_REGION_H
+#define TIESTONE_LANG_REGION_H
 
 #include "resolve.h"
 #include "types.h"

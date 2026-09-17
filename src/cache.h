@@ -1,5 +1,5 @@
-#ifndef FERRULE_CACHE_H
-#define FERRULE_CACHE_H
+#ifndef TIESTONE_CACHE_H
+#define TIESTONE_CACHE_H
 
 #include "types.h"
 

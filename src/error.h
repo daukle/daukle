@@ -1,5 +1,5 @@
-#ifndef FERRULE_ERROR_H
-#define FERRULE_ERROR_H
+#ifndef TIESTONE_ERROR_H
+#define TIESTONE_ERROR_H
 
 #include "types.h"
 

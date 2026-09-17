@@ -1,5 +1,5 @@
-#ifndef FERRULE_LANG_C_H
-#define FERRULE_LANG_C_H
+#ifndef TIESTONE_LANG_C_H
+#define TIESTONE_LANG_C_H
 
 #include "registry.h"
 #include "resolve.h"

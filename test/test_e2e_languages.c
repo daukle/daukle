@@ -10,8 +10,8 @@
    byte-exact assertion into a line-ending assertion. */
 static const char *GRADLE_TEMPLATE =
     "dependencies {\n"
-    "    // ferrule:begin\n"
-    "    // ferrule:end\n"
+    "    // tiestone:begin\n"
+    "    // tiestone:end\n"
     "    testImplementation \"junit\"\n"
     "}\n";
 
@@ -21,8 +21,8 @@ static const char *CMAKE_TEMPLATE =
     "\n"
     "add_executable(demo main.c)\n"
     "\n"
-    "# ferrule:begin\n"
-    "# ferrule:end\n";
+    "# tiestone:begin\n"
+    "# tiestone:end\n";
 
 static const char *PACKAGE_TEMPLATE =
     "{\n"
@@ -36,12 +36,12 @@ static const char *PACKAGE_TEMPLATE =
     "  }\n"
     "}\n";
 
-static const char *LANGUAGES_MANIFEST = "test/fixtures/languages/ferrule.json";
+static const char *LANGUAGES_MANIFEST = "test/fixtures/languages/tiestone.json";
 static const char *GRADLE_TARGET = "test/fixtures/languages/build.gradle";
 static const char *CMAKE_TARGET = "test/fixtures/languages/CMakeLists.txt";
 static const char *PACKAGE_TARGET = "test/fixtures/languages/package.json";
-static const char *TWO_NPM_MANIFEST = "test/fixtures/two-npm/ferrule.json";
-static const char *TWO_NPM_REVERSED = "test/fixtures/two-npm/ferrule-reversed.json";
+static const char *TWO_NPM_MANIFEST = "test/fixtures/two-npm/tiestone.json";
+static const char *TWO_NPM_REVERSED = "test/fixtures/two-npm/tiestone-reversed.json";
 static const char *TWO_NPM_TARGET = "test/fixtures/two-npm/package.json";
 
 static void write_file(const char *path, const char *text) {
@@ -80,10 +80,10 @@ TEST one_declaration_writes_all_three_languages(void) {
     char *gradle = read_file(GRADLE_TARGET);
     ASSERT_STR_EQ(
         "dependencies {\n"
-        "    // ferrule:begin\n"
+        "    // tiestone:begin\n"
         "    githubImplementation \"forebay:basekit:5.0.0:contracts\"\n"
         "    githubImplementation \"forebay:basekit:5.0.0:ir\"\n"
-        "    // ferrule:end\n"
+        "    // tiestone:end\n"
         "    testImplementation \"junit\"\n"
         "}\n", gradle);
     free(gradle);
@@ -95,14 +95,14 @@ TEST one_declaration_writes_all_three_languages(void) {
         "\n"
         "add_executable(demo main.c)\n"
         "\n"
-        "# ferrule:begin\n"
+        "# tiestone:begin\n"
         "include(FetchContent)\n"
         "FetchContent_Declare(basekit-contracts URL \"https://example.test/basekit-contracts-5.0.0.tar.gz\")\n"
         "FetchContent_MakeAvailable(basekit-contracts)\n"
         "FetchContent_Declare(basekit-ir URL \"https://example.test/basekit-ir-5.0.0.tar.gz\" URL_HASH SHA256=9f2e1c4b)\n"
         "FetchContent_MakeAvailable(basekit-ir)\n"
         "target_link_libraries(demo PRIVATE basekit-contracts basekit-ir)\n"
-        "# ferrule:end\n", cmake);
+        "# tiestone:end\n", cmake);
     free(cmake);
 
     char *package = read_file(PACKAGE_TARGET);
@@ -118,7 +118,7 @@ TEST one_declaration_writes_all_three_languages(void) {
         "  \"devDependencies\": {\n"
         "    \"typescript\": \"^5.4.0\"\n"
         "  },\n"
-        "  \"ferrule\": {\n"
+        "  \"tiestone\": {\n"
         "    \"managed\": {\n"
         "      \"dependencies\": [\n"
         "        \"@intisy-ai/basekit-contracts\",\n"

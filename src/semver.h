@@ -1,5 +1,5 @@
-#ifndef FERRULE_SEMVER_H
-#define FERRULE_SEMVER_H
+#ifndef TIESTONE_SEMVER_H
+#define TIESTONE_SEMVER_H
 
 #include "types.h"
 

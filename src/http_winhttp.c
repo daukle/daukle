@@ -83,7 +83,7 @@ static fetch_outcome fetch_once(const char *current_url, const char *original_ur
         goto cleanup;
     }
 
-    session = WinHttpOpen(L"ferrule", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    session = WinHttpOpen(L"tiestone", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
                           WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (session == NULL) {
         fr_error_set(err, "could not create an http session for %s", current_url);

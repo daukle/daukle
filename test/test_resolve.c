@@ -29,10 +29,10 @@ static int recording_load(void *state, const char *project, const cJSON *block,
 
 TEST hands_the_source_plugin_its_own_state(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer/ferrule.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer/tiestone.json", &manifest, &err);
     fr_registry *registry = fr_registry_create();
     int own_state = 0;
-    fr_source_plugin recorder = { "ferrule.source/path", recording_load, &own_state };
+    fr_source_plugin recorder = { "tiestone.source/path", recording_load, &own_state };
     fr_registry_add_source(registry, &recorder, &err);
     state_seen_by_the_source = NULL;
 
@@ -48,7 +48,7 @@ TEST hands_the_source_plugin_its_own_state(void) {
 
 TEST pulls_in_transitive_requires(void) {
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/ferrule.json", &manifest, &err));
+    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/tiestone.json", &manifest, &err));
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -69,7 +69,7 @@ TEST pulls_in_transitive_requires(void) {
 TEST reports_a_module_that_has_no_block_for_the_language(void) {
     fr_manifest manifest;
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/ferrule-no-language-block.json", &manifest, &err));
+    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/tiestone-no-language-block.json", &manifest, &err));
 
     fr_registry *registry = fr_registry_create();
     ASSERT_EQ(FR_OK, fr_registry_add_source(registry, &FR_SOURCE_PATH, &err));
@@ -88,7 +88,7 @@ TEST reports_a_module_that_has_no_block_for_the_language(void) {
 
 TEST deduplicates_a_module_reached_twice(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-dup/ferrule.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-dup/tiestone.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -104,7 +104,7 @@ TEST deduplicates_a_module_reached_twice(void) {
 
 TEST rejects_a_version_outside_the_range(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-badrange/ferrule.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-badrange/tiestone.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -120,7 +120,7 @@ TEST rejects_a_version_outside_the_range(void) {
 
 TEST reports_a_module_absent_from_the_language(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-noloader/ferrule.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-noloader/tiestone.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -136,7 +136,7 @@ TEST reports_a_module_absent_from_the_language(void) {
 
 TEST reports_an_unknown_module_by_name(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-unknown/ferrule.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-unknown/tiestone.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -151,7 +151,7 @@ TEST reports_an_unknown_module_by_name(void) {
 
 TEST rejects_a_project_that_does_not_match_its_source(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-mismatch/ferrule.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-mismatch/tiestone.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -167,7 +167,7 @@ TEST rejects_a_project_that_does_not_match_its_source(void) {
 
 TEST resolves_no_modules_for_any_language_without_looking_up_a_block(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-badlanguage/ferrule.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-badlanguage/tiestone.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;

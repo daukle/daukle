@@ -1,5 +1,5 @@
-#ifndef FERRULE_JSONX_H
-#define FERRULE_JSONX_H
+#ifndef TIESTONE_JSONX_H
+#define TIESTONE_JSONX_H
 
 #include "types.h"
 

@@ -51,7 +51,7 @@ TEST appends_a_new_member_at_the_existing_indentation(void) {
 TEST creates_a_missing_nested_path(void) {
     char *out = NULL; fr_error err;
     const char *managed[] = { "@intisy-ai/basekit-ir" };
-    ASSERT_EQ(FR_OK, fr_json_edit_set_string_array(PACKAGE, "ferrule.managed", "dependencies",
+    ASSERT_EQ(FR_OK, fr_json_edit_set_string_array(PACKAGE, "tiestone.managed", "dependencies",
                                                    managed, 1, &out, &err));
     ASSERT_STR_EQ(
         "{\n"
@@ -60,7 +60,7 @@ TEST creates_a_missing_nested_path(void) {
         "    \"@openauthjs/openauth\": \"^0.4.3\",\n"
         "    \"@intisy-ai/basekit-ir\": \"^4.0.0\"\n"
         "  },\n"
-        "  \"ferrule\": {\n"
+        "  \"tiestone\": {\n"
         "    \"managed\": {\n"
         "      \"dependencies\": [\n"
         "        \"@intisy-ai/basekit-ir\"\n"
@@ -129,7 +129,7 @@ TEST removing_an_absent_key_changes_nothing(void) {
 
 TEST removing_from_an_absent_object_changes_nothing(void) {
     char *out = NULL; fr_error err;
-    ASSERT_EQ(FR_OK, fr_json_edit_remove(PACKAGE, "ferrule.managed", "dependencies", &out, &err));
+    ASSERT_EQ(FR_OK, fr_json_edit_remove(PACKAGE, "tiestone.managed", "dependencies", &out, &err));
     ASSERT_STR_EQ(PACKAGE, out);
     free(out);
     PASS();
@@ -206,7 +206,7 @@ TEST escapes_a_value_that_needs_it(void) {
 TEST every_result_is_still_valid_json(void) {
     const char *managed[] = { "a", "b" };
     char *out = NULL; fr_error err;
-    ASSERT_EQ(FR_OK, fr_json_edit_set_string_array(PACKAGE, "ferrule.managed", "dependencies",
+    ASSERT_EQ(FR_OK, fr_json_edit_set_string_array(PACKAGE, "tiestone.managed", "dependencies",
                                                    managed, 2, &out, &err));
     cJSON *parsed = cJSON_Parse(out);
     ASSERT(parsed != NULL);

@@ -1,5 +1,5 @@
-#ifndef FERRULE_REGISTRY_H
-#define FERRULE_REGISTRY_H
+#ifndef TIESTONE_REGISTRY_H
+#define TIESTONE_REGISTRY_H
 
 #include "types.h"
 

@@ -22,7 +22,7 @@ static const char *MANAGED_PACKAGE =
     "    \"@intisy-ai/basekit-ir\": \"^4.0.0\",\n"
     "    \"@intisy/bayonet\": \"^1.7.0\"\n"
     "  },\n"
-    "  \"ferrule\": {\n"
+    "  \"tiestone\": {\n"
     "    \"managed\": {\n"
     "      \"dependencies\": [\n"
     "        \"@intisy-ai/basekit-ir\",\n"
@@ -67,7 +67,7 @@ TEST writes_a_dependency_and_the_ledger_that_owns_it(void) {
         "    \"@openauthjs/openauth\": \"^0.4.3\",\n"
         "    \"@intisy-ai/basekit-ir\": \"^5.0.0\"\n"
         "  },\n"
-        "  \"ferrule\": {\n"
+        "  \"tiestone\": {\n"
         "    \"managed\": {\n"
         "      \"dependencies\": [\n"
         "        \"@intisy-ai/basekit-ir\"\n"
@@ -92,7 +92,7 @@ TEST updates_a_range_in_place_and_removes_what_left_the_manifest(void) {
         "    \"@openauthjs/openauth\": \"^0.4.3\",\n"
         "    \"@intisy-ai/basekit-ir\": \"^5.0.0\"\n"
         "  },\n"
-        "  \"ferrule\": {\n"
+        "  \"tiestone\": {\n"
         "    \"managed\": {\n"
         "      \"dependencies\": [\n"
         "        \"@intisy-ai/basekit-ir\"\n"
@@ -133,7 +133,7 @@ TEST writes_dev_dependencies_from_the_same_plugin(void) {
         "    \"typescript\": \"^5.4.0\",\n"
         "    \"@intisy-ai/basekit-ir\": \"^5.0.0\"\n"
         "  },\n"
-        "  \"ferrule\": {\n"
+        "  \"tiestone\": {\n"
         "    \"managed\": {\n"
         "      \"devDependencies\": [\n"
         "        \"@intisy-ai/basekit-ir\"\n"
@@ -243,7 +243,7 @@ TEST fails_without_a_configuration(void) {
 
 TEST rejects_a_configuration_that_names_a_path(void) {
     char *out = NULL; fr_error err;
-    ASSERT_EQ(FR_ERR, apply("ferrule.managed", NULL, 0, PACKAGE, &out, &err));
+    ASSERT_EQ(FR_ERR, apply("tiestone.managed", NULL, 0, PACKAGE, &out, &err));
     ASSERT(strstr(err.message, "not a path") != NULL);
     PASS();
 }
@@ -259,7 +259,7 @@ TEST reports_a_document_that_is_not_json(void) {
 }
 
 TEST carries_the_expected_capability(void) {
-    ASSERT_STR_EQ("ferrule.language/npm", FR_LANGUAGE_NPM.capability);
+    ASSERT_STR_EQ("tiestone.language/npm", FR_LANGUAGE_NPM.capability);
     PASS();
 }
 

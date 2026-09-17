@@ -8,8 +8,8 @@
 #include <stdlib.h>
 
 static const char *GRADLE_LINE_FORMAT = "%s \"%s\"";
-static const char *GRADLE_BEGIN_MARKER = "// ferrule:begin";
-static const char *GRADLE_END_MARKER = "// ferrule:end";
+static const char *GRADLE_BEGIN_MARKER = "// tiestone:begin";
+static const char *GRADLE_END_MARKER = "// tiestone:end";
 
 static int coordinate_of(const fr_resolved *entry, const char **out, fr_error *err) {
     char path[256];
@@ -93,4 +93,4 @@ static int gradle_apply(void *state, const fr_consumer *consumer, const fr_resol
                                 consumer, resolved, count, original_text, out_text, err);
 }
 
-const fr_language_plugin FR_LANGUAGE_GRADLE = { "ferrule.language/gradle", gradle_apply, NULL };
+const fr_language_plugin FR_LANGUAGE_GRADLE = { "tiestone.language/gradle", gradle_apply, NULL };

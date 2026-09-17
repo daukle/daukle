@@ -3,29 +3,29 @@
 
 #include <stdio.h>
 
-#define FERRULE_VERSION "0.1.0"
+#define TIESTONE_VERSION "0.1.0"
 
 static int run(const char *manifest_path, int write, int use_cache) {
     fr_error err;
     fr_sync_report report;
     int status = 0;
     if (fr_sync(manifest_path, write, use_cache, &report, &err) != FR_OK) {
-        fprintf(stderr, "ferrule: %s\n", err.message);
+        fprintf(stderr, "tiestone: %s\n", err.message);
         if (write && report.count > 0) {
-            fprintf(stderr, "ferrule: %zu file%s updated before the failure\n",
+            fprintf(stderr, "tiestone: %zu file%s updated before the failure\n",
                     report.count, report.count == 1 ? "" : "s");
         }
         status = 1;
     } else if (write) {
-        printf("ferrule: %s\n", report.count > 0 ? "updated" : "already in sync");
+        printf("tiestone: %s\n", report.count > 0 ? "updated" : "already in sync");
     } else if (report.count > 0) {
         for (size_t index = 0; index < report.count; index++) {
-            fprintf(stderr, "ferrule: %s is out of date\n", report.files[index]);
+            fprintf(stderr, "tiestone: %s is out of date\n", report.files[index]);
         }
-        fprintf(stderr, "ferrule: run \"ferrule sync\"\n");
+        fprintf(stderr, "tiestone: run \"tiestone sync\"\n");
         status = 1;
     } else {
-        printf("ferrule: in sync\n");
+        printf("tiestone: in sync\n");
     }
     fr_sync_report_free(&report);
     return status;
@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
 
     switch (options.command) {
         case FR_CLI_VERSION:
-            printf("ferrule %s\n", FERRULE_VERSION);
+            printf("tiestone %s\n", TIESTONE_VERSION);
             return 0;
         case FR_CLI_SYNC:
             return run(options.manifest_path, 1, options.use_cache);
@@ -47,6 +47,6 @@ int main(int argc, char **argv) {
             break;
     }
 
-    fprintf(stderr, "usage: ferrule [--version | sync [manifest] | check [manifest]] [--no-cache]\n");
+    fprintf(stderr, "usage: tiestone [--version | sync [manifest] | check [manifest]] [--no-cache]\n");
     return 2;
 }

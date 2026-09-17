@@ -2,7 +2,7 @@
 
 #include <string.h>
 
-static const char *DEFAULT_MANIFEST = "ferrule.json";
+static const char *DEFAULT_MANIFEST = "tiestone.json";
 
 /* An unrecognised option is a usage error rather than a positional argument:
    read as one, a mistyped "--no-chache" would become the manifest path and the

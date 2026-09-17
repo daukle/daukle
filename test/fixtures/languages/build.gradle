@@ -1,5 +1,5 @@
 dependencies {
-    // ferrule:begin
-    // ferrule:end
+    // tiestone:begin
+    // tiestone:end
     testImplementation "junit"
 }

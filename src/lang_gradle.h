@@ -1,5 +1,5 @@
-#ifndef FERRULE_LANG_GRADLE_H
-#define FERRULE_LANG_GRADLE_H
+#ifndef TIESTONE_LANG_GRADLE_H
+#define TIESTONE_LANG_GRADLE_H
 
 #include "registry.h"
 #include "resolve.h"

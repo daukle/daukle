@@ -1,5 +1,5 @@
-#ifndef FERRULE_URL_H
-#define FERRULE_URL_H
+#ifndef TIESTONE_URL_H
+#define TIESTONE_URL_H
 
 /* Whether two urls share an origin: scheme, host and port, with the port
    defaulted from the scheme so "https://h/" and "https://h:443/" match.

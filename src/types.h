@@ -1,5 +1,5 @@
-#ifndef FERRULE_TYPES_H
-#define FERRULE_TYPES_H
+#ifndef TIESTONE_TYPES_H
+#define TIESTONE_TYPES_H
 
 #define FR_OK 0
 #define FR_ERR 1

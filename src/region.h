@@ -1,5 +1,5 @@
-#ifndef FERRULE_REGION_H
-#define FERRULE_REGION_H
+#ifndef TIESTONE_REGION_H
+#define TIESTONE_REGION_H
 
 #include "types.h"
 

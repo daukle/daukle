@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 TEST fetches_a_real_release_asset(void) {
-    if (getenv("FERRULE_NETWORK_TESTS") == NULL) SKIPm("FERRULE_NETWORK_TESTS is not set");
+    if (getenv("TIESTONE_NETWORK_TESTS") == NULL) SKIPm("TIESTONE_NETWORK_TESTS is not set");
 
     char *body = NULL;
     size_t length = 0;

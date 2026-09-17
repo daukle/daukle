@@ -1,5 +1,5 @@
-#ifndef FERRULE_SOURCE_GITHUB_H
-#define FERRULE_SOURCE_GITHUB_H
+#ifndef TIESTONE_SOURCE_GITHUB_H
+#define TIESTONE_SOURCE_GITHUB_H
 
 #include "registry.h"
 

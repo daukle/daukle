@@ -1,5 +1,5 @@
-#ifndef FERRULE_MANIFEST_H
-#define FERRULE_MANIFEST_H
+#ifndef TIESTONE_MANIFEST_H
+#define TIESTONE_MANIFEST_H
 
 #include "types.h"
 

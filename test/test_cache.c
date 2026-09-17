@@ -7,27 +7,27 @@
 #include <string.h>
 
 static const char *ARTIFACT =
-    "https://github.com/forebay/basekit/releases/download/5.0.0/ferrule.json";
+    "https://github.com/forebay/basekit/releases/download/5.0.0/tiestone.json";
 static const char *FORK_ARTIFACT =
-    "https://github.com/someone-else/basekit/releases/download/5.0.0/ferrule.json";
+    "https://github.com/someone-else/basekit/releases/download/5.0.0/tiestone.json";
 
 /* Unique per process (not just per test) so a crash mid-test or a second CI job
    running this binary concurrently on the same machine can never share, and thus
    never contend over, another run's cache entries. */
 static const char *test_cache_root(void) {
     static char root[512];
-    snprintf(root, sizeof root, "%s/ferrule_test_cache_%d", fr_test_temp_base(), fr_test_process_id());
+    snprintf(root, sizeof root, "%s/tiestone_test_cache_%d", fr_test_temp_base(), fr_test_process_id());
     return root;
 }
 
 /* Every test points the cache at a private temp root before touching
    fr_cache_* so none of them can reach a real user cache directory. */
 static void isolate_cache_dir(void) {
-    fr_test_set_env("FERRULE_CACHE_DIR", test_cache_root());
+    fr_test_set_env("TIESTONE_CACHE_DIR", test_cache_root());
 }
 
 static void clear_cache_dir(void) {
-    fr_test_set_env("FERRULE_CACHE_DIR", NULL);
+    fr_test_set_env("TIESTONE_CACHE_DIR", NULL);
 }
 
 /* Only the byte-faithfulness test cares about the length argument; everywhere
@@ -95,7 +95,7 @@ TEST rejects_an_oversized_cache_root_rather_than_truncating_it(void) {
     char oversized[2000];
     memset(oversized, 'x', sizeof oversized - 1);
     oversized[sizeof oversized - 1] = '\0';
-    fr_test_set_env("FERRULE_CACHE_DIR", oversized);
+    fr_test_set_env("TIESTONE_CACHE_DIR", oversized);
 
     fr_error err;
     char *path = NULL;
@@ -132,8 +132,8 @@ TEST round_trips_a_written_manifest(void) {
 
     /* Proves the successful path leaves no ".tmp" sibling behind: it must
        have been renamed into place, not merely written and abandoned. */
-    ASSERT_EQ(0, fr_test_count_files(root, "ferrule.json.tmp"));
-    ASSERT_EQ(1, fr_test_count_files(root, "ferrule.json"));
+    ASSERT_EQ(0, fr_test_count_files(root, "tiestone.json.tmp"));
+    ASSERT_EQ(1, fr_test_count_files(root, "tiestone.json"));
 
     fr_test_remove_tree(root);
     clear_cache_dir();
@@ -163,7 +163,7 @@ TEST keeps_two_artifacts_of_one_project_and_version_apart(void) {
     free(upstream);
     free(fork);
 
-    ASSERT_EQ(2, fr_test_count_files(root, "ferrule.json"));
+    ASSERT_EQ(2, fr_test_count_files(root, "tiestone.json"));
 
     fr_test_remove_tree(root);
     clear_cache_dir();
@@ -247,7 +247,7 @@ TEST resolves_the_localappdata_fallback_when_no_override_is_set(void) {
     ASSERT_EQ(FR_OK, fr_cache_path("forebay/basekit", "1.0.0", ARTIFACT, &path, &err));
     ASSERT(path != NULL);
     char expected_prefix[600];
-    snprintf(expected_prefix, sizeof expected_prefix, "%s/ferrule/cache/", test_cache_root());
+    snprintf(expected_prefix, sizeof expected_prefix, "%s/tiestone/cache/", test_cache_root());
     ASSERT(strstr(path, expected_prefix) == path);
     free(path);
 
@@ -267,7 +267,7 @@ TEST resolves_the_xdg_cache_home_fallback_when_no_override_is_set(void) {
     ASSERT_EQ(FR_OK, fr_cache_path("forebay/basekit", "1.0.0", ARTIFACT, &path, &err));
     ASSERT(path != NULL);
     char expected_prefix[600];
-    snprintf(expected_prefix, sizeof expected_prefix, "%s/ferrule/", test_cache_root());
+    snprintf(expected_prefix, sizeof expected_prefix, "%s/tiestone/", test_cache_root());
     ASSERT(strstr(path, expected_prefix) == path);
     free(path);
 

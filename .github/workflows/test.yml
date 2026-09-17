@@ -13,7 +13,7 @@ jobs:
       runners: '["ubuntu-latest", "windows-latest", "macos-latest"]'
       cmake_configure: '-B build -DCMAKE_BUILD_TYPE=Release'
       cmake_build: '--build build --config Release'
-      cmake_test: 'FERRULE_NETWORK_TESTS=1 ctest --test-dir build -C Release --output-on-failure'
+      cmake_test: 'TIESTONE_NETWORK_TESTS=1 ctest --test-dir build -C Release --output-on-failure'
       apt_packages: libcurl4-openssl-dev
     secrets:
       envPAT: ${{ secrets.PAT }}

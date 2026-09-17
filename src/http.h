@@ -1,5 +1,5 @@
-#ifndef FERRULE_HTTP_H
-#define FERRULE_HTTP_H
+#ifndef TIESTONE_HTTP_H
+#define TIESTONE_HTTP_H
 
 #include "types.h"
 

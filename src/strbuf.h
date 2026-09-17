@@ -1,5 +1,5 @@
-#ifndef FERRULE_STRBUF_H
-#define FERRULE_STRBUF_H
+#ifndef TIESTONE_STRBUF_H
+#define TIESTONE_STRBUF_H
 
 #include <stddef.h>
 

@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *LEDGER_PATH = "ferrule.managed";
+static const char *LEDGER_PATH = "tiestone.managed";
 
 typedef struct {
     const char *package;
@@ -54,8 +54,8 @@ static int read_ledger(const char *original_text, const char *configuration,
         return FR_ERR;
     }
 
-    const cJSON *ferrule = cJSON_GetObjectItemCaseSensitive(document, "ferrule");
-    const cJSON *managed = ferrule != NULL ? cJSON_GetObjectItemCaseSensitive(ferrule, "managed") : NULL;
+    const cJSON *tiestone = cJSON_GetObjectItemCaseSensitive(document, "tiestone");
+    const cJSON *managed = tiestone != NULL ? cJSON_GetObjectItemCaseSensitive(tiestone, "managed") : NULL;
     const cJSON *owned = managed != NULL ? cJSON_GetObjectItemCaseSensitive(managed, configuration) : NULL;
     if (!cJSON_IsArray(owned)) {
         cJSON_Delete(document);
@@ -186,4 +186,4 @@ static int npm_apply(void *state, const fr_consumer *consumer, const fr_resolved
     return FR_OK;
 }
 
-const fr_language_plugin FR_LANGUAGE_NPM = { "ferrule.language/npm", npm_apply, NULL };
+const fr_language_plugin FR_LANGUAGE_NPM = { "tiestone.language/npm", npm_apply, NULL };

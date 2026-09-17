@@ -1,5 +1,5 @@
-#ifndef FERRULE_CLI_H
-#define FERRULE_CLI_H
+#ifndef TIESTONE_CLI_H
+#define TIESTONE_CLI_H
 
 typedef enum {
     FR_CLI_SYNC,

@@ -1,5 +1,5 @@
-#ifndef FERRULE_SYNC_H
-#define FERRULE_SYNC_H
+#ifndef TIESTONE_SYNC_H
+#define TIESTONE_SYNC_H
 
 #include "types.h"
 
