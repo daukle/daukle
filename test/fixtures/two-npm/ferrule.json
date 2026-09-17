@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "project": "intisy-ai/example",
+  "project": "forebay/example",
   "version": "1.0.0",
   "modules": {},
   "sources": {
-    "intisy-ai/basekit": { "kind": "path", "path": "../producer-languages" }
+    "forebay/basekit": { "kind": "path", "path": "../producer-languages" }
   },
   "consumers": [
     {
@@ -13,7 +13,7 @@
       "file": "package.json",
       "configuration": "dependencies",
       "dependencies": {
-        "intisy-ai/basekit": { "version": "^5.0.0", "modules": ["ir"] }
+        "forebay/basekit": { "version": "^5.0.0", "modules": ["ir"] }
       }
     },
     {
@@ -22,7 +22,7 @@
       "file": "package.json",
       "configuration": "devDependencies",
       "dependencies": {
-        "intisy-ai/basekit": { "version": "^5.0.0", "modules": ["contracts"] }
+        "forebay/basekit": { "version": "^5.0.0", "modules": ["contracts"] }
       }
     }
   ]

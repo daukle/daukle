@@ -8,7 +8,7 @@
 TEST reads_a_producer(void) {
     fr_project project; fr_error err;
     ASSERT_EQ(FR_OK, fr_project_read("test/fixtures/producer/ferrule.json", &project, &err));
-    ASSERT_STR_EQ("intisy-ai/basekit", project.project);
+    ASSERT_STR_EQ("forebay/basekit", project.project);
     ASSERT_EQ(5, project.version.major);
     ASSERT_EQ(3, (int) project.module_count);
     fr_project_free(&project);
@@ -25,7 +25,7 @@ TEST finds_a_module_and_its_requires(void) {
     const cJSON *gradle = cJSON_GetObjectItemCaseSensitive(ir->blocks, "gradle");
     ASSERT(cJSON_IsObject(gradle));
     const cJSON *coordinate = cJSON_GetObjectItemCaseSensitive(gradle, "coordinate");
-    ASSERT_STR_EQ("intisy-ai:basekit:5.0.0:ir", coordinate->valuestring);
+    ASSERT_STR_EQ("forebay:basekit:5.0.0:ir", coordinate->valuestring);
     fr_project_free(&project);
     PASS();
 }
@@ -52,7 +52,7 @@ TEST reads_a_consumer(void) {
     fr_manifest manifest; fr_error err;
     ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/ferrule.json", &manifest, &err));
     ASSERT_EQ(1, (int) manifest.source_count);
-    ASSERT_STR_EQ("intisy-ai/basekit", manifest.sources[0].project);
+    ASSERT_STR_EQ("forebay/basekit", manifest.sources[0].project);
     ASSERT_STR_EQ("path", manifest.sources[0].kind);
     const cJSON *path_field = cJSON_GetObjectItemCaseSensitive(manifest.sources[0].block, "path");
     ASSERT(cJSON_IsString(path_field));
@@ -73,7 +73,7 @@ TEST keeps_a_source_block_of_any_kind(void) {
     fr_error err;
     ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/ferrule-unknown-source.json", &manifest, &err));
 
-    const fr_source *source = fr_manifest_source(&manifest, "intisy-ai/basekit");
+    const fr_source *source = fr_manifest_source(&manifest, "forebay/basekit");
     ASSERT(source != NULL);
     ASSERT_STR_EQ("some-future-kind", source->kind);
     ASSERT(source->block != NULL);

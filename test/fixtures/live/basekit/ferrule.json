@@ -1,35 +1,35 @@
 {
   "schema": 1,
-  "project": "intisy-ai/basekit",
+  "project": "forebay/basekit",
   "version": "5.0.0",
   "modules": {
     "contracts": {
       "requires": [],
-      "gradle": { "coordinate": "intisy-ai:basekit:5.0.0:contracts" }
+      "gradle": { "coordinate": "forebay:basekit:5.0.0:contracts" }
     },
     "ir": {
       "requires": [],
-      "gradle": { "coordinate": "intisy-ai:basekit:5.0.0:ir" }
+      "gradle": { "coordinate": "forebay:basekit:5.0.0:ir" }
     },
     "js-base": {
       "requires": ["ir"],
-      "gradle": { "coordinate": "intisy-ai:basekit:5.0.0:js-base" }
+      "gradle": { "coordinate": "forebay:basekit:5.0.0:js-base" }
     },
     "accounts": {
       "requires": [],
-      "gradle": { "coordinate": "intisy-ai:basekit:5.0.0:accounts" }
+      "gradle": { "coordinate": "forebay:basekit:5.0.0:accounts" }
     },
     "auth-contracts": {
       "requires": ["ir"],
-      "gradle": { "coordinate": "intisy-ai:basekit:5.0.0:auth-contracts" }
+      "gradle": { "coordinate": "forebay:basekit:5.0.0:auth-contracts" }
     },
     "routing": {
       "requires": ["proxy-contracts", "ir"],
-      "gradle": { "coordinate": "intisy-ai:basekit:5.0.0:routing" }
+      "gradle": { "coordinate": "forebay:basekit:5.0.0:routing" }
     },
     "proxy-contracts": {
       "requires": ["ir"],
-      "gradle": { "coordinate": "intisy-ai:basekit:5.0.0:proxy-contracts" }
+      "gradle": { "coordinate": "forebay:basekit:5.0.0:proxy-contracts" }
     }
   }
 }

@@ -27,8 +27,8 @@ TEST sync_writes_the_resolved_lines(void) {
 
     char *text = NULL;
     fr_file_read_text("test/fixtures/consumer/build.gradle", &text, &err);
-    ASSERT(strstr(text, "    githubImplementation \"intisy-ai:basekit:5.0.0:contracts\"\n") != NULL);
-    ASSERT(strstr(text, "    githubImplementation \"intisy-ai:basekit:5.0.0:ir\"\n") != NULL);
+    ASSERT(strstr(text, "    githubImplementation \"forebay:basekit:5.0.0:contracts\"\n") != NULL);
+    ASSERT(strstr(text, "    githubImplementation \"forebay:basekit:5.0.0:ir\"\n") != NULL);
     ASSERT(strstr(text, "testImplementation \"junit\"") != NULL);
     free(text);
     reset_build_file();
@@ -108,7 +108,7 @@ TEST counts_the_files_written_before_a_failure(void) {
 
     char *text = NULL;
     fr_file_read_text("test/fixtures/consumer-partial/a.gradle", &text, &err);
-    ASSERT(strstr(text, "githubImplementation \"intisy-ai:basekit:5.0.0:ir\"") != NULL);
+    ASSERT(strstr(text, "githubImplementation \"forebay:basekit:5.0.0:ir\"") != NULL);
     free(text);
     PASS();
 }

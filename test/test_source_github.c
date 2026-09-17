@@ -23,7 +23,7 @@ static int stub_get(const char *url, const fr_http_header *headers, size_t heade
     snprintf(LAST_URL_BUF, sizeof LAST_URL_BUF, "%s", url);
     LAST_URL = LAST_URL_BUF;
     BACKEND_CALLS++;
-    const char *body = "{\"schema\":1,\"project\":\"intisy-ai/basekit\",\"version\":\"5.0.0\",\"modules\":{}}";
+    const char *body = "{\"schema\":1,\"project\":\"forebay/basekit\",\"version\":\"5.0.0\",\"modules\":{}}";
     *out_length = strlen(body);
     *out_body = malloc(*out_length + 1);
     memcpy(*out_body, body, *out_length + 1);
@@ -64,14 +64,14 @@ TEST builds_the_release_asset_url_from_the_block(void) {
     empty_the_cache();
 
     const char *json =
-        "{\"kind\":\"github-releases\",\"repo\":\"intisy-ai/basekit\","
+        "{\"kind\":\"github-releases\",\"repo\":\"forebay/basekit\","
         "\"version\":\"5.0.0\"}";
     cJSON *block = cJSON_Parse(json);
     fr_project project;
     fr_error err;
-    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "intisy-ai/basekit",
+    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "forebay/basekit",
                                            block, ".", &project, &err));
-    ASSERT_STR_EQ("https://github.com/intisy-ai/basekit/releases/download/5.0.0/ferrule.json",
+    ASSERT_STR_EQ("https://github.com/forebay/basekit/releases/download/5.0.0/ferrule.json",
                   LAST_URL);
     fr_project_free(&project);
     cJSON_Delete(block);
@@ -86,12 +86,12 @@ TEST substitutes_the_version_into_a_tag_template(void) {
     empty_the_cache();
 
     const char *json =
-        "{\"kind\":\"github-releases\",\"repo\":\"intisy-ai/basekit\","
+        "{\"kind\":\"github-releases\",\"repo\":\"forebay/basekit\","
         "\"version\":\"5.0.0\",\"tag\":\"v{version}\"}";
     cJSON *block = cJSON_Parse(json);
     fr_project project;
     fr_error err;
-    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "intisy-ai/basekit",
+    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "forebay/basekit",
                                            block, ".", &project, &err));
     ASSERT(strstr(LAST_URL, "/releases/download/v5.0.0/") != NULL);
     fr_project_free(&project);
@@ -107,7 +107,7 @@ TEST serves_a_second_load_from_the_cache(void) {
     empty_the_cache();
 
     const char *json =
-        "{\"kind\":\"github-releases\",\"repo\":\"intisy-ai/basekit\","
+        "{\"kind\":\"github-releases\",\"repo\":\"forebay/basekit\","
         "\"version\":\"5.0.0\"}";
     cJSON *block = cJSON_Parse(json);
     fr_project first;
@@ -115,15 +115,15 @@ TEST serves_a_second_load_from_the_cache(void) {
     fr_error err;
 
     BACKEND_CALLS = 0;
-    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "intisy-ai/basekit",
+    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "forebay/basekit",
                                            block, ".", &first, &err));
     ASSERT_EQ(1, BACKEND_CALLS);
     fr_project_free(&first);
 
-    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "intisy-ai/basekit",
+    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "forebay/basekit",
                                            block, ".", &second, &err));
     ASSERT_EQ(1, BACKEND_CALLS);
-    ASSERT_STR_EQ("intisy-ai/basekit", second.project);
+    ASSERT_STR_EQ("forebay/basekit", second.project);
     fr_project_free(&second);
 
     cJSON_Delete(block);
@@ -141,7 +141,7 @@ TEST does_not_serve_one_repositorys_manifest_for_another(void) {
     empty_the_cache();
 
     cJSON *upstream = cJSON_Parse(
-        "{\"kind\":\"github-releases\",\"repo\":\"intisy-ai/basekit\",\"version\":\"5.0.0\"}");
+        "{\"kind\":\"github-releases\",\"repo\":\"forebay/basekit\",\"version\":\"5.0.0\"}");
     cJSON *fork = cJSON_Parse(
         "{\"kind\":\"github-releases\",\"repo\":\"someone-else/basekit\",\"version\":\"5.0.0\"}");
     fr_project first;
@@ -149,12 +149,12 @@ TEST does_not_serve_one_repositorys_manifest_for_another(void) {
     fr_error err;
 
     BACKEND_CALLS = 0;
-    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "intisy-ai/basekit",
+    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "forebay/basekit",
                                            upstream, ".", &first, &err));
     ASSERT_EQ(1, BACKEND_CALLS);
     fr_project_free(&first);
 
-    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "intisy-ai/basekit",
+    ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "forebay/basekit",
                                            fork, ".", &second, &err));
     ASSERT_EQ(2, BACKEND_CALLS);
     ASSERT(strstr(LAST_URL, "someone-else/basekit") != NULL);
@@ -176,9 +176,9 @@ TEST reports_a_missing_repo_field_against_the_source_path(void) {
     fr_project project;
     fr_error err;
 
-    ASSERT_EQ(FR_ERR, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "intisy-ai/basekit",
+    ASSERT_EQ(FR_ERR, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "forebay/basekit",
                                             block, ".", &project, &err));
-    ASSERT(strstr(err.message, "sources.intisy-ai/basekit") != NULL);
+    ASSERT(strstr(err.message, "sources.forebay/basekit") != NULL);
     ASSERT(strstr(err.message, "repo") != NULL);
 
     cJSON_Delete(block);

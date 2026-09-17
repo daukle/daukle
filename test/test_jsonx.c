@@ -7,10 +7,10 @@
 static cJSON *parse(const char *text) { return cJSON_Parse(text); }
 
 TEST reads_a_string_member(void) {
-    cJSON *root = parse("{\"project\":\"intisy-ai/basekit\"}");
+    cJSON *root = parse("{\"project\":\"forebay/basekit\"}");
     const char *value = NULL; fr_error err;
     ASSERT_EQ(FR_OK, fr_json_string(root, "project", "$", &value, &err));
-    ASSERT_STR_EQ("intisy-ai/basekit", value);
+    ASSERT_STR_EQ("forebay/basekit", value);
     cJSON_Delete(root);
     PASS();
 }

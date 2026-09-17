@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "project": "intisy-ai/example",
+  "project": "forebay/example",
   "version": "1.0.0",
   "modules": {},
   "sources": {
-    "intisy-ai/basekit": { "kind": "some-future-kind", "whatever": "value" }
+    "forebay/basekit": { "kind": "some-future-kind", "whatever": "value" }
   },
   "consumers": []
 }

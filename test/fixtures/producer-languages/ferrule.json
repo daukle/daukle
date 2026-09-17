@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "project": "intisy-ai/basekit",
+  "project": "forebay/basekit",
   "version": "5.0.0",
   "modules": {
     "contracts": {
       "requires": [],
-      "gradle": { "coordinate": "intisy-ai:basekit:5.0.0:contracts" },
+      "gradle": { "coordinate": "forebay:basekit:5.0.0:contracts" },
       "npm": { "package": "@intisy-ai/basekit-contracts", "range": "^5.0.0" },
       "c": { "package": "basekit-contracts", "url": "https://example.test/basekit-contracts-5.0.0.tar.gz" }
     },
     "ir": {
       "requires": ["contracts"],
-      "gradle": { "coordinate": "intisy-ai:basekit:5.0.0:ir" },
+      "gradle": { "coordinate": "forebay:basekit:5.0.0:ir" },
       "npm": { "package": "@intisy-ai/basekit-ir", "range": "^5.0.0" },
       "c": {
         "package": "basekit-ir",

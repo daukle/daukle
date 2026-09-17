@@ -22,12 +22,12 @@ static cJSON *block_with_coordinate(const char *coordinate) {
 }
 
 static void setup(void) {
-    two_modules[0].project = "intisy-ai/basekit";
+    two_modules[0].project = "forebay/basekit";
     two_modules[0].module = "contracts";
-    two_modules[0].block = block_with_coordinate("intisy-ai:basekit:5.0.0:contracts");
-    two_modules[1].project = "intisy-ai/basekit";
+    two_modules[0].block = block_with_coordinate("forebay:basekit:5.0.0:contracts");
+    two_modules[1].project = "forebay/basekit";
     two_modules[1].module = "ir";
-    two_modules[1].block = block_with_coordinate("intisy-ai:basekit:5.0.0:ir");
+    two_modules[1].block = block_with_coordinate("forebay:basekit:5.0.0:ir");
 }
 
 static void teardown(void) {
@@ -50,8 +50,8 @@ TEST writes_one_line_per_module_in_order(void) {
     ASSERT_STR_EQ(
         "dependencies {\n"
         "    // ferrule:begin\n"
-        "    githubImplementation \"intisy-ai:basekit:5.0.0:contracts\"\n"
-        "    githubImplementation \"intisy-ai:basekit:5.0.0:ir\"\n"
+        "    githubImplementation \"forebay:basekit:5.0.0:contracts\"\n"
+        "    githubImplementation \"forebay:basekit:5.0.0:ir\"\n"
         "    // ferrule:end\n"
         "    testImplementation \"junit\"\n"
         "}\n", text);
@@ -80,7 +80,7 @@ TEST fails_without_a_configuration(void) {
 
 TEST names_the_module_whose_block_has_no_coordinate(void) {
     fr_resolved bare;
-    bare.project = "intisy-ai/basekit";
+    bare.project = "forebay/basekit";
     bare.module = "loader";
     bare.block = cJSON_CreateObject();
     fr_consumer consumer = {0};

@@ -32,12 +32,12 @@ TEST reproduces_both_real_consumers(void) {
 
     char *stub = NULL;
     fr_file_read_text("test/fixtures/live/stub-translator/stub/build.gradle", &stub, &err);
-    ASSERT(strstr(stub, "githubImplementation \"intisy-ai:basekit:5.0.0:ir\"") != NULL);
+    ASSERT(strstr(stub, "githubImplementation \"forebay:basekit:5.0.0:ir\"") != NULL);
     free(stub);
 
     char *teavm = NULL;
     fr_file_read_text("test/fixtures/live/stub-translator/teavm-stub/build.gradle", &teavm, &err);
-    ASSERT(strstr(teavm, "githubImplementation \"intisy-ai:basekit:5.0.0:ir\"") != NULL);
+    ASSERT(strstr(teavm, "githubImplementation \"forebay:basekit:5.0.0:ir\"") != NULL);
     free(teavm);
     reset_fixtures();
     PASS();
@@ -211,8 +211,8 @@ TEST github_source_matches_path_source(void) {
 
     ASSERT(path_region != NULL);
     ASSERT(github_region != NULL);
-    ASSERT(strstr(path_region, "githubImplementation \"intisy-ai:basekit:5.0.0:ir\"") != NULL);
-    ASSERT(strstr(path_region, "githubImplementation \"intisy-ai:basekit:5.0.0:contracts\"") != NULL);
+    ASSERT(strstr(path_region, "githubImplementation \"forebay:basekit:5.0.0:ir\"") != NULL);
+    ASSERT(strstr(path_region, "githubImplementation \"forebay:basekit:5.0.0:contracts\"") != NULL);
     ASSERT_STR_EQ(path_region, github_region);
 
     free(path_region);

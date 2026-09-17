@@ -81,8 +81,8 @@ TEST one_declaration_writes_all_three_languages(void) {
     ASSERT_STR_EQ(
         "dependencies {\n"
         "    // ferrule:begin\n"
-        "    githubImplementation \"intisy-ai:basekit:5.0.0:contracts\"\n"
-        "    githubImplementation \"intisy-ai:basekit:5.0.0:ir\"\n"
+        "    githubImplementation \"forebay:basekit:5.0.0:contracts\"\n"
+        "    githubImplementation \"forebay:basekit:5.0.0:ir\"\n"
         "    // ferrule:end\n"
         "    testImplementation \"junit\"\n"
         "}\n", gradle);

@@ -58,7 +58,7 @@ TEST pulls_in_transitive_requires(void) {
     ASSERT_STR_EQ("contracts", items[0].module);
     ASSERT_STR_EQ("ir", items[1].module);
     const cJSON *coordinate = cJSON_GetObjectItemCaseSensitive(items[0].block, "coordinate");
-    ASSERT_STR_EQ("intisy-ai:basekit:5.0.0:contracts", coordinate->valuestring);
+    ASSERT_STR_EQ("forebay:basekit:5.0.0:contracts", coordinate->valuestring);
 
     fr_resolved_free(items, count);
     fr_registry_destroy(registry);
@@ -110,7 +110,7 @@ TEST rejects_a_version_outside_the_range(void) {
     fr_resolved *items = NULL; size_t count = 0;
     ASSERT_EQ(FR_ERR, fr_resolve_consumer(&manifest.consumers[0], &manifest,
                                           "test/fixtures/consumer-badrange", registry, &items, &count, &err));
-    ASSERT(strstr(err.message, "intisy-ai/basekit") != NULL);
+    ASSERT(strstr(err.message, "forebay/basekit") != NULL);
     ASSERT(strstr(err.message, "5.0.0") != NULL);
 
     fr_registry_destroy(registry);
@@ -157,8 +157,8 @@ TEST rejects_a_project_that_does_not_match_its_source(void) {
     fr_resolved *items = NULL; size_t count = 0;
     ASSERT_EQ(FR_ERR, fr_resolve_consumer(&manifest.consumers[0], &manifest,
                                           "test/fixtures/consumer-mismatch", registry, &items, &count, &err));
-    ASSERT(strstr(err.message, "intisy-ai/basekit") != NULL);
-    ASSERT(strstr(err.message, "intisy-ai/not-basekit") != NULL);
+    ASSERT(strstr(err.message, "forebay/basekit") != NULL);
+    ASSERT(strstr(err.message, "forebay/not-basekit") != NULL);
 
     fr_registry_destroy(registry);
     fr_manifest_free(&manifest);

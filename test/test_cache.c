@@ -7,7 +7,7 @@
 #include <string.h>
 
 static const char *ARTIFACT =
-    "https://github.com/intisy-ai/basekit/releases/download/5.0.0/ferrule.json";
+    "https://github.com/forebay/basekit/releases/download/5.0.0/ferrule.json";
 static const char *FORK_ARTIFACT =
     "https://github.com/someone-else/basekit/releases/download/5.0.0/ferrule.json";
 
@@ -63,11 +63,11 @@ TEST rejects_a_component_with_a_trailing_dot(void) {
 
     fr_error err;
     char *path = NULL;
-    ASSERT_EQ(FR_ERR, fr_cache_path("intisy-ai/basekit.", "1.0.0", ARTIFACT, &path, &err));
+    ASSERT_EQ(FR_ERR, fr_cache_path("forebay/basekit.", "1.0.0", ARTIFACT, &path, &err));
     ASSERT(path == NULL);
 
     path = NULL;
-    ASSERT_EQ(FR_ERR, fr_cache_path("intisy-ai/basekit", "1.0.0.", ARTIFACT, &path, &err));
+    ASSERT_EQ(FR_ERR, fr_cache_path("forebay/basekit", "1.0.0.", ARTIFACT, &path, &err));
     ASSERT(path == NULL);
 
     clear_cache_dir();
@@ -79,12 +79,12 @@ TEST rejects_an_entry_that_names_no_artifact(void) {
 
     fr_error err;
     char *path = NULL;
-    ASSERT_EQ(FR_ERR, fr_cache_path("intisy-ai/basekit", "1.0.0", NULL, &path, &err));
+    ASSERT_EQ(FR_ERR, fr_cache_path("forebay/basekit", "1.0.0", NULL, &path, &err));
     ASSERT(strstr(err.message, "artifact") != NULL);
     ASSERT(path == NULL);
 
     path = NULL;
-    ASSERT_EQ(FR_ERR, fr_cache_path("intisy-ai/basekit", "1.0.0", "", &path, &err));
+    ASSERT_EQ(FR_ERR, fr_cache_path("forebay/basekit", "1.0.0", "", &path, &err));
     ASSERT(path == NULL);
 
     clear_cache_dir();
@@ -99,7 +99,7 @@ TEST rejects_an_oversized_cache_root_rather_than_truncating_it(void) {
 
     fr_error err;
     char *path = NULL;
-    ASSERT_EQ(FR_ERR, fr_cache_path("intisy-ai/basekit", "1.0.0", ARTIFACT, &path, &err));
+    ASSERT_EQ(FR_ERR, fr_cache_path("forebay/basekit", "1.0.0", ARTIFACT, &path, &err));
     ASSERT(path == NULL);
 
     clear_cache_dir();
@@ -111,7 +111,7 @@ TEST reports_a_miss_without_an_error(void) {
 
     fr_error err;
     char *text = NULL;
-    ASSERT_EQ(FR_OK, fr_cache_read("intisy-ai/absent", "9.9.9", ARTIFACT, &text, &err));
+    ASSERT_EQ(FR_OK, fr_cache_read("forebay/absent", "9.9.9", ARTIFACT, &text, &err));
     ASSERT(text == NULL);
 
     clear_cache_dir();
@@ -122,10 +122,10 @@ TEST round_trips_a_written_manifest(void) {
     isolate_cache_dir();
     const char *root = test_cache_root();
 
-    write_cache_text("intisy-ai/basekit", "5.0.0", ARTIFACT, "{\"schema\":1}");
+    write_cache_text("forebay/basekit", "5.0.0", ARTIFACT, "{\"schema\":1}");
     fr_error err;
     char *text = NULL;
-    ASSERT_EQ(FR_OK, fr_cache_read("intisy-ai/basekit", "5.0.0", ARTIFACT, &text, &err));
+    ASSERT_EQ(FR_OK, fr_cache_read("forebay/basekit", "5.0.0", ARTIFACT, &text, &err));
     ASSERT(text != NULL);
     ASSERT_STR_EQ("{\"schema\":1}", text);
     free(text);
@@ -148,14 +148,14 @@ TEST keeps_two_artifacts_of_one_project_and_version_apart(void) {
     isolate_cache_dir();
     const char *root = test_cache_root();
 
-    write_cache_text("intisy-ai/basekit", "5.0.0", ARTIFACT, "{\"origin\":\"upstream\"}");
-    write_cache_text("intisy-ai/basekit", "5.0.0", FORK_ARTIFACT, "{\"origin\":\"fork\"}");
+    write_cache_text("forebay/basekit", "5.0.0", ARTIFACT, "{\"origin\":\"upstream\"}");
+    write_cache_text("forebay/basekit", "5.0.0", FORK_ARTIFACT, "{\"origin\":\"fork\"}");
 
     fr_error err;
     char *upstream = NULL;
     char *fork = NULL;
-    ASSERT_EQ(FR_OK, fr_cache_read("intisy-ai/basekit", "5.0.0", ARTIFACT, &upstream, &err));
-    ASSERT_EQ(FR_OK, fr_cache_read("intisy-ai/basekit", "5.0.0", FORK_ARTIFACT, &fork, &err));
+    ASSERT_EQ(FR_OK, fr_cache_read("forebay/basekit", "5.0.0", ARTIFACT, &upstream, &err));
+    ASSERT_EQ(FR_OK, fr_cache_read("forebay/basekit", "5.0.0", FORK_ARTIFACT, &fork, &err));
     ASSERT(upstream != NULL);
     ASSERT(fork != NULL);
     ASSERT_STR_EQ("{\"origin\":\"upstream\"}", upstream);
@@ -179,11 +179,11 @@ TEST writes_the_whole_body_including_an_embedded_nul(void) {
 
     const char body[] = "{\"a\":1}\0trailing";
     const size_t body_length = sizeof body - 1;
-    fr_cache_write("intisy-ai/basekit", "5.0.0", ARTIFACT, body, body_length);
+    fr_cache_write("forebay/basekit", "5.0.0", ARTIFACT, body, body_length);
 
     fr_error err;
     char *path = NULL;
-    ASSERT_EQ(FR_OK, fr_cache_path("intisy-ai/basekit", "5.0.0", ARTIFACT, &path, &err));
+    ASSERT_EQ(FR_OK, fr_cache_path("forebay/basekit", "5.0.0", ARTIFACT, &path, &err));
 
     FILE *file = fopen(path, "rb");
     ASSERT(file != NULL);
@@ -208,7 +208,7 @@ TEST writes_the_whole_body_including_an_embedded_nul(void) {
 TEST preserves_the_existing_manifest_when_a_write_cannot_complete(void) {
     isolate_cache_dir();
     const char *root = test_cache_root();
-    const char *project = "intisy-ai/atomic-guard";
+    const char *project = "forebay/atomic-guard";
     const char *version = "1.0.0";
 
     write_cache_text(project, version, ARTIFACT, "{\"good\":true}");
@@ -244,7 +244,7 @@ TEST resolves_the_localappdata_fallback_when_no_override_is_set(void) {
 
     fr_error err;
     char *path = NULL;
-    ASSERT_EQ(FR_OK, fr_cache_path("intisy-ai/basekit", "1.0.0", ARTIFACT, &path, &err));
+    ASSERT_EQ(FR_OK, fr_cache_path("forebay/basekit", "1.0.0", ARTIFACT, &path, &err));
     ASSERT(path != NULL);
     char expected_prefix[600];
     snprintf(expected_prefix, sizeof expected_prefix, "%s/ferrule/cache/", test_cache_root());
@@ -264,7 +264,7 @@ TEST resolves_the_xdg_cache_home_fallback_when_no_override_is_set(void) {
 
     fr_error err;
     char *path = NULL;
-    ASSERT_EQ(FR_OK, fr_cache_path("intisy-ai/basekit", "1.0.0", ARTIFACT, &path, &err));
+    ASSERT_EQ(FR_OK, fr_cache_path("forebay/basekit", "1.0.0", ARTIFACT, &path, &err));
     ASSERT(path != NULL);
     char expected_prefix[600];
     snprintf(expected_prefix, sizeof expected_prefix, "%s/ferrule/", test_cache_root());

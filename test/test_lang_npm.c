@@ -41,7 +41,7 @@ static cJSON *npm_block(const char *package, const char *range) {
 
 static fr_resolved resolved_module(const char *module, cJSON *block) {
     fr_resolved entry;
-    entry.project = "intisy-ai/basekit";
+    entry.project = "forebay/basekit";
     entry.module = (char *) module;
     entry.block = block;
     return entry;
