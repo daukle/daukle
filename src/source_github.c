@@ -63,7 +63,7 @@ static char *build_release_url(const char *repo, const char *tag, const char *as
 }
 
 static char *build_auth_header_value(void) {
-    const char *token = getenv("TIESTONE_TOKEN");
+    const char *token = getenv("TERKO_TOKEN");
     if (token == NULL || token[0] == '\0') token = getenv("GITHUB_TOKEN");
     if (token == NULL || token[0] == '\0') return NULL;
 
@@ -136,7 +136,7 @@ static int source_github_load(void *state, const char *project, const cJSON *blo
     if (fr_json_string(block, "version", path, &version, err) != FR_OK) return FR_ERR;
 
     const char *asset = NULL;
-    if (optional_string(block, "asset", path, "tiestone.json", &asset, err) != FR_OK) return FR_ERR;
+    if (optional_string(block, "asset", path, "terko.json", &asset, err) != FR_OK) return FR_ERR;
 
     const char *tag_template = NULL;
     if (optional_string(block, "tag", path, "{version}", &tag_template, err) != FR_OK) return FR_ERR;
@@ -168,4 +168,4 @@ static int source_github_load(void *state, const char *project, const cJSON *blo
     return result;
 }
 
-const fr_source_plugin FR_SOURCE_GITHUB = { "tiestone.source/github-releases", source_github_load, NULL };
+const fr_source_plugin FR_SOURCE_GITHUB = { "terko.source/github-releases", source_github_load, NULL };

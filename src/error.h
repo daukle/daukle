@@ -1,5 +1,5 @@
-#ifndef TIESTONE_ERROR_H
-#define TIESTONE_ERROR_H
+#ifndef TERKO_ERROR_H
+#define TERKO_ERROR_H
 
 #include "types.h"
 

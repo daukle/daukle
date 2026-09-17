@@ -1,5 +1,5 @@
-#ifndef TIESTONE_LANG_C_H
-#define TIESTONE_LANG_C_H
+#ifndef TERKO_LANG_C_H
+#define TERKO_LANG_C_H
 
 #include "registry.h"
 #include "resolve.h"

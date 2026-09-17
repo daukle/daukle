@@ -112,7 +112,7 @@ static int resolve_dependency(const fr_dependency *dependency, const fr_manifest
     }
 
     char capability[256];
-    snprintf(capability, sizeof capability, "tiestone.source/%s", entry->kind);
+    snprintf(capability, sizeof capability, "terko.source/%s", entry->kind);
     const fr_source_plugin *source = fr_registry_source(registry, capability);
     if (source == NULL) {
         fr_error_set(err, "no source plugin registered for \"%s\"", capability);

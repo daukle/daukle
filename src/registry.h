@@ -1,5 +1,5 @@
-#ifndef TIESTONE_REGISTRY_H
-#define TIESTONE_REGISTRY_H
+#ifndef TERKO_REGISTRY_H
+#define TERKO_REGISTRY_H
 
 #include "types.h"
 

@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/@intisy/bayonet/schema/plugin.schema.json",
-  "id": "tiestone",
+  "id": "terko",
   "api": 1,
   "repo": {
     "role": "Cross-language package coordinate resolver",

@@ -1,5 +1,5 @@
-#ifndef TIESTONE_SEMVER_H
-#define TIESTONE_SEMVER_H
+#ifndef TERKO_SEMVER_H
+#define TERKO_SEMVER_H
 
 #include "types.h"
 

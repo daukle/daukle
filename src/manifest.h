@@ -1,5 +1,5 @@
-#ifndef TIESTONE_MANIFEST_H
-#define TIESTONE_MANIFEST_H
+#ifndef TERKO_MANIFEST_H
+#define TERKO_MANIFEST_H
 
 #include "types.h"
 

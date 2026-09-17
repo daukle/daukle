@@ -1,5 +1,5 @@
-#ifndef TIESTONE_TEST_HTTP_SERVER_H
-#define TIESTONE_TEST_HTTP_SERVER_H
+#ifndef TERKO_TEST_HTTP_SERVER_H
+#define TERKO_TEST_HTTP_SERVER_H
 
 /* A loopback HTTP server for testing what the real http backends put on the
    wire. Routes are declared before start and observations are read after stop

@@ -1,5 +1,5 @@
-#ifndef TIESTONE_SOURCE_PATH_H
-#define TIESTONE_SOURCE_PATH_H
+#ifndef TERKO_SOURCE_PATH_H
+#define TERKO_SOURCE_PATH_H
 
 #include "registry.h"
 

@@ -1,5 +1,5 @@
-#ifndef TIESTONE_CLI_H
-#define TIESTONE_CLI_H
+#ifndef TERKO_CLI_H
+#define TERKO_CLI_H
 
 typedef enum {
     FR_CLI_SYNC,

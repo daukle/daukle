@@ -1,5 +1,5 @@
-#ifndef TIESTONE_HTTP_H
-#define TIESTONE_HTTP_H
+#ifndef TERKO_HTTP_H
+#define TERKO_HTTP_H
 
 #include "types.h"
 

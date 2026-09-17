@@ -1,5 +1,5 @@
-#ifndef TIESTONE_SYNC_H
-#define TIESTONE_SYNC_H
+#ifndef TERKO_SYNC_H
+#define TERKO_SYNC_H
 
 #include "types.h"
 

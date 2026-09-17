@@ -8,8 +8,8 @@ plugins {
 dependencies {
     // teavm transpiles :ir's + :stub's pure types -- no gson/net/nio/etc, matching their own
     // zero-dependency policy.
-    // tiestone:begin
-    // tiestone:end
+    // terko:begin
+    // terko:end
     implementation project(":stub")
     // SOURCE-retention, so nothing here reaches the bundle. The processor jar is a release asset and
     // carries no transitive metadata, so the annotation types it reads are named beside it.

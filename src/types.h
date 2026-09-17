@@ -1,5 +1,5 @@
-#ifndef TIESTONE_TYPES_H
-#define TIESTONE_TYPES_H
+#ifndef TERKO_TYPES_H
+#define TERKO_TYPES_H
 
 #define FR_OK 0
 #define FR_ERR 1

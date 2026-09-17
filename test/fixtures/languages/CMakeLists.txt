@@ -3,5 +3,5 @@ project(demo C)
 
 add_executable(demo main.c)
 
-# tiestone:begin
-# tiestone:end
+# terko:begin
+# terko:end

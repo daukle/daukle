@@ -2,7 +2,7 @@ set(CORE_FILES
     resolve.c resolve.h manifest.c manifest.h registry.c registry.h
     types.h sync.c sync.h main.c cli.c cli.h)
 
-set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "tiestone\\.source/[a-z]" "tiestone\\.language/[a-z]")
+set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "terko\\.source/[a-z]" "terko\\.language/[a-z]")
 
 set(FINDINGS "")
 foreach(name ${CORE_FILES})

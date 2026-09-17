@@ -3,29 +3,29 @@
 
 #include <stdio.h>
 
-#define TIESTONE_VERSION "0.1.0"
+#define TERKO_VERSION "0.1.0"
 
 static int run(const char *manifest_path, int write, int use_cache) {
     fr_error err;
     fr_sync_report report;
     int status = 0;
     if (fr_sync(manifest_path, write, use_cache, &report, &err) != FR_OK) {
-        fprintf(stderr, "tiestone: %s\n", err.message);
+        fprintf(stderr, "terko: %s\n", err.message);
         if (write && report.count > 0) {
-            fprintf(stderr, "tiestone: %zu file%s updated before the failure\n",
+            fprintf(stderr, "terko: %zu file%s updated before the failure\n",
                     report.count, report.count == 1 ? "" : "s");
         }
         status = 1;
     } else if (write) {
-        printf("tiestone: %s\n", report.count > 0 ? "updated" : "already in sync");
+        printf("terko: %s\n", report.count > 0 ? "updated" : "already in sync");
     } else if (report.count > 0) {
         for (size_t index = 0; index < report.count; index++) {
-            fprintf(stderr, "tiestone: %s is out of date\n", report.files[index]);
+            fprintf(stderr, "terko: %s is out of date\n", report.files[index]);
         }
-        fprintf(stderr, "tiestone: run \"tiestone sync\"\n");
+        fprintf(stderr, "terko: run \"terko sync\"\n");
         status = 1;
     } else {
-        printf("tiestone: in sync\n");
+        printf("terko: in sync\n");
     }
     fr_sync_report_free(&report);
     return status;
@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
 
     switch (options.command) {
         case FR_CLI_VERSION:
-            printf("tiestone %s\n", TIESTONE_VERSION);
+            printf("terko %s\n", TERKO_VERSION);
             return 0;
         case FR_CLI_SYNC:
             return run(options.manifest_path, 1, options.use_cache);
@@ -47,6 +47,6 @@ int main(int argc, char **argv) {
             break;
     }
 
-    fprintf(stderr, "usage: tiestone [--version | sync [manifest] | check [manifest]] [--no-cache]\n");
+    fprintf(stderr, "usage: terko [--version | sync [manifest] | check [manifest]] [--no-cache]\n");
     return 2;
 }

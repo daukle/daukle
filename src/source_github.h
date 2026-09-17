@@ -1,5 +1,5 @@
-#ifndef TIESTONE_SOURCE_GITHUB_H
-#define TIESTONE_SOURCE_GITHUB_H
+#ifndef TERKO_SOURCE_GITHUB_H
+#define TERKO_SOURCE_GITHUB_H
 
 #include "registry.h"
 

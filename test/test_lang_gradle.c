@@ -8,8 +8,8 @@
 
 static const char *TEMPLATE =
     "dependencies {\n"
-    "    // tiestone:begin\n"
-    "    // tiestone:end\n"
+    "    // terko:begin\n"
+    "    // terko:end\n"
     "    testImplementation \"junit\"\n"
     "}\n";
 
@@ -49,10 +49,10 @@ TEST writes_one_line_per_module_in_order(void) {
     ASSERT_EQ(FR_OK, apply(&consumer, two_modules, 2, TEMPLATE, &text, &err));
     ASSERT_STR_EQ(
         "dependencies {\n"
-        "    // tiestone:begin\n"
+        "    // terko:begin\n"
         "    githubImplementation \"forebay:basekit:5.0.0:contracts\"\n"
         "    githubImplementation \"forebay:basekit:5.0.0:ir\"\n"
-        "    // tiestone:end\n"
+        "    // terko:end\n"
         "    testImplementation \"junit\"\n"
         "}\n", text);
     free(text);
@@ -98,13 +98,13 @@ TEST fails_when_the_target_carries_no_region(void) {
     consumer.configuration = "githubImplementation";
     char *text = NULL; fr_error err;
     ASSERT_EQ(FR_ERR, apply(&consumer, two_modules, 2, "dependencies {\n}\n", &text, &err));
-    ASSERT(strstr(err.message, "// tiestone:begin") != NULL);
+    ASSERT(strstr(err.message, "// terko:begin") != NULL);
     teardown();
     PASS();
 }
 
 TEST carries_the_expected_capability(void) {
-    ASSERT_STR_EQ("tiestone.language/gradle", FR_LANGUAGE_GRADLE.capability);
+    ASSERT_STR_EQ("terko.language/gradle", FR_LANGUAGE_GRADLE.capability);
     PASS();
 }
 

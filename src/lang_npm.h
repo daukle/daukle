@@ -1,5 +1,5 @@
-#ifndef TIESTONE_LANG_NPM_H
-#define TIESTONE_LANG_NPM_H
+#ifndef TERKO_LANG_NPM_H
+#define TERKO_LANG_NPM_H
 
 #include "registry.h"
 #include "resolve.h"

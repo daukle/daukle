@@ -1,5 +1,5 @@
-#ifndef TIESTONE_STRBUF_H
-#define TIESTONE_STRBUF_H
+#ifndef TERKO_STRBUF_H
+#define TERKO_STRBUF_H
 
 #include <stddef.h>
 

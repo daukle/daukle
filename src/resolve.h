@@ -1,5 +1,5 @@
-#ifndef TIESTONE_RESOLVE_H
-#define TIESTONE_RESOLVE_H
+#ifndef TERKO_RESOLVE_H
+#define TERKO_RESOLVE_H
 
 #include "types.h"
 #include "registry.h"

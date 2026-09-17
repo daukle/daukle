@@ -1,5 +1,5 @@
-#ifndef TIESTONE_JSONX_H
-#define TIESTONE_JSONX_H
+#ifndef TERKO_JSONX_H
+#define TERKO_JSONX_H
 
 #include "types.h"
 
