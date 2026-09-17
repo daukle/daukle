@@ -8,8 +8,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static const char *C_BEGIN_MARKER = "# terko:begin";
-static const char *C_END_MARKER = "# terko:end";
+static const char *C_BEGIN_MARKER = "# daukle:begin";
+static const char *C_END_MARKER = "# daukle:end";
 
 typedef struct {
     const char *package;
@@ -97,4 +97,4 @@ static int c_apply(void *state, const fr_consumer *consumer, const fr_resolved *
                                 consumer, resolved, count, original_text, out_text, err);
 }
 
-const fr_language_plugin FR_LANGUAGE_C = { "terko.language/c", c_apply, NULL };
+const fr_language_plugin FR_LANGUAGE_C = { "daukle.language/c", c_apply, NULL };

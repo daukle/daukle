@@ -1,5 +1,5 @@
-#ifndef TERKO_RESOLVE_H
-#define TERKO_RESOLVE_H
+#ifndef DAUKLE_RESOLVE_H
+#define DAUKLE_RESOLVE_H
 
 #include "types.h"
 #include "registry.h"

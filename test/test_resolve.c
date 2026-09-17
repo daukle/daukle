@@ -29,10 +29,10 @@ static int recording_load(void *state, const char *project, const cJSON *block,
 
 TEST hands_the_source_plugin_its_own_state(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer/terko.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer/daukle.json", &manifest, &err);
     fr_registry *registry = fr_registry_create();
     int own_state = 0;
-    fr_source_plugin recorder = { "terko.source/path", recording_load, &own_state };
+    fr_source_plugin recorder = { "daukle.source/path", recording_load, &own_state };
     fr_registry_add_source(registry, &recorder, &err);
     state_seen_by_the_source = NULL;
 
@@ -48,7 +48,7 @@ TEST hands_the_source_plugin_its_own_state(void) {
 
 TEST pulls_in_transitive_requires(void) {
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/terko.json", &manifest, &err));
+    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/daukle.json", &manifest, &err));
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -69,7 +69,7 @@ TEST pulls_in_transitive_requires(void) {
 TEST reports_a_module_that_has_no_block_for_the_language(void) {
     fr_manifest manifest;
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/terko-no-language-block.json", &manifest, &err));
+    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/daukle-no-language-block.json", &manifest, &err));
 
     fr_registry *registry = fr_registry_create();
     ASSERT_EQ(FR_OK, fr_registry_add_source(registry, &FR_SOURCE_PATH, &err));
@@ -88,7 +88,7 @@ TEST reports_a_module_that_has_no_block_for_the_language(void) {
 
 TEST deduplicates_a_module_reached_twice(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-dup/terko.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-dup/daukle.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -104,7 +104,7 @@ TEST deduplicates_a_module_reached_twice(void) {
 
 TEST rejects_a_version_outside_the_range(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-badrange/terko.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-badrange/daukle.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -120,7 +120,7 @@ TEST rejects_a_version_outside_the_range(void) {
 
 TEST reports_a_module_absent_from_the_language(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-noloader/terko.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-noloader/daukle.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -136,7 +136,7 @@ TEST reports_a_module_absent_from_the_language(void) {
 
 TEST reports_an_unknown_module_by_name(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-unknown/terko.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-unknown/daukle.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -151,7 +151,7 @@ TEST reports_an_unknown_module_by_name(void) {
 
 TEST rejects_a_project_that_does_not_match_its_source(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-mismatch/terko.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-mismatch/daukle.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -167,7 +167,7 @@ TEST rejects_a_project_that_does_not_match_its_source(void) {
 
 TEST resolves_no_modules_for_any_language_without_looking_up_a_block(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-badlanguage/terko.json", &manifest, &err);
+    fr_manifest_read("test/fixtures/consumer-badlanguage/daukle.json", &manifest, &err);
     fr_registry *registry = with_path_source();
 
     fr_resolved *items = NULL; size_t count = 0;

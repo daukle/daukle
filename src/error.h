@@ -1,5 +1,5 @@
-#ifndef TERKO_ERROR_H
-#define TERKO_ERROR_H
+#ifndef DAUKLE_ERROR_H
+#define DAUKLE_ERROR_H
 
 #include "types.h"
 

@@ -7,7 +7,7 @@
 
 TEST reads_a_producer(void) {
     fr_project project; fr_error err;
-    ASSERT_EQ(FR_OK, fr_project_read("test/fixtures/producer/terko.json", &project, &err));
+    ASSERT_EQ(FR_OK, fr_project_read("test/fixtures/producer/daukle.json", &project, &err));
     ASSERT_STR_EQ("forebay/basekit", project.project);
     ASSERT_EQ(5, project.version.major);
     ASSERT_EQ(3, (int) project.module_count);
@@ -17,7 +17,7 @@ TEST reads_a_producer(void) {
 
 TEST finds_a_module_and_its_requires(void) {
     fr_project project; fr_error err;
-    fr_project_read("test/fixtures/producer/terko.json", &project, &err);
+    fr_project_read("test/fixtures/producer/daukle.json", &project, &err);
     const fr_module *ir = fr_project_module(&project, "ir");
     ASSERT(ir != NULL);
     ASSERT_EQ(1, (int) ir->requires_count);
@@ -32,7 +32,7 @@ TEST finds_a_module_and_its_requires(void) {
 
 TEST leaves_an_absent_language_block_null(void) {
     fr_project project; fr_error err;
-    fr_project_read("test/fixtures/producer/terko.json", &project, &err);
+    fr_project_read("test/fixtures/producer/daukle.json", &project, &err);
     const fr_module *loader = fr_project_module(&project, "loader");
     ASSERT(loader != NULL);
     ASSERT(cJSON_GetObjectItemCaseSensitive(loader->blocks, "gradle") == NULL);
@@ -42,7 +42,7 @@ TEST leaves_an_absent_language_block_null(void) {
 
 TEST returns_null_for_an_unknown_module(void) {
     fr_project project; fr_error err;
-    fr_project_read("test/fixtures/producer/terko.json", &project, &err);
+    fr_project_read("test/fixtures/producer/daukle.json", &project, &err);
     ASSERT(fr_project_module(&project, "nope") == NULL);
     fr_project_free(&project);
     PASS();
@@ -50,7 +50,7 @@ TEST returns_null_for_an_unknown_module(void) {
 
 TEST reads_a_consumer(void) {
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/terko.json", &manifest, &err));
+    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/daukle.json", &manifest, &err));
     ASSERT_EQ(1, (int) manifest.source_count);
     ASSERT_STR_EQ("forebay/basekit", manifest.sources[0].project);
     ASSERT_STR_EQ("path", manifest.sources[0].kind);
@@ -71,7 +71,7 @@ TEST reads_a_consumer(void) {
 TEST keeps_a_source_block_of_any_kind(void) {
     fr_manifest manifest;
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/terko-unknown-source.json", &manifest, &err));
+    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/daukle-unknown-source.json", &manifest, &err));
 
     const fr_source *source = fr_manifest_source(&manifest, "forebay/basekit");
     ASSERT(source != NULL);
@@ -91,7 +91,7 @@ TEST keeps_a_source_block_of_any_kind(void) {
    would otherwise resolve to the core's own value. */
 TEST rejects_a_consumer_language_that_names_a_reserved_module_key(void) {
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_ERR, fr_manifest_read("test/fixtures/consumer-reserved-language/terko.json",
+    ASSERT_EQ(FR_ERR, fr_manifest_read("test/fixtures/consumer-reserved-language/daukle.json",
                                        &manifest, &err));
     ASSERT(strstr(err.message, "reserved") != NULL);
     ASSERT(strstr(err.message, "requires") != NULL);
@@ -100,7 +100,7 @@ TEST rejects_a_consumer_language_that_names_a_reserved_module_key(void) {
 
 TEST rejects_an_unknown_schema(void) {
     fr_project project; fr_error err;
-    ASSERT_EQ(FR_ERR, fr_project_read("test/fixtures/bad-schema/terko.json", &project, &err));
+    ASSERT_EQ(FR_ERR, fr_project_read("test/fixtures/bad-schema/daukle.json", &project, &err));
     ASSERT(strstr(err.message, "schema") != NULL);
     PASS();
 }

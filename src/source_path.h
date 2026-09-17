@@ -1,5 +1,5 @@
-#ifndef TERKO_SOURCE_PATH_H
-#define TERKO_SOURCE_PATH_H
+#ifndef DAUKLE_SOURCE_PATH_H
+#define DAUKLE_SOURCE_PATH_H
 
 #include "registry.h"
 

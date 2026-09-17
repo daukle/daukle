@@ -10,9 +10,9 @@
 
 static char *join_manifest_path(const char *base_dir, const char *relative_path) {
     if (base_dir == NULL || base_dir[0] == '\0') base_dir = ".";
-    size_t length = strlen(base_dir) + 1 + strlen(relative_path) + 1 + strlen("terko.json") + 1;
+    size_t length = strlen(base_dir) + 1 + strlen(relative_path) + 1 + strlen("daukle.json") + 1;
     char *joined = malloc(length);
-    if (joined != NULL) snprintf(joined, length, "%s/%s/terko.json", base_dir, relative_path);
+    if (joined != NULL) snprintf(joined, length, "%s/%s/daukle.json", base_dir, relative_path);
     return joined;
 }
 
@@ -36,4 +36,4 @@ static int source_path_load(void *state, const char *project, const cJSON *block
     return result;
 }
 
-const fr_source_plugin FR_SOURCE_PATH = { "terko.source/path", source_path_load, NULL };
+const fr_source_plugin FR_SOURCE_PATH = { "daukle.source/path", source_path_load, NULL };

@@ -1,5 +1,5 @@
-#ifndef TERKO_HTTP_H
-#define TERKO_HTTP_H
+#ifndef DAUKLE_HTTP_H
+#define DAUKLE_HTTP_H
 
 #include "types.h"
 

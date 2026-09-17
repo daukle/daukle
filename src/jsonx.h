@@ -1,5 +1,5 @@
-#ifndef TERKO_JSONX_H
-#define TERKO_JSONX_H
+#ifndef DAUKLE_JSONX_H
+#define DAUKLE_JSONX_H
 
 #include "types.h"
 

@@ -15,11 +15,11 @@ static int fake_load(void *state, const char *project, const cJSON *block,
 TEST returns_a_plugin_registered_under_its_capability(void) {
     fr_registry *registry = fr_registry_create();
     int called = 0;
-    fr_source_plugin plugin = { "terko.source/test", fake_load, &called };
+    fr_source_plugin plugin = { "daukle.source/test", fake_load, &called };
     fr_error err;
     ASSERT_EQ(FR_OK, fr_registry_add_source(registry, &plugin, &err));
 
-    const fr_source_plugin *found = fr_registry_source(registry, "terko.source/test");
+    const fr_source_plugin *found = fr_registry_source(registry, "daukle.source/test");
     ASSERT(found != NULL);
     fr_project project;
     ASSERT_EQ(FR_OK, found->load(found->state, "x/y", NULL, ".", &project, &err));
@@ -30,7 +30,7 @@ TEST returns_a_plugin_registered_under_its_capability(void) {
 
 TEST returns_null_for_an_unregistered_capability(void) {
     fr_registry *registry = fr_registry_create();
-    ASSERT(fr_registry_source(registry, "terko.source/absent") == NULL);
+    ASSERT(fr_registry_source(registry, "daukle.source/absent") == NULL);
     fr_registry_destroy(registry);
     PASS();
 }
@@ -38,11 +38,11 @@ TEST returns_null_for_an_unregistered_capability(void) {
 TEST rejects_a_duplicate_capability(void) {
     fr_registry *registry = fr_registry_create();
     int called = 0;
-    fr_source_plugin plugin = { "terko.source/test", fake_load, &called };
+    fr_source_plugin plugin = { "daukle.source/test", fake_load, &called };
     fr_error err;
     fr_registry_add_source(registry, &plugin, &err);
     ASSERT_EQ(FR_ERR, fr_registry_add_source(registry, &plugin, &err));
-    ASSERT(strstr(err.message, "terko.source/test") != NULL);
+    ASSERT(strstr(err.message, "daukle.source/test") != NULL);
     fr_registry_destroy(registry);
     PASS();
 }
@@ -50,10 +50,10 @@ TEST rejects_a_duplicate_capability(void) {
 TEST keeps_source_and_language_spaces_separate(void) {
     fr_registry *registry = fr_registry_create();
     int called = 0;
-    fr_source_plugin plugin = { "terko/x", fake_load, &called };
+    fr_source_plugin plugin = { "daukle/x", fake_load, &called };
     fr_error err;
     fr_registry_add_source(registry, &plugin, &err);
-    ASSERT(fr_registry_language(registry, "terko/x") == NULL);
+    ASSERT(fr_registry_language(registry, "daukle/x") == NULL);
     fr_registry_destroy(registry);
     PASS();
 }

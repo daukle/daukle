@@ -1,5 +1,5 @@
-#ifndef TERKO_MANIFEST_H
-#define TERKO_MANIFEST_H
+#ifndef DAUKLE_MANIFEST_H
+#define DAUKLE_MANIFEST_H
 
 #include "types.h"
 

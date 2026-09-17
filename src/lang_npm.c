@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *LEDGER_PATH = "terko.managed";
+static const char *LEDGER_PATH = "daukle.managed";
 
 typedef struct {
     const char *package;
@@ -54,8 +54,8 @@ static int read_ledger(const char *original_text, const char *configuration,
         return FR_ERR;
     }
 
-    const cJSON *terko = cJSON_GetObjectItemCaseSensitive(document, "terko");
-    const cJSON *managed = terko != NULL ? cJSON_GetObjectItemCaseSensitive(terko, "managed") : NULL;
+    const cJSON *daukle = cJSON_GetObjectItemCaseSensitive(document, "daukle");
+    const cJSON *managed = daukle != NULL ? cJSON_GetObjectItemCaseSensitive(daukle, "managed") : NULL;
     const cJSON *owned = managed != NULL ? cJSON_GetObjectItemCaseSensitive(managed, configuration) : NULL;
     if (!cJSON_IsArray(owned)) {
         cJSON_Delete(document);
@@ -186,4 +186,4 @@ static int npm_apply(void *state, const fr_consumer *consumer, const fr_resolved
     return FR_OK;
 }
 
-const fr_language_plugin FR_LANGUAGE_NPM = { "terko.language/npm", npm_apply, NULL };
+const fr_language_plugin FR_LANGUAGE_NPM = { "daukle.language/npm", npm_apply, NULL };

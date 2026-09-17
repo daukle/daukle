@@ -1,5 +1,5 @@
-#ifndef TERKO_LANG_REGION_H
-#define TERKO_LANG_REGION_H
+#ifndef DAUKLE_LANG_REGION_H
+#define DAUKLE_LANG_REGION_H
 
 #include "resolve.h"
 #include "types.h"

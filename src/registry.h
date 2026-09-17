@@ -1,5 +1,5 @@
-#ifndef TERKO_REGISTRY_H
-#define TERKO_REGISTRY_H
+#ifndef DAUKLE_REGISTRY_H
+#define DAUKLE_REGISTRY_H
 
 #include "types.h"
 

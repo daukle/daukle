@@ -115,7 +115,7 @@ static int sync_consumer(const fr_consumer *consumer, const fr_manifest *manifes
     }
 
     char capability[256];
-    snprintf(capability, sizeof capability, "terko.language/%s", consumer->language);
+    snprintf(capability, sizeof capability, "daukle.language/%s", consumer->language);
     const fr_language_plugin *language = fr_registry_language(registry, capability);
     if (language == NULL) {
         fr_error_set(err, "%s: no language plugin registered for \"%s\"", manifest_path, consumer->language);

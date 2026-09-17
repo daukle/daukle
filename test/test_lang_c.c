@@ -8,8 +8,8 @@
 
 static const char *TEMPLATE =
     "add_executable(demo main.c)\n"
-    "# terko:begin\n"
-    "# terko:end\n";
+    "# daukle:begin\n"
+    "# daukle:end\n";
 
 static cJSON *c_block(const char *package, const char *url, const char *sha256) {
     cJSON *block = cJSON_CreateObject();
@@ -42,12 +42,12 @@ TEST declares_and_links_one_module(void) {
     ASSERT_EQ(FR_OK, apply("demo", &one, 1, TEMPLATE, &out, &err));
     ASSERT_STR_EQ(
         "add_executable(demo main.c)\n"
-        "# terko:begin\n"
+        "# daukle:begin\n"
         "include(FetchContent)\n"
         "FetchContent_Declare(basekit-ir URL \"https://example.test/ir.tar.gz\")\n"
         "FetchContent_MakeAvailable(basekit-ir)\n"
         "target_link_libraries(demo PRIVATE basekit-ir)\n"
-        "# terko:end\n", out);
+        "# daukle:end\n", out);
     free(out);
     cJSON_Delete(block);
     PASS();
@@ -63,14 +63,14 @@ TEST emits_a_hash_only_when_the_block_carries_one(void) {
     ASSERT_EQ(FR_OK, apply("demo", modules, 2, TEMPLATE, &out, &err));
     ASSERT_STR_EQ(
         "add_executable(demo main.c)\n"
-        "# terko:begin\n"
+        "# daukle:begin\n"
         "include(FetchContent)\n"
         "FetchContent_Declare(basekit-contracts URL \"https://example.test/contracts.tar.gz\")\n"
         "FetchContent_MakeAvailable(basekit-contracts)\n"
         "FetchContent_Declare(basekit-ir URL \"https://example.test/ir.tar.gz\" URL_HASH SHA256=abc123)\n"
         "FetchContent_MakeAvailable(basekit-ir)\n"
         "target_link_libraries(demo PRIVATE basekit-contracts basekit-ir)\n"
-        "# terko:end\n", out);
+        "# daukle:end\n", out);
     free(out);
     cJSON_Delete(first);
     cJSON_Delete(second);
@@ -88,7 +88,7 @@ TEST links_every_package_once_in_resolution_order(void) {
     const char *link = strstr(out, "target_link_libraries");
     ASSERT(link != NULL);
     ASSERT_STR_EQ("target_link_libraries(demo PRIVATE basekit-contracts basekit-ir)\n"
-                  "# terko:end\n", link);
+                  "# daukle:end\n", link);
     free(out);
     cJSON_Delete(first);
     cJSON_Delete(second);
@@ -139,13 +139,13 @@ TEST fails_when_the_target_carries_no_region(void) {
     fr_resolved one = resolved_module("ir", block);
     char *out = NULL; fr_error err;
     ASSERT_EQ(FR_ERR, apply("demo", &one, 1, "add_executable(demo main.c)\n", &out, &err));
-    ASSERT(strstr(err.message, "# terko:begin") != NULL);
+    ASSERT(strstr(err.message, "# daukle:begin") != NULL);
     cJSON_Delete(block);
     PASS();
 }
 
 TEST carries_the_expected_capability(void) {
-    ASSERT_STR_EQ("terko.language/c", FR_LANGUAGE_C.capability);
+    ASSERT_STR_EQ("daukle.language/c", FR_LANGUAGE_C.capability);
     PASS();
 }
 

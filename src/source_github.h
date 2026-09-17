@@ -1,5 +1,5 @@
-#ifndef TERKO_SOURCE_GITHUB_H
-#define TERKO_SOURCE_GITHUB_H
+#ifndef DAUKLE_SOURCE_GITHUB_H
+#define DAUKLE_SOURCE_GITHUB_H
 
 #include "registry.h"
 

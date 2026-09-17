@@ -1,5 +1,5 @@
-#ifndef TERKO_JSONEDIT_H
-#define TERKO_JSONEDIT_H
+#ifndef DAUKLE_JSONEDIT_H
+#define DAUKLE_JSONEDIT_H
 
 #include "types.h"
 
@@ -10,7 +10,7 @@
    first write buries the one line that actually drifted.
 
    path addresses the object to edit, "" for the document root and dotted for a
-   nested one ("terko.managed"). A missing object along the path is created by
+   nested one ("daukle.managed"). A missing object along the path is created by
    a set and is left alone by a remove. Keys are compared raw, so a key written
    with a json escape does not match one written without it. */
 

@@ -26,7 +26,7 @@ static void reset_fixtures(void) {
 TEST reproduces_both_real_consumers(void) {
     reset_fixtures();
     fr_sync_report report; fr_error err;
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/terko.json", 1, 1, &report, &err));
+    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.json", 1, 1, &report, &err));
     ASSERT_EQ(2, (int) report.count);
     fr_sync_report_free(&report);
 
@@ -46,9 +46,9 @@ TEST reproduces_both_real_consumers(void) {
 TEST the_second_run_changes_nothing(void) {
     reset_fixtures();
     fr_sync_report report; fr_error err;
-    fr_sync("test/fixtures/live/stub-translator/terko.json", 1, 1, &report, &err);
+    fr_sync("test/fixtures/live/stub-translator/daukle.json", 1, 1, &report, &err);
     fr_sync_report_free(&report);
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/terko.json", 0, 1, &report, &err));
+    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.json", 0, 1, &report, &err));
     ASSERT_EQ(0, (int) report.count);
     fr_sync_report_free(&report);
     reset_fixtures();
@@ -58,7 +58,7 @@ TEST the_second_run_changes_nothing(void) {
 TEST check_names_every_drifted_consumer(void) {
     reset_fixtures();
     fr_sync_report report; fr_error err;
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/terko.json", 0, 1, &report, &err));
+    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.json", 0, 1, &report, &err));
     ASSERT_EQ(2, (int) report.count);
     ASSERT(strstr(report.files[0], "/stub/build.gradle") != NULL);
     ASSERT(strstr(report.files[1], "teavm-stub/build.gradle") != NULL);
@@ -69,21 +69,21 @@ TEST check_names_every_drifted_consumer(void) {
 
 static const char *BUILD_TEMPLATE =
     "dependencies {\n"
-    "    // terko:begin\n"
-    "    // terko:end\n"
+    "    // daukle:begin\n"
+    "    // daukle:end\n"
     "    testImplementation \"junit\"\n"
     "}\n";
 
 static const char *e2e_temp_root(void) {
     static char root[512];
-    snprintf(root, sizeof root, "%s/terko_test_e2e_github_%d",
+    snprintf(root, sizeof root, "%s/daukle_test_e2e_github_%d",
              fr_test_temp_base(), fr_test_process_id());
     return root;
 }
 
 static const char *e2e_cache_root(void) {
     static char root[512];
-    snprintf(root, sizeof root, "%s/terko_test_e2e_github_cache_%d",
+    snprintf(root, sizeof root, "%s/daukle_test_e2e_github_cache_%d",
              fr_test_temp_base(), fr_test_process_id());
     return root;
 }
@@ -116,29 +116,29 @@ static void setup_e2e_tree(void) {
     snprintf(path, sizeof path, "%s/path/producer", root); fr_test_make_directory(path);
     snprintf(path, sizeof path, "%s/github", root); fr_test_make_directory(path);
 
-    snprintf(path, sizeof path, "%s/path/consumer/terko.json", root);
-    copy_text_file("test/fixtures/consumer/terko.json", path);
+    snprintf(path, sizeof path, "%s/path/consumer/daukle.json", root);
+    copy_text_file("test/fixtures/consumer/daukle.json", path);
 
     snprintf(path, sizeof path, "%s/path/consumer/build.gradle", root);
     fr_file_write_text(path, BUILD_TEMPLATE, &err);
 
-    snprintf(path, sizeof path, "%s/path/producer/terko.json", root);
-    copy_text_file("test/fixtures/producer/terko.json", path);
+    snprintf(path, sizeof path, "%s/path/producer/daukle.json", root);
+    copy_text_file("test/fixtures/producer/daukle.json", path);
 
-    snprintf(path, sizeof path, "%s/github/terko-github.json", root);
-    copy_text_file("test/fixtures/consumer/terko-github.json", path);
+    snprintf(path, sizeof path, "%s/github/daukle-github.json", root);
+    copy_text_file("test/fixtures/consumer/daukle-github.json", path);
 
     snprintf(path, sizeof path, "%s/github/build.gradle", root);
     fr_file_write_text(path, BUILD_TEMPLATE, &err);
 }
 
 static char *extract_generated_region(const char *text) {
-    const char *begin = strstr(text, "// terko:begin");
+    const char *begin = strstr(text, "// daukle:begin");
     if (begin == NULL) return NULL;
-    const char *end = strstr(begin, "// terko:end");
+    const char *end = strstr(begin, "// daukle:end");
     if (end == NULL) return NULL;
 
-    const char *start = begin + strlen("// terko:begin");
+    const char *start = begin + strlen("// daukle:begin");
     size_t length = (size_t) (end - start);
     char *region = malloc(length + 1);
     if (region != NULL) {
@@ -158,14 +158,14 @@ static int github_stub_get(const char *url, const fr_http_header *headers, size_
     (void) url; (void) headers; (void) header_count;
     GITHUB_STUB_CALLS++;
     char *text = NULL;
-    if (fr_file_read_text("test/fixtures/producer/terko.json", &text, err) != FR_OK) return FR_ERR;
+    if (fr_file_read_text("test/fixtures/producer/daukle.json", &text, err) != FR_OK) return FR_ERR;
     *out_length = strlen(text);
     *out_body = text;
     return FR_OK;
 }
 
 static int github_cache_entry_exists(void) {
-    return fr_test_count_files(e2e_cache_root(), "terko.json") > 0;
+    return fr_test_count_files(e2e_cache_root(), "daukle.json") > 0;
 }
 
 TEST github_source_matches_path_source(void) {
@@ -177,9 +177,9 @@ TEST github_source_matches_path_source(void) {
     char path_build[700];
     char github_manifest[700];
     char github_build[700];
-    snprintf(path_manifest, sizeof path_manifest, "%s/path/consumer/terko.json", root);
+    snprintf(path_manifest, sizeof path_manifest, "%s/path/consumer/daukle.json", root);
     snprintf(path_build, sizeof path_build, "%s/path/consumer/build.gradle", root);
-    snprintf(github_manifest, sizeof github_manifest, "%s/github/terko-github.json", root);
+    snprintf(github_manifest, sizeof github_manifest, "%s/github/daukle-github.json", root);
     snprintf(github_build, sizeof github_build, "%s/github/build.gradle", root);
 
     fr_error err;
@@ -188,14 +188,14 @@ TEST github_source_matches_path_source(void) {
     ASSERT_EQ(1, (int) path_report.count);
     fr_sync_report_free(&path_report);
 
-    fr_test_set_env("TERKO_CACHE_DIR", e2e_cache_root());
+    fr_test_set_env("DAUKLE_CACHE_DIR", e2e_cache_root());
     fr_http_fn original_backend = fr_http_set_backend(github_stub_get);
 
     fr_sync_report github_report;
     int github_result = fr_sync(github_manifest, 1, 1, &github_report, &err);
 
     fr_http_set_backend(original_backend);
-    fr_test_set_env("TERKO_CACHE_DIR", NULL);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
 
     ASSERT_EQ(FR_OK, github_result);
     ASSERT_EQ(1, (int) github_report.count);
@@ -236,10 +236,10 @@ TEST check_reports_drift_through_the_github_source(void) {
     const char *root = e2e_temp_root();
     char github_manifest[700];
     char github_build[700];
-    snprintf(github_manifest, sizeof github_manifest, "%s/github/terko-github.json", root);
+    snprintf(github_manifest, sizeof github_manifest, "%s/github/daukle-github.json", root);
     snprintf(github_build, sizeof github_build, "%s/github/build.gradle", root);
 
-    fr_test_set_env("TERKO_CACHE_DIR", e2e_cache_root());
+    fr_test_set_env("DAUKLE_CACHE_DIR", e2e_cache_root());
     fr_http_fn original_backend = fr_http_set_backend(github_stub_get);
 
     fr_error err;
@@ -256,7 +256,7 @@ TEST check_reports_drift_through_the_github_source(void) {
     int in_sync_result = fr_sync(github_manifest, 0, 1, &in_sync, &err);
 
     fr_http_set_backend(original_backend);
-    fr_test_set_env("TERKO_CACHE_DIR", NULL);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
 
     ASSERT_EQ(FR_OK, drift_result);
     ASSERT_EQ(1, (int) drifted.count);
@@ -290,9 +290,9 @@ TEST no_cache_bypasses_both_the_read_and_the_write(void) {
 
     const char *root = e2e_temp_root();
     char github_manifest[700];
-    snprintf(github_manifest, sizeof github_manifest, "%s/github/terko-github.json", root);
+    snprintf(github_manifest, sizeof github_manifest, "%s/github/daukle-github.json", root);
 
-    fr_test_set_env("TERKO_CACHE_DIR", e2e_cache_root());
+    fr_test_set_env("DAUKLE_CACHE_DIR", e2e_cache_root());
     fr_http_fn original_backend = fr_http_set_backend(github_stub_get);
 
     fr_error err;
@@ -316,7 +316,7 @@ TEST no_cache_bypasses_both_the_read_and_the_write(void) {
     int calls_with_cache = GITHUB_STUB_CALLS;
 
     fr_http_set_backend(original_backend);
-    fr_test_set_env("TERKO_CACHE_DIR", NULL);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
 
     ASSERT_EQ(FR_OK, first_no_cache);
     ASSERT_EQ(FR_OK, second_no_cache);

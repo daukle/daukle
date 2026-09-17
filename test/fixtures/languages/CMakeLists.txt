@@ -3,5 +3,5 @@ project(demo C)
 
 add_executable(demo main.c)
 
-# terko:begin
-# terko:end
+# daukle:begin
+# daukle:end

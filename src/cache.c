@@ -54,7 +54,7 @@ static int check_root_fit(int written, size_t out_size, fr_error *err) {
 }
 
 static int cache_root_dir(char *out, size_t out_size, fr_error *err) {
-    const char *override = getenv("TERKO_CACHE_DIR");
+    const char *override = getenv("DAUKLE_CACHE_DIR");
     if (override != NULL && override[0] != '\0') {
         return check_root_fit(snprintf(out, out_size, "%s", override), out_size, err);
     }
@@ -62,20 +62,20 @@ static int cache_root_dir(char *out, size_t out_size, fr_error *err) {
 #ifdef _WIN32
     const char *local_appdata = getenv("LOCALAPPDATA");
     if (local_appdata != NULL && local_appdata[0] != '\0') {
-        return check_root_fit(snprintf(out, out_size, "%s/terko/cache", local_appdata), out_size, err);
+        return check_root_fit(snprintf(out, out_size, "%s/daukle/cache", local_appdata), out_size, err);
     }
 #else
     const char *xdg_cache_home = getenv("XDG_CACHE_HOME");
     if (xdg_cache_home != NULL && xdg_cache_home[0] != '\0') {
-        return check_root_fit(snprintf(out, out_size, "%s/terko", xdg_cache_home), out_size, err);
+        return check_root_fit(snprintf(out, out_size, "%s/daukle", xdg_cache_home), out_size, err);
     }
     const char *home = getenv("HOME");
     if (home != NULL && home[0] != '\0') {
-        return check_root_fit(snprintf(out, out_size, "%s/.cache/terko", home), out_size, err);
+        return check_root_fit(snprintf(out, out_size, "%s/.cache/daukle", home), out_size, err);
     }
 #endif
 
-    fr_error_set(err, "no cache directory available: set TERKO_CACHE_DIR");
+    fr_error_set(err, "no cache directory available: set DAUKLE_CACHE_DIR");
     return FR_ERR;
 }
 
@@ -114,13 +114,13 @@ int fr_cache_path(const char *project, const char *version, const char *artifact
     artifact_component(artifact, artifact_id);
 
     size_t length = strlen(root) + 1 + strlen(project) + 1 + strlen(version) + 1
-                  + strlen(artifact_id) + 1 + strlen("terko.json") + 1;
+                  + strlen(artifact_id) + 1 + strlen("daukle.json") + 1;
     char *path = malloc(length);
     if (path == NULL) {
         fr_error_set(err, "out of memory building cache path");
         return FR_ERR;
     }
-    snprintf(path, length, "%s/%s/%s/%s/terko.json", root, project, version, artifact_id);
+    snprintf(path, length, "%s/%s/%s/%s/daukle.json", root, project, version, artifact_id);
 
     *out_path = path;
     return FR_OK;

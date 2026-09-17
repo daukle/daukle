@@ -1,5 +1,5 @@
-#ifndef TERKO_TEST_SUPPORT_H
-#define TERKO_TEST_SUPPORT_H
+#ifndef DAUKLE_TEST_SUPPORT_H
+#define DAUKLE_TEST_SUPPORT_H
 
 const char *fr_test_temp_base(void);
 int fr_test_process_id(void);

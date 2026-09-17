@@ -1,5 +1,5 @@
-#ifndef TERKO_SEMVER_H
-#define TERKO_SEMVER_H
+#ifndef DAUKLE_SEMVER_H
+#define DAUKLE_SEMVER_H
 
 #include "types.h"
 

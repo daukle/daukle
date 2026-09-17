@@ -1,5 +1,5 @@
-#ifndef TERKO_STRBUF_H
-#define TERKO_STRBUF_H
+#ifndef DAUKLE_STRBUF_H
+#define DAUKLE_STRBUF_H
 
 #include <stddef.h>
 

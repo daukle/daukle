@@ -1,6 +1,6 @@
 // The reference translator. Zero-dependency, Java-8-clean (TeaVM-transpilable), mirroring basekit's
 // :ir. Depends on :ir for the Translator interface and the IR types.
 dependencies {
-    // terko:begin
-    // terko:end
+    // daukle:begin
+    // daukle:end
 }

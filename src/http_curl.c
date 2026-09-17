@@ -82,7 +82,7 @@ static fetch_outcome fetch_once(const char *current_url, const char *original_ur
 
     curl_easy_setopt(handle, CURLOPT_URL, current_url);
     curl_easy_setopt(handle, CURLOPT_FOLLOWLOCATION, 0L);
-    curl_easy_setopt(handle, CURLOPT_USERAGENT, "terko");
+    curl_easy_setopt(handle, CURLOPT_USERAGENT, "daukle");
     curl_easy_setopt(handle, CURLOPT_WRITEFUNCTION, append);
     curl_easy_setopt(handle, CURLOPT_WRITEDATA, &buffer);
     curl_easy_setopt(handle, CURLOPT_CONNECTTIMEOUT, 60L);

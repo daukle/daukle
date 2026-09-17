@@ -1,5 +1,5 @@
-#ifndef TERKO_CACHE_H
-#define TERKO_CACHE_H
+#ifndef DAUKLE_CACHE_H
+#define DAUKLE_CACHE_H
 
 #include "types.h"
 

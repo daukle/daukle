@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 TEST fetches_a_real_release_asset(void) {
-    if (getenv("TERKO_NETWORK_TESTS") == NULL) SKIPm("TERKO_NETWORK_TESTS is not set");
+    if (getenv("DAUKLE_NETWORK_TESTS") == NULL) SKIPm("DAUKLE_NETWORK_TESTS is not set");
 
     char *body = NULL;
     size_t length = 0;

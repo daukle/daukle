@@ -1,5 +1,5 @@
-#ifndef TERKO_LANG_C_H
-#define TERKO_LANG_C_H
+#ifndef DAUKLE_LANG_C_H
+#define DAUKLE_LANG_C_H
 
 #include "registry.h"
 #include "resolve.h"

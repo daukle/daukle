@@ -35,7 +35,7 @@ static int stub_get(const char *url, const fr_http_header *headers, size_t heade
    never contend over, another run's cache entries. */
 static const char *test_cache_root(void) {
     static char root[512];
-    snprintf(root, sizeof root, "%s/terko_test_source_github_cache_%d",
+    snprintf(root, sizeof root, "%s/daukle_test_source_github_cache_%d",
              fr_test_temp_base(), fr_test_process_id());
     return root;
 }
@@ -44,12 +44,12 @@ static const char *test_cache_root(void) {
    backend before touching FR_SOURCE_GITHUB, so no test can reach a real
    cache directory or the network. */
 static void isolate_environment(void) {
-    fr_test_set_env("TERKO_CACHE_DIR", test_cache_root());
+    fr_test_set_env("DAUKLE_CACHE_DIR", test_cache_root());
     ORIGINAL_BACKEND = fr_http_set_backend(stub_get);
 }
 
 static void restore_environment(void) {
-    fr_test_set_env("TERKO_CACHE_DIR", NULL);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
     fr_http_set_backend(ORIGINAL_BACKEND);
 }
 
@@ -71,7 +71,7 @@ TEST builds_the_release_asset_url_from_the_block(void) {
     fr_error err;
     ASSERT_EQ(FR_OK, FR_SOURCE_GITHUB.load(FR_SOURCE_GITHUB.state, "forebay/basekit",
                                            block, ".", &project, &err));
-    ASSERT_STR_EQ("https://github.com/forebay/basekit/releases/download/5.0.0/terko.json",
+    ASSERT_STR_EQ("https://github.com/forebay/basekit/releases/download/5.0.0/daukle.json",
                   LAST_URL);
     fr_project_free(&project);
     cJSON_Delete(block);

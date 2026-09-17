@@ -1,5 +1,5 @@
-#ifndef TERKO_CLI_H
-#define TERKO_CLI_H
+#ifndef DAUKLE_CLI_H
+#define DAUKLE_CLI_H
 
 typedef enum {
     FR_CLI_SYNC,

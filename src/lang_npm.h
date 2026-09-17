@@ -1,5 +1,5 @@
-#ifndef TERKO_LANG_NPM_H
-#define TERKO_LANG_NPM_H
+#ifndef DAUKLE_LANG_NPM_H
+#define DAUKLE_LANG_NPM_H
 
 #include "registry.h"
 #include "resolve.h"

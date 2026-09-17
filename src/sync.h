@@ -1,5 +1,5 @@
-#ifndef TERKO_SYNC_H
-#define TERKO_SYNC_H
+#ifndef DAUKLE_SYNC_H
+#define DAUKLE_SYNC_H
 
 #include "types.h"
 
