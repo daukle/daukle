@@ -157,6 +157,47 @@ TEST a_script_registered_source_plugin_resolves_through_sync(void) {
     PASS();
 }
 
+/* A truncated capability string could make two distinct long names collide on
+   the same 128-byte buffer and spuriously trip the "declared twice" check
+   instead of registering both; take_slot must detect the truncation itself
+   and name the plugin rather than silently cut its capability short. */
+TEST a_plugin_name_too_long_for_the_capability_buffer_is_rejected(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    fr_build_registry(&registry, &err);
+    fr_manifest manifest;
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-plugin-long-name/daukle.toml",
+                                          registry, &manifest, &err));
+    ASSERT(strstr(err.message, "too long") != NULL);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* lua_language_apply now runs its whole body, marshaling included, under one
+   lua_pcall so a raw Lua C API call cannot throw unprotected and abort the
+   process. This proves that protection does not change the observable
+   outcome of a script's own error: it still surfaces as a clean FR_ERR with
+   the script's message, whether the error comes from the marshaling this
+   test cannot force to fail or, as here, from the plugin's own code. */
+TEST a_language_plugin_that_raises_an_error_produces_a_clean_failure(void) {
+    fr_error err;
+    fr_sync_report report;
+    ASSERT_EQ(FR_ERR, fr_sync("test/fixtures/lua-plugin-error/daukle.toml", 1, 0, &report, &err));
+    ASSERT(strstr(err.message, "boom from a language plugin") != NULL);
+    PASS();
+}
+
+/* Same proof for lua_source_load's protected frame: the source plugin's load
+   raises before fr_resolve_consumer ever reaches the language plugin. */
+TEST a_source_plugin_that_raises_an_error_produces_a_clean_failure(void) {
+    fr_error err;
+    fr_sync_report report;
+    ASSERT_EQ(FR_ERR, fr_sync("test/fixtures/lua-source-error/daukle.toml", 1, 0, &report, &err));
+    ASSERT(strstr(err.message, "boom from a source plugin") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -170,5 +211,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_script_registers_a_language_plugin);
     RUN_TEST(a_script_may_not_take_over_a_built_in_capability);
     RUN_TEST(a_script_registered_source_plugin_resolves_through_sync);
+    RUN_TEST(a_plugin_name_too_long_for_the_capability_buffer_is_rejected);
+    RUN_TEST(a_language_plugin_that_raises_an_error_produces_a_clean_failure);
+    RUN_TEST(a_source_plugin_that_raises_an_error_produces_a_clean_failure);
     GREATEST_MAIN_END();
 }

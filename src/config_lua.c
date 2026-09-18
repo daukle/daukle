@@ -130,91 +130,149 @@ static fr_lua_plugin_slot *slot_for(const char *capability) {
     return NULL;
 }
 
+/* Every function below whose name starts with "protected_" is entered as a plain
+   C call (not a Lua call), so no lua_pcall frame is active yet: L->errorJmp is
+   NULL. Nothing may touch the Lua C API directly from such an entry point, since
+   a raw call that needs to allocate and finds the capped allocator refusing
+   throws with no protected frame and no panic handler, which vendor/lua/ldo.c
+   resolves with abort(). Each one instead pushes its own zero-upvalue C function
+   (lua_pushcfunction never allocates) and runs it under its own lua_pcall, moving
+   every raw API call inside that protected frame; the actual arguments travel
+   through a file-static context struct rather than closure upvalues, since a
+   closure with upvalues allocates on the push itself, before any protection
+   exists to catch that allocation failing. */
+
+typedef struct {
+    fr_lua_plugin_slot *slot;
+    const fr_consumer *consumer;
+    const fr_resolved *resolved;
+    size_t count;
+    const char *original_text;
+    char **out_text;
+} lua_apply_context;
+
+static lua_apply_context *apply_context;
+
+static int protected_language_apply(lua_State *state) {
+    const lua_apply_context *context = apply_context;
+    const fr_lua_plugin_slot *slot = context->slot;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, slot->callback);
+
+    lua_newtable(state);
+    lua_pushstring(state, context->consumer->id);
+    lua_setfield(state, -2, "id");
+    lua_pushstring(state, context->consumer->configuration);
+    lua_setfield(state, -2, "configuration");
+
+    lua_newtable(state);
+    for (size_t index = 0; index < context->count; index++) {
+        lua_newtable(state);
+        lua_pushstring(state, context->resolved[index].project);
+        lua_setfield(state, -2, "project");
+        lua_pushstring(state, context->resolved[index].module);
+        lua_setfield(state, -2, "module");
+        fr_error push_err;
+        if (fr_lua_push_json(state, context->resolved[index].block, &push_err) != FR_OK) {
+            return luaL_error(state, "%s", push_err.message);
+        }
+        lua_setfield(state, -2, "block");
+        lua_rawseti(state, -2, (lua_Integer) index + 1);
+    }
+
+    lua_pushstring(state, context->original_text);
+
+    /* lua_call, not lua_pcall: this whole function already runs inside the caller's
+       protected frame, so an error the script raises here unwinds straight to it. */
+    lua_call(state, 3, 1);
+
+    const char *produced = lua_tostring(state, -1);
+    if (produced == NULL) {
+        return luaL_error(state, "the \"%s\" plugin returned %s, expected a string",
+                          slot->capability, luaL_typename(state, -1));
+    }
+    size_t length = strlen(produced) + 1;
+    char *copy = malloc(length);
+    if (copy == NULL) {
+        return luaL_error(state, "out of memory taking the output of \"%s\"", slot->capability);
+    }
+    memcpy(copy, produced, length);
+    *context->out_text = copy;
+    return 0;
+}
+
 static int lua_language_apply(void *state, const fr_consumer *consumer,
                               const fr_resolved *resolved, size_t count,
                               const char *original_text, char **out_text, fr_error *err) {
-    fr_lua_plugin_slot *slot = state;
     int top = lua_gettop(runtime_state);
-    lua_rawgeti(runtime_state, LUA_REGISTRYINDEX, slot->callback);
+    lua_apply_context context = { state, consumer, resolved, count, original_text, out_text };
+    apply_context = &context;
+    lua_pushcfunction(runtime_state, protected_language_apply);
+    int status = lua_pcall(runtime_state, 0, 0, 0);
+    apply_context = NULL;
 
-    lua_newtable(runtime_state);
-    lua_pushstring(runtime_state, consumer->id);
-    lua_setfield(runtime_state, -2, "id");
-    lua_pushstring(runtime_state, consumer->configuration);
-    lua_setfield(runtime_state, -2, "configuration");
-
-    lua_newtable(runtime_state);
-    for (size_t index = 0; index < count; index++) {
-        lua_newtable(runtime_state);
-        lua_pushstring(runtime_state, resolved[index].project);
-        lua_setfield(runtime_state, -2, "project");
-        lua_pushstring(runtime_state, resolved[index].module);
-        lua_setfield(runtime_state, -2, "module");
-        if (fr_lua_push_json(runtime_state, resolved[index].block, err) != FR_OK) {
-            lua_settop(runtime_state, top);
-            return FR_ERR;
-        }
-        lua_setfield(runtime_state, -2, "block");
-        lua_rawseti(runtime_state, -2, (lua_Integer) index + 1);
-    }
-
-    lua_pushstring(runtime_state, original_text);
-
-    if (lua_pcall(runtime_state, 3, 1, 0) != LUA_OK) {
+    if (status != LUA_OK) {
         fr_error_set(err, "%s", lua_tostring(runtime_state, -1));
         lua_settop(runtime_state, top);
         return FR_ERR;
     }
-    const char *produced = lua_tostring(runtime_state, -1);
-    if (produced == NULL) {
-        fr_error_set(err, "the \"%s\" plugin returned %s, expected a string",
-                     slot->capability, luaL_typename(runtime_state, -1));
-        lua_settop(runtime_state, top);
-        return FR_ERR;
-    }
-    size_t length = strlen(produced) + 1;
-    *out_text = malloc(length);
-    if (*out_text == NULL) {
-        fr_error_set(err, "out of memory taking the output of \"%s\"", slot->capability);
-        lua_settop(runtime_state, top);
-        return FR_ERR;
-    }
-    memcpy(*out_text, produced, length);
     lua_settop(runtime_state, top);
     return FR_OK;
 }
 
+typedef struct {
+    fr_lua_plugin_slot *slot;
+    const char *project;
+    const cJSON *block;
+    const char *base_dir;
+    cJSON *document;
+} lua_source_context;
+
+static lua_source_context *source_context;
+
+static int protected_source_load(lua_State *state) {
+    lua_source_context *context = source_context;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, context->slot->callback);
+    lua_pushstring(state, context->project);
+    fr_error push_err;
+    if (fr_lua_push_json(state, context->block, &push_err) != FR_OK) {
+        return luaL_error(state, "%s", push_err.message);
+    }
+    lua_pushstring(state, context->base_dir);
+
+    lua_call(state, 3, 1);
+
+    fr_error to_json_err;
+    if (fr_lua_to_json(state, -1, &context->document, &to_json_err) != FR_OK) {
+        return luaL_error(state, "%s", to_json_err.message);
+    }
+    return 0;
+}
+
 static int lua_source_load(void *state, const char *project, const cJSON *block,
                            const char *base_dir, fr_project *out, fr_error *err) {
-    fr_lua_plugin_slot *slot = state;
     int top = lua_gettop(runtime_state);
-    lua_rawgeti(runtime_state, LUA_REGISTRYINDEX, slot->callback);
-    lua_pushstring(runtime_state, project);
-    if (fr_lua_push_json(runtime_state, block, err) != FR_OK) {
-        lua_settop(runtime_state, top);
-        return FR_ERR;
-    }
-    lua_pushstring(runtime_state, base_dir);
+    lua_source_context context = { state, project, block, base_dir, NULL };
+    source_context = &context;
+    lua_pushcfunction(runtime_state, protected_source_load);
+    int status = lua_pcall(runtime_state, 0, 0, 0);
+    source_context = NULL;
 
-    if (lua_pcall(runtime_state, 3, 1, 0) != LUA_OK) {
+    if (status != LUA_OK) {
         fr_error_set(err, "%s", lua_tostring(runtime_state, -1));
         lua_settop(runtime_state, top);
         return FR_ERR;
     }
-    cJSON *document = NULL;
-    int status = fr_lua_to_json(runtime_state, -1, &document, err);
     lua_settop(runtime_state, top);
-    if (status != FR_OK) return FR_ERR;
 
-    char *text = cJSON_PrintUnformatted(document);
-    cJSON_Delete(document);
+    char *text = cJSON_PrintUnformatted(context.document);
+    cJSON_Delete(context.document);
     if (text == NULL) {
         fr_error_set(err, "out of memory reading the project \"%s\" produced", project);
         return FR_ERR;
     }
-    status = fr_project_parse(text, project, out, err);
+    int parse_status = fr_project_parse(text, project, out, err);
     free(text);
-    return status;
+    return parse_status;
 }
 
 static int take_slot(lua_State *state, const char *prefix, const char *field,
@@ -228,7 +286,10 @@ static int take_slot(lua_State *state, const char *prefix, const char *field,
     }
 
     char capability[128];
-    snprintf(capability, sizeof capability, "%s%s", prefix, name);
+    int written = snprintf(capability, sizeof capability, "%s%s", prefix, name);
+    if (written < 0 || (size_t) written >= sizeof capability) {
+        return luaL_error(state, "the plugin name \"%s\" is too long", name);
+    }
     lua_pop(state, 1);
 
     if (slot_for(capability) != NULL) {
@@ -278,11 +339,16 @@ static int lua_declare_source(lua_State *state) {
     return 0;
 }
 
-static int publish_daukle_table(lua_State *state, const cJSON *document, fr_error *err) {
+static const cJSON *publish_document;
+
+static int protected_publish_daukle_table(lua_State *state) {
     lua_getglobal(state, "daukle");
 
-    if (document != NULL) {
-        if (fr_lua_push_json(state, document, err) != FR_OK) return FR_ERR;
+    if (publish_document != NULL) {
+        fr_error push_err;
+        if (fr_lua_push_json(state, publish_document, &push_err) != FR_OK) {
+            return luaL_error(state, "%s", push_err.message);
+        }
     } else {
         lua_newtable(state);
     }
@@ -308,7 +374,35 @@ static int publish_daukle_table(lua_State *state, const cJSON *document, fr_erro
     lua_setfield(state, -2, "source");
 
     lua_pop(state, 1);
+    return 0;
+}
+
+static int publish_daukle_table(lua_State *state, const cJSON *document, fr_error *err) {
+    int top = lua_gettop(state);
+    publish_document = document;
+    lua_pushcfunction(state, protected_publish_daukle_table);
+    int status = lua_pcall(state, 0, 0, 0);
+    publish_document = NULL;
+
+    if (status != LUA_OK) {
+        fr_error_set(err, "%s", lua_tostring(state, -1));
+        lua_settop(state, top);
+        return FR_ERR;
+    }
+    lua_settop(state, top);
     return FR_OK;
+}
+
+static cJSON **extract_config_out;
+
+static int protected_extract_config(lua_State *state) {
+    lua_getglobal(state, "daukle");
+    lua_getfield(state, -1, "config");
+    fr_error to_json_err;
+    if (fr_lua_to_json(state, -1, extract_config_out, &to_json_err) != FR_OK) {
+        return luaL_error(state, "%s", to_json_err.message);
+    }
+    return 0;
 }
 
 static int config_lua_load(void *state_unused, const char *text, const char *origin,
@@ -328,12 +422,21 @@ static int config_lua_load(void *state_unused, const char *text, const char *ori
 
     if (fr_lua_run(runtime_state, text, origin, err) != FR_OK) return FR_ERR;
 
-    lua_getglobal(runtime_state, "daukle");
-    lua_getfield(runtime_state, -1, "config");
-    int status = fr_lua_to_json(runtime_state, -1, out, err);
-    lua_pop(runtime_state, 2);
-    if (status == FR_OK && document != NULL) restore_empty_arrays(document, *out);
-    return status;
+    int top = lua_gettop(runtime_state);
+    extract_config_out = out;
+    lua_pushcfunction(runtime_state, protected_extract_config);
+    int status = lua_pcall(runtime_state, 0, 0, 0);
+    extract_config_out = NULL;
+
+    if (status != LUA_OK) {
+        fr_error_set(err, "%s", lua_tostring(runtime_state, -1));
+        lua_settop(runtime_state, top);
+        return FR_ERR;
+    }
+    lua_settop(runtime_state, top);
+
+    if (document != NULL) restore_empty_arrays(document, *out);
+    return FR_OK;
 }
 
 void fr_lua_runtime_shutdown(void) {

@@ -1,0 +1,14 @@
+schema = 1
+project = "forebay/plugin-error"
+version = "1.0.0"
+
+[modules]
+[sources]
+
+[[consumers]]
+id = "text"
+language = "erroring"
+file = "deps.txt"
+configuration = "deps"
+
+[consumers.dependencies]
