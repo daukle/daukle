@@ -2,8 +2,8 @@
   "name": "example",
   "version": "1.0.0",
   "dependencies": {
-    "@intisy-ai/basekit-contracts": "^5.0.0",
-    "@intisy-ai/basekit-ir": "^5.0.0"
+    "@intisy-ai/basekit-contracts": "^3.0.0",
+    "@intisy-ai/basekit-ir": "^3.0.0"
   },
   "daukle": {
     "managed": {

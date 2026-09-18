@@ -331,31 +331,88 @@ TEST no_cache_bypasses_both_the_read_and_the_write(void) {
     PASS();
 }
 
+static const char *STALE_PACKAGE_JSON =
+    "{\n"
+    "  \"name\": \"example\",\n"
+    "  \"version\": \"1.0.0\",\n"
+    "  \"dependencies\": {\n"
+    "    \"@intisy-ai/basekit-contracts\": \"%s\",\n"
+    "    \"@intisy-ai/basekit-ir\": \"%s\"\n"
+    "  },\n"
+    "  \"daukle\": {\n"
+    "    \"managed\": {\n"
+    "      \"dependencies\": [\n"
+    "        \"@intisy-ai/basekit-contracts\",\n"
+    "        \"@intisy-ai/basekit-ir\"\n"
+    "      ]\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
+static void seed_three_ways_consumer(const char *path, const char *stale_range) {
+    char text[800];
+    snprintf(text, sizeof text, STALE_PACKAGE_JSON, stale_range, stale_range);
+    fr_error err;
+    fr_file_write_text(path, text, &err);
+}
+
+/* Each consumer starts from a different stale range, so three identical files
+   at the end cannot be what three syncs that all did nothing would leave, and
+   a format plugin that dropped "consumers" and reported success would show up
+   here instead of passing unnoticed. Each file is put back before the first
+   assertion, so a failure does not leave the tree dirty either way. */
 TEST the_same_manifest_in_three_formats_writes_the_same_file(void) {
+    const char *json_consumer = "test/fixtures/three-ways/json/package.json";
+    const char *toml_consumer = "test/fixtures/three-ways/toml/package.json";
+    const char *lua_consumer = "test/fixtures/three-ways/lua/package.json";
+
+    seed_three_ways_consumer(json_consumer, "^1.0.0");
+    seed_three_ways_consumer(toml_consumer, "^2.0.0");
+    seed_three_ways_consumer(lua_consumer, "^3.0.0");
+
     fr_error err;
     fr_sync_report report;
 
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/three-ways/json/daukle.json", 1, 0, &report, &err));
+    int json_status = fr_sync("test/fixtures/three-ways/json/daukle.json", 1, 0, &report, &err);
+    size_t json_writes = report.count;
     fr_sync_report_free(&report);
+
+    int toml_status = fr_sync("test/fixtures/three-ways/toml/daukle.toml", 1, 0, &report, &err);
+    size_t toml_writes = report.count;
+    fr_sync_report_free(&report);
+
+    int lua_status = fr_sync("test/fixtures/three-ways/lua/daukle.lua", 1, 0, &report, &err);
+    size_t lua_writes = report.count;
+    fr_sync_report_free(&report);
+
     char *from_json = NULL;
-    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/three-ways/json/package.json", &from_json, &err));
-
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/three-ways/toml/daukle.toml", 1, 0, &report, &err));
-    fr_sync_report_free(&report);
     char *from_toml = NULL;
-    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/three-ways/toml/package.json", &from_toml, &err));
-
-    ASSERT_STR_EQ(from_json, from_toml);
-
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/three-ways/lua/daukle.lua", 1, 0, &report, &err));
-    fr_sync_report_free(&report);
     char *from_lua = NULL;
-    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/three-ways/lua/package.json", &from_lua, &err));
+    int json_read = fr_file_read_text(json_consumer, &from_json, &err);
+    int toml_read = fr_file_read_text(toml_consumer, &from_toml, &err);
+    int lua_read = fr_file_read_text(lua_consumer, &from_lua, &err);
+
+    seed_three_ways_consumer(json_consumer, "^1.0.0");
+    seed_three_ways_consumer(toml_consumer, "^2.0.0");
+    seed_three_ways_consumer(lua_consumer, "^3.0.0");
+
+    ASSERT_EQ(FR_OK, json_status);
+    ASSERT_EQ(FR_OK, toml_status);
+    ASSERT_EQ(FR_OK, lua_status);
+    ASSERT_EQ(1, (int) json_writes);
+    ASSERT_EQ(1, (int) toml_writes);
+    ASSERT_EQ(1, (int) lua_writes);
+
+    ASSERT_EQ(FR_OK, json_read);
+    ASSERT_EQ(FR_OK, toml_read);
+    ASSERT_EQ(FR_OK, lua_read);
+    ASSERT_STR_EQ(from_json, from_toml);
     ASSERT_STR_EQ(from_json, from_lua);
-    free(from_lua);
+    ASSERT(strstr(from_json, "^5.0.0") != NULL);
 
     free(from_json);
     free(from_toml);
+    free(from_lua);
     PASS();
 }
 
