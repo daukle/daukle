@@ -44,6 +44,11 @@ static int add_traceback(lua_State *state) {
     return 1;
 }
 
+static int protected_openlibs(lua_State *state) {
+    luaL_openlibs(state);
+    return 0;
+}
+
 lua_State *fr_lua_open(size_t memory_limit, fr_error *err) {
     fr_lua_budget *budget = calloc(1, sizeof *budget);
     if (budget == NULL) {
@@ -57,7 +62,18 @@ lua_State *fr_lua_open(size_t memory_limit, fr_error *err) {
         fr_error_set(err, "could not create a lua state");
         return NULL;
     }
-    luaL_openlibs(state);
+    /* lua_newstate's own bootstrap is protected, but nothing protects luaL_openlibs
+       once it returns: a budget that is big enough for the state but too small for
+       the standard libraries raises LUA_ERRMEM with no panic handler installed
+       (that is luaL_newstate's job, not lua_newstate's), which falls through to
+       abort(). Run it under our own pcall so a tight cap fails gracefully instead. */
+    lua_pushcfunction(state, protected_openlibs);
+    if (lua_pcall(state, 0, 0, 0) != LUA_OK) {
+        fr_error_set(err, "%s", lua_tostring(state, -1));
+        lua_close(state);
+        free(budget);
+        return NULL;
+    }
     return state;
 }
 
@@ -69,10 +85,14 @@ void fr_lua_close(lua_State *state) {
     free(budget);
 }
 
+/* A chunk name longer than this truncates in error output; Lua's own display
+   width (LUA_IDSIZE) is smaller still, so nothing meaningful is lost. */
+#define FR_LUA_CHUNK_NAME_MAX 300
+
 int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_error *err) {
     /* Without a '@' or '=' prefix, Lua treats the name as literal source text and
        reports errors as [string "..."], not as chunk_name:line. */
-    char source_name[300];
+    char source_name[FR_LUA_CHUNK_NAME_MAX];
     if (chunk_name[0] != '@' && chunk_name[0] != '=') {
         snprintf(source_name, sizeof source_name, "@%s", chunk_name);
         chunk_name = source_name;
