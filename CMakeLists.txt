@@ -8,9 +8,7 @@ if(MSVC)
     set(DAUKLE_WARNING_FLAGS /W4 /WX /D_CRT_SECURE_NO_WARNINGS)
     # greatest.h's assertion macros expand literal-constant comparisons into an
     # `if`, which MSVC's C4127 flags even though the do/while(0) wrapper is fine.
-    # A leading SKIPm() also returns unconditionally, so MSVC's C4702 flags the
-    # rest of that test body even though skipping the whole test is intentional.
-    set(DAUKLE_TEST_WARNING_FLAGS ${DAUKLE_WARNING_FLAGS} /wd4127 /wd4702)
+    set(DAUKLE_TEST_WARNING_FLAGS ${DAUKLE_WARNING_FLAGS} /wd4127)
 else()
     set(DAUKLE_WARNING_FLAGS -Wall -Wextra -Werror)
     set(DAUKLE_TEST_WARNING_FLAGS ${DAUKLE_WARNING_FLAGS})
