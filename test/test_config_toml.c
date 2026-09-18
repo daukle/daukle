@@ -43,6 +43,12 @@ TEST maps_every_toml_type_onto_json(void) {
     ASSERT_STR_EQ("2024-03-15T13:45:30.250",
                   cJSON_GetObjectItemCaseSensitive(document, "local_date_time_ms")->valuestring);
 
+    const cJSON *timestamps = cJSON_GetObjectItemCaseSensitive(document, "timestamps");
+    ASSERT(cJSON_IsArray(timestamps));
+    ASSERT_EQ(2, cJSON_GetArraySize(timestamps));
+    ASSERT_STR_EQ("2024-03-15T13:45:30+02:00", cJSON_GetArrayItem(timestamps, 0)->valuestring);
+    ASSERT_STR_EQ("2024-03-15", cJSON_GetArrayItem(timestamps, 1)->valuestring);
+
     const cJSON *nested = cJSON_GetObjectItemCaseSensitive(document, "nested");
     ASSERT_STR_EQ("value", cJSON_GetObjectItemCaseSensitive(nested, "key")->valuestring);
 
