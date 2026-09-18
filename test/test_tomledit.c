@@ -20,9 +20,8 @@ static const char *ORIGINAL =
 TEST updates_the_range_of_a_dependency_already_there(void) {
     fr_error err;
     char *out = NULL;
-    const char *modules[] = { "ir" };
     ASSERT_EQ(FR_OK, fr_toml_edit_set_dependency(ORIGINAL, "stub", "forebay/basekit",
-                                                 "^5.1.0", modules, 1, &out, &err));
+                                                 "^5.1.0", NULL, 0, &out, &err));
     ASSERT(strstr(out, "^5.1.0") != NULL);
     ASSERT(strstr(out, "^5.0.0") == NULL);
     ASSERT(strstr(out, "# the comment that must survive") != NULL);
@@ -105,9 +104,8 @@ static const char *TWO_CONSUMERS_SAME_PROJECT =
 TEST updates_only_the_named_consumers_copy_of_a_shared_project(void) {
     fr_error err;
     char *out = NULL;
-    const char *modules[] = { "ir" };
     ASSERT_EQ(FR_OK, fr_toml_edit_set_dependency(TWO_CONSUMERS_SAME_PROJECT, "beta",
-                                                 "forebay/basekit", "^2.1.0", modules, 1, &out, &err));
+                                                 "forebay/basekit", "^2.1.0", NULL, 0, &out, &err));
     ASSERT(strstr(out, "^2.1.0") != NULL);
     ASSERT(strstr(out, "^1.0.0") != NULL);
     ASSERT(strstr(out, "^2.0.0") == NULL);
@@ -206,9 +204,8 @@ static const char *VERSION_WITH_COMMENT =
 TEST preserves_an_inline_comment_on_the_version_line_it_updates(void) {
     fr_error err;
     char *out = NULL;
-    const char *modules[] = { "ir" };
     ASSERT_EQ(FR_OK, fr_toml_edit_set_dependency(VERSION_WITH_COMMENT, "stub", "forebay/basekit",
-                                                 "^5.1.0", modules, 1, &out, &err));
+                                                 "^5.1.0", NULL, 0, &out, &err));
     ASSERT(strstr(out, "  version = \"^5.1.0\"  # pinned, do not bump\n") != NULL);
     ASSERT(strstr(out, "^5.0.0") == NULL);
     free(out);
@@ -227,9 +224,8 @@ static const char *VERSION_WITH_TRAILING_WHITESPACE =
 TEST preserves_trailing_whitespace_on_a_version_line_with_no_comment(void) {
     fr_error err;
     char *out = NULL;
-    const char *modules[] = { "ir" };
     ASSERT_EQ(FR_OK, fr_toml_edit_set_dependency(VERSION_WITH_TRAILING_WHITESPACE, "stub",
-                                                 "forebay/basekit", "^5.1.0", modules, 1, &out, &err));
+                                                 "forebay/basekit", "^5.1.0", NULL, 0, &out, &err));
     ASSERT(strstr(out, "  version = \"^5.1.0\"   \n") != NULL);
     free(out);
     PASS();
@@ -311,6 +307,44 @@ TEST reports_an_oversized_project_name_instead_of_truncating_it(void) {
     PASS();
 }
 
+/* A literal-string key is the same key to TOML and a different one to the span
+   finder, so the dependency is missed and a second header for a table that
+   already exists is appended. Reading the result back is what catches it. */
+static const char *LITERAL_STRING_DEPENDENCY_KEY =
+    "schema = 1\n"
+    "project = \"forebay/x\"\n"
+    "\n"
+    "[[consumers]]\n"
+    "id = \"stub\"\n"
+    "language = \"npm\"\n"
+    "\n"
+    "  [consumers.dependencies.'forebay/basekit']\n"
+    "  version = \"^5.0.0\"\n"
+    "  modules = [\"ir\"]\n";
+
+TEST refuses_to_hand_back_text_that_no_longer_parses(void) {
+    fr_error err;
+    char *out = NULL;
+    const char *modules[] = { "ir" };
+    ASSERT_EQ(FR_ERR, fr_toml_edit_set_dependency(LITERAL_STRING_DEPENDENCY_KEY, "stub",
+                                                  "forebay/basekit", "^5.1.0", modules, 1,
+                                                  &out, &err));
+    ASSERT_EQ(NULL, out);
+    ASSERT(strstr(err.message, "toml") != NULL);
+    PASS();
+}
+
+TEST refuses_a_module_list_for_a_dependency_that_is_already_there(void) {
+    fr_error err;
+    char *out = NULL;
+    const char *modules[] = { "ir", "core" };
+    ASSERT_EQ(FR_ERR, fr_toml_edit_set_dependency(ORIGINAL, "stub", "forebay/basekit",
+                                                  "^5.1.0", modules, 2, &out, &err));
+    ASSERT_EQ(NULL, out);
+    ASSERT(strstr(err.message, "already a dependency") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -330,5 +364,7 @@ int main(int argc, char **argv) {
     RUN_TEST(mirrors_a_tab_indent_when_appending_a_new_dependency);
     RUN_TEST(reports_an_oversized_consumer_id_instead_of_truncating_it);
     RUN_TEST(reports_an_oversized_project_name_instead_of_truncating_it);
+    RUN_TEST(refuses_to_hand_back_text_that_no_longer_parses);
+    RUN_TEST(refuses_a_module_list_for_a_dependency_that_is_already_there);
     GREATEST_MAIN_END();
 }

@@ -1,7 +1,10 @@
 #include "tomledit.h"
 
+#include "config_toml.h"
 #include "error.h"
 #include "strbuf.h"
+
+#include "cJSON.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -166,9 +169,19 @@ static void append_modules(fr_strbuf *buffer, const char *const *modules, size_t
     fr_strbuf_append(buffer, eol);
 }
 
+/* An existing dependency's version is spliced in place; its module list is not,
+   because rewriting an array that may span lines is a second span finder for no
+   demand yet. Refusing is the honest half of that: a module list handed in here
+   would otherwise be accepted and dropped. */
 static int update_version(const char *text, const char *dependency, const char *consumer_end,
                           const char *project, const char *consumer_id, const char *range,
-                          fr_strbuf *buffer, fr_error *err) {
+                          size_t module_count, fr_strbuf *buffer, fr_error *err) {
+    if (module_count > 0) {
+        fr_error_set(err, "\"%s\" is already a dependency of \"%s\" and its modules are left as"
+                          " they are; drop the module list to update its version alone",
+                     project, consumer_id);
+        return FR_ERR;
+    }
     const char *version_line = find_version_line(dependency, consumer_end);
     if (version_line == NULL) {
         fr_error_set(err, "\"%s\" under \"%s\" has no version line", project, consumer_id);
@@ -209,6 +222,21 @@ static int append_dependency(const char *text, const char *consumer, const char 
     return FR_OK;
 }
 
+/* The span finders match one spelling of each line they look for, and a legal
+   manifest may write another; a missed dependency then appends a second header
+   for a table that already exists, which TOML 1.0 rejects. Reading the result
+   back is the one check that holds whatever a finder misses, so no caller can
+   be handed text it would be wrong to write. */
+static int still_parses(const char *text, fr_error *err) {
+    cJSON *document = NULL;
+    if (FR_CONFIG_TOML.load(FR_CONFIG_TOML.state, text, "the edited manifest", NULL, NULL, NULL,
+                            &document, err) != FR_OK) {
+        return FR_ERR;
+    }
+    cJSON_Delete(document);
+    return FR_OK;
+}
+
 int fr_toml_edit_set_dependency(const char *text, const char *consumer_id, const char *project,
                                 const char *range, const char *const *modules, size_t module_count,
                                 char **out, fr_error *err) {
@@ -228,7 +256,8 @@ int fr_toml_edit_set_dependency(const char *text, const char *consumer_id, const
     fr_strbuf_init(&buffer);
 
     int status = dependency != NULL
-        ? update_version(text, dependency, consumer_end, project, consumer_id, range, &buffer, err)
+        ? update_version(text, dependency, consumer_end, project, consumer_id, range,
+                         module_count, &buffer, err)
         : append_dependency(text, consumer, consumer_end, project, range, modules, module_count,
                             eol, &buffer, err);
     if (status != FR_OK) {
@@ -239,6 +268,11 @@ int fr_toml_edit_set_dependency(const char *text, const char *consumer_id, const
     *out = fr_strbuf_release(&buffer);
     if (*out == NULL) {
         fr_error_set(err, "out of memory editing the manifest");
+        return FR_ERR;
+    }
+    if (still_parses(*out, err) != FR_OK) {
+        free(*out);
+        *out = NULL;
         return FR_ERR;
     }
     return FR_OK;

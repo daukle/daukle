@@ -6,6 +6,7 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -76,8 +77,12 @@ static void instruction_budget_spent(lua_State *state, lua_Debug *activation) {
     luaL_error(state, "this configuration ran for too long and was stopped");
 }
 
+/* lua_sethook counts in an int, so a long limit is clamped rather than wrapped:
+   a truncated count could land on zero, which disarms the hook entirely. */
 void fr_lua_set_instruction_limit(lua_State *state, long limit) {
-    lua_sethook(state, instruction_budget_spent, LUA_MASKCOUNT, (int) limit);
+    long clamped = limit < 1 ? 1 : limit;
+    if (clamped > INT_MAX) clamped = INT_MAX;
+    lua_sethook(state, instruction_budget_spent, LUA_MASKCOUNT, (int) clamped);
 }
 
 lua_State *fr_lua_open(size_t memory_limit, fr_error *err) {

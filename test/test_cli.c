@@ -125,6 +125,30 @@ TEST leaves_the_manifest_path_unset_so_the_directory_is_searched(void) {
     PASS();
 }
 
+TEST reads_both_lua_limits(void) {
+    const char *argv[] = { "daukle", "sync", "--lua-instruction-limit", "1000",
+                           "--lua-memory-limit", "2000000" };
+    fr_cli_options options = parse(6, argv);
+    ASSERT_EQ(FR_CLI_SYNC, options.command);
+    ASSERT_EQ(1000, options.instruction_limit);
+    ASSERT_EQ(2000000, (long) options.memory_limit);
+    PASS();
+}
+
+/* Zero is what both limits use to mean "keep the default", and it is also what
+   an unparseable argument used to produce, so the typo vanished silently. */
+TEST rejects_a_limit_that_is_not_a_number(void) {
+    const char *memory[] = { "daukle", "sync", "--lua-memory-limit", "banana" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(4, memory).command);
+
+    const char *instructions[] = { "daukle", "sync", "--lua-instruction-limit", "10x" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(4, instructions).command);
+
+    const char *zero[] = { "daukle", "sync", "--lua-memory-limit", "0" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(4, zero).command);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -144,5 +168,7 @@ int main(int argc, char **argv) {
     RUN_TEST(parses_config_print_with_a_manifest_path);
     RUN_TEST(rejects_config_with_an_unknown_subcommand);
     RUN_TEST(leaves_the_manifest_path_unset_so_the_directory_is_searched);
+    RUN_TEST(reads_both_lua_limits);
+    RUN_TEST(rejects_a_limit_that_is_not_a_number);
     GREATEST_MAIN_END();
 }

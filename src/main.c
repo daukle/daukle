@@ -206,6 +206,13 @@ static int split_modules(const char *modules_arg, char ***out_modules, size_t *o
         }
     }
 
+    for (size_t index = 0; index < count; index++) {
+        if (modules[index][0] != '\0') continue;
+        free_modules(modules);
+        fr_error_set(err, "\"%s\" has an empty module name; list them as \"a,b\"", modules_arg);
+        return FR_ERR;
+    }
+
     *out_modules = modules;
     *out_count = count;
     return FR_OK;
@@ -220,7 +227,7 @@ static int add_dependency(const fr_cli_options *options) {
     }
 
     if (!ends_with(resolved, ".toml")) {
-        fprintf(stderr, "daukle add edits daukle.toml; this project uses \"%s\"\n", resolved);
+        fprintf(stderr, "daukle: add edits daukle.toml; this project uses \"%s\"\n", resolved);
         free(resolved);
         return 1;
     }

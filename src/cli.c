@@ -1,5 +1,7 @@
 #include "cli.h"
 
+#include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -12,6 +14,18 @@
    string "--modules". */
 static int has_value_argument(int index, int argc, char **argv) {
     return index + 1 < argc && argv[index + 1][0] != '-';
+}
+
+/* Zero means "keep the built-in default" in both limits, which is exactly what
+   strtol returns for text it cannot read, so an unparseable "--lua-memory-limit
+   banana" would otherwise be accepted and ignored. */
+static int parse_positive_number(const char *text, unsigned long *out) {
+    char *end = NULL;
+    errno = 0;
+    unsigned long value = strtoul(text, &end, 10);
+    if (end == text || *end != '\0' || errno == ERANGE || value == 0) return 0;
+    *out = value;
+    return 1;
 }
 
 /* An unrecognised option is a usage error rather than a positional argument:
@@ -45,9 +59,13 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
         } else if (strcmp(argument, "--modules") == 0 && has_value_argument(index, argc, argv)) {
             out->add_modules = argv[++index];
         } else if (strcmp(argument, "--lua-instruction-limit") == 0 && has_value_argument(index, argc, argv)) {
-            out->instruction_limit = strtol(argv[++index], NULL, 10);
+            unsigned long value = 0;
+            if (!parse_positive_number(argv[++index], &value) || value > (unsigned long) LONG_MAX) return;
+            out->instruction_limit = (long) value;
         } else if (strcmp(argument, "--lua-memory-limit") == 0 && has_value_argument(index, argc, argv)) {
-            out->memory_limit = (size_t) strtoul(argv[++index], NULL, 10);
+            unsigned long value = 0;
+            if (!parse_positive_number(argv[++index], &value)) return;
+            out->memory_limit = (size_t) value;
         } else if (argument[0] == '-') {
             return;
         } else if (word_count < FR_CLI_MAX_WORDS) {
