@@ -88,6 +88,9 @@ than a mock, so redirect and transport behaviour is exercised as it will be in u
 `test/fixtures/` holds consumer build files. Several are gitignored, because they are written by the
 tests themselves.
 
+`config_json.c` is the one module with no dedicated test file: it is exercised through
+`test_config.c`'s json-manifest test instead.
+
 ## 4. State
 
 The resolver, the two sources, the three languages, the cache, the sync pass and the CLI are all
@@ -101,3 +104,10 @@ release. Task **F-7** in `spisor/docs/TASKS.md` is unaffected by this work: it s
 phase-2 manifest writers are proven against fixtures only, because nothing in the ecosystem
 publishes a manifest release asset yet. basekit's 5.0.0 release carries eight jars and no manifest.
 Until something publishes one, the writers have never met real input.
+
+`daukle add` edits TOML only, and `main.c` names that format on purpose: it checks the manifest path
+ends in `.toml` and calls `fr_toml_edit_set_dependency` directly, which is a deliberate, accepted
+exception to the agnostic-core rule (ruling R29). The general form would be an edit hook on
+`fr_config_plugin`, so every format supplies its own editor and `main.c` names none of them, but that
+would touch a plugin struct four completed tasks already depend on and would buy nothing until a JSON
+or Lua manifest needs editing in place too, so it is deferred rather than built now.
