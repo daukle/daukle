@@ -177,8 +177,17 @@ static int sandbox_include(lua_State *state) {
     return 0;
 }
 
+/* fr_lua_sandbox_install is a plain C entry point: no lua_pcall frame is active
+   yet, so nothing here may touch the Lua C API directly before one is
+   installed (the same reasoning, and the same abort-on-unprotected-OOM risk,
+   as config_lua.c's protected_* functions). The base directory travels through
+   this file static rather than a lua_pushcclosure upvalue, since creating a
+   closure with an upvalue allocates on the push itself, before any pcall
+   exists to catch that allocation failing. */
+static const char *pending_base_dir;
+
 static int protected_install(lua_State *state) {
-    const char *canonical_base = lua_tostring(state, lua_upvalueindex(1));
+    const char *canonical_base = pending_base_dir;
 
     lua_pushstring(state, canonical_base);
     lua_setfield(state, LUA_REGISTRYINDEX, FR_SANDBOX_BASE_DIR);
@@ -216,12 +225,13 @@ int fr_lua_sandbox_install(lua_State *state, const char *base_dir, fr_error *err
     char *canonical_base = NULL;
     if (canonical_directory_path(base_dir, &canonical_base, err) != FR_OK) return FR_ERR;
 
-    /* lua_newtable and friends in protected_install can raise LUA_ERRMEM the same
-       way luaL_openlibs can in fr_lua_open; run them under the same kind of guard. */
-    lua_pushstring(state, canonical_base);
+    pending_base_dir = canonical_base;
+    lua_pushcfunction(state, protected_install);
+    int status = lua_pcall(state, 0, 0, 0);
+    pending_base_dir = NULL;
     free(canonical_base);
-    lua_pushcclosure(state, protected_install, 1);
-    if (lua_pcall(state, 0, 0, 0) != LUA_OK) {
+
+    if (status != LUA_OK) {
         fr_error_set(err, "%s", lua_tostring(state, -1));
         lua_pop(state, 1);
         return FR_ERR;
