@@ -25,14 +25,30 @@ TEST maps_every_toml_type_onto_json(void) {
 
     ASSERT_STR_EQ("daukle", cJSON_GetObjectItemCaseSensitive(document, "name")->valuestring);
     ASSERT_EQ(3, cJSON_GetObjectItemCaseSensitive(document, "count")->valueint);
+    ASSERT_EQ(1.5, cJSON_GetObjectItemCaseSensitive(document, "ratio")->valuedouble);
     ASSERT(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(document, "enabled")));
 
     const cJSON *tags = cJSON_GetObjectItemCaseSensitive(document, "tags");
     ASSERT(cJSON_IsArray(tags));
     ASSERT_EQ(2, cJSON_GetArraySize(tags));
 
+    const cJSON *empty_array = cJSON_GetObjectItemCaseSensitive(document, "empty_array");
+    ASSERT(cJSON_IsArray(empty_array));
+    ASSERT_EQ(0, cJSON_GetArraySize(empty_array));
+
+    ASSERT_STR_EQ("2024-03-15T13:45:30+02:00",
+                  cJSON_GetObjectItemCaseSensitive(document, "offset_date_time")->valuestring);
+    ASSERT_STR_EQ("2024-03-15", cJSON_GetObjectItemCaseSensitive(document, "local_date")->valuestring);
+    ASSERT_STR_EQ("13:45:30", cJSON_GetObjectItemCaseSensitive(document, "local_time")->valuestring);
+    ASSERT_STR_EQ("2024-03-15T13:45:30.250",
+                  cJSON_GetObjectItemCaseSensitive(document, "local_date_time_ms")->valuestring);
+
     const cJSON *nested = cJSON_GetObjectItemCaseSensitive(document, "nested");
     ASSERT_STR_EQ("value", cJSON_GetObjectItemCaseSensitive(nested, "key")->valuestring);
+
+    const cJSON *empty_table = cJSON_GetObjectItemCaseSensitive(document, "empty_table");
+    ASSERT(cJSON_IsObject(empty_table));
+    ASSERT_EQ(0, cJSON_GetArraySize(empty_table));
 
     const cJSON *rows = cJSON_GetObjectItemCaseSensitive(document, "rows");
     ASSERT(cJSON_IsArray(rows));
