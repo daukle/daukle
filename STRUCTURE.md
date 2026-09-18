@@ -31,6 +31,7 @@ daukle/daukle
   test/                 one test file per src module, plus a real HTTP server fixture
   vendor/cJSON          JSON parsing
   vendor/toml           TOML parsing
+  vendor/lua            the lua 5.4 library, no standalone interpreter
   vendor/greatest       the test harness
   cmake/  build/        build machinery and output
   plugin.json           id daukle, category tool, tech c
@@ -64,6 +65,7 @@ the client tier's rules.
 | growable strings | `strbuf.c` | a general container library |
 | the command surface | `cli.c`, `main.c` | logic. Everything it calls lives in a module beside it |
 | errors | `error.c`, `fr_error` | logging. The caller decides what to print |
+| the lua state, its memory cap and its errors | `luax.c` | the sandbox, which is `lua_sandbox.c`, nor the config format, which is `config_lua.c` |
 
 **Adding a source means adding an `fr_source_plugin` and registering it.** Adding a language means
 adding an `fr_language_plugin` and registering it. Neither touches `resolve.c`, and a change that

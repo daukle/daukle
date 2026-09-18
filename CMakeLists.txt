@@ -14,8 +14,13 @@ else()
     set(DAUKLE_TEST_WARNING_FLAGS ${DAUKLE_WARNING_FLAGS})
 endif()
 
-add_library(daukle_vendor STATIC vendor/cJSON/cJSON.c vendor/toml/toml.c)
-target_include_directories(daukle_vendor PUBLIC vendor/cJSON vendor/toml)
+file(GLOB DAUKLE_LUA_SOURCES CONFIGURE_DEPENDS vendor/lua/*.c)
+add_library(daukle_vendor STATIC vendor/cJSON/cJSON.c vendor/toml/toml.c ${DAUKLE_LUA_SOURCES})
+target_include_directories(daukle_vendor PUBLIC vendor/cJSON vendor/toml vendor/lua)
+if(NOT WIN32)
+    target_compile_definitions(daukle_vendor PRIVATE LUA_USE_POSIX)
+    target_link_libraries(daukle_vendor PUBLIC m)
+endif()
 
 file(GLOB DAUKLE_CORE_SOURCES CONFIGURE_DEPENDS src/*.c)
 list(REMOVE_ITEM DAUKLE_CORE_SOURCES
