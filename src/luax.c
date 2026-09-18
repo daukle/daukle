@@ -168,18 +168,22 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
    array: lua cannot tell the two apart and the schema's arrays are never
    empty at the point this runs. */
 static int table_sequence_length(lua_State *state, int index, lua_Integer *count) {
-    lua_Integer expected = 0;
+    lua_Integer total = 0;
+    lua_Integer max_key = 0;
     lua_pushnil(state);
     while (lua_next(state, index) != 0) {
-        if (!lua_isinteger(state, -2) || lua_tointeger(state, -2) != expected + 1) {
+        if (!lua_isinteger(state, -2) || lua_tointeger(state, -2) < 1) {
             lua_pop(state, 2);
             return 0;
         }
-        expected++;
+        lua_Integer key = lua_tointeger(state, -2);
+        if (key > max_key) max_key = key;
+        total++;
         lua_pop(state, 1);
     }
-    *count = expected;
-    return expected > 0;
+    /* total distinct keys with the largest equal to total forces the set to be exactly 1..total. */
+    *count = total;
+    return total > 0 && max_key == total;
 }
 
 int fr_lua_to_json(lua_State *state, int index, cJSON **out, fr_error *err) {

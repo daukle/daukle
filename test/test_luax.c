@@ -126,8 +126,13 @@ TEST rejects_a_table_key_that_is_not_a_string(void) {
 TEST reads_a_lua_array_back_in_written_order(void) {
     fr_error err;
     lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    /* Padding keys force 1..6 into the hash part, so lua_next visits them out of order. */
     ASSERT_EQ(FR_OK, fr_lua_run(state,
-        "result = { 'first', 'second', 'third', 'fourth', 'fifth', 'sixth' }",
+        "result = {}\n"
+        "for i = 1, 20 do result['padding' .. i] = i end\n"
+        "result[1] = 'first' result[2] = 'second' result[3] = 'third'\n"
+        "result[4] = 'fourth' result[5] = 'fifth' result[6] = 'sixth'\n"
+        "for i = 1, 20 do result['padding' .. i] = nil end",
         "=build", &err));
     lua_getglobal(state, "result");
 
