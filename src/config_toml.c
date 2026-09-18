@@ -19,25 +19,42 @@ static cJSON *datum_string(toml_datum_t datum) {
     return value;
 }
 
+/* snprintf reports what it would have written, not what it did, so accumulating
+   its return unchecked walks length past the buffer as soon as one field
+   truncates. */
+static size_t advance_within(size_t length, size_t size, int written) {
+    if (written < 0) return length;
+    size_t room = size - length - 1;
+    return length + ((size_t) written > room ? room : (size_t) written);
+}
+
 static cJSON *datum_timestamp(toml_timestamp_t *stamp) {
     char buffer[64];
-    int length = 0;
+    size_t length = 0;
     buffer[0] = '\0';
 
     if (stamp->year != NULL) {
-        length += snprintf(buffer + length, sizeof buffer - (size_t) length, "%04d-%02d-%02d",
-                           *stamp->year, *stamp->month, *stamp->day);
+        length = advance_within(length, sizeof buffer,
+                                snprintf(buffer + length, sizeof buffer - length, "%04d-%02d-%02d",
+                                         *stamp->year, *stamp->month, *stamp->day));
     }
     if (stamp->hour != NULL) {
-        if (length > 0) buffer[length++] = 'T';
-        length += snprintf(buffer + length, sizeof buffer - (size_t) length, "%02d:%02d:%02d",
-                           *stamp->hour, *stamp->minute, *stamp->second);
+        if (length > 0 && length + 1 < sizeof buffer) {
+            buffer[length++] = 'T';
+            buffer[length] = '\0';
+        }
+        length = advance_within(length, sizeof buffer,
+                                snprintf(buffer + length, sizeof buffer - length, "%02d:%02d:%02d",
+                                         *stamp->hour, *stamp->minute, *stamp->second));
         if (stamp->millisec != NULL) {
-            length += snprintf(buffer + length, sizeof buffer - (size_t) length, ".%03d", *stamp->millisec);
+            length = advance_within(length, sizeof buffer,
+                                    snprintf(buffer + length, sizeof buffer - length, ".%03d",
+                                             *stamp->millisec));
         }
     }
     if (stamp->z != NULL) {
-        length += snprintf(buffer + length, sizeof buffer - (size_t) length, "%s", stamp->z);
+        length = advance_within(length, sizeof buffer,
+                                snprintf(buffer + length, sizeof buffer - length, "%s", stamp->z));
     }
 
     cJSON *value = cJSON_CreateString(buffer);
