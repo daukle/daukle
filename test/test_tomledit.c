@@ -40,6 +40,7 @@ TEST appends_a_dependency_that_was_not_there(void) {
     ASSERT(strstr(out, "modules = [\"core\", \"api\"]") != NULL);
     ASSERT(strstr(out, "^5.0.0") != NULL);
     ASSERT(strstr(out, "# the comment that must survive") != NULL);
+    ASSERT(strstr(out, "  modules = [\"ir\"]\n  [consumers.dependencies.\"forebay/other\"]\n") != NULL);
     free(out);
     PASS();
 }
@@ -193,6 +194,123 @@ TEST keeps_crlf_line_endings_in_the_text_it_writes(void) {
     PASS();
 }
 
+static const char *VERSION_WITH_COMMENT =
+    "[[consumers]]\n"
+    "id = \"stub\"\n"
+    "language = \"npm\"\n"
+    "\n"
+    "  [consumers.dependencies.\"forebay/basekit\"]\n"
+    "  version = \"^5.0.0\"  # pinned, do not bump\n"
+    "  modules = [\"ir\"]\n";
+
+TEST preserves_an_inline_comment_on_the_version_line_it_updates(void) {
+    fr_error err;
+    char *out = NULL;
+    const char *modules[] = { "ir" };
+    ASSERT_EQ(FR_OK, fr_toml_edit_set_dependency(VERSION_WITH_COMMENT, "stub", "forebay/basekit",
+                                                 "^5.1.0", modules, 1, &out, &err));
+    ASSERT(strstr(out, "  version = \"^5.1.0\"  # pinned, do not bump\n") != NULL);
+    ASSERT(strstr(out, "^5.0.0") == NULL);
+    free(out);
+    PASS();
+}
+
+static const char *VERSION_WITH_TRAILING_WHITESPACE =
+    "[[consumers]]\n"
+    "id = \"stub\"\n"
+    "language = \"npm\"\n"
+    "\n"
+    "  [consumers.dependencies.\"forebay/basekit\"]\n"
+    "  version = \"^5.0.0\"   \n"
+    "  modules = [\"ir\"]\n";
+
+TEST preserves_trailing_whitespace_on_a_version_line_with_no_comment(void) {
+    fr_error err;
+    char *out = NULL;
+    const char *modules[] = { "ir" };
+    ASSERT_EQ(FR_OK, fr_toml_edit_set_dependency(VERSION_WITH_TRAILING_WHITESPACE, "stub",
+                                                 "forebay/basekit", "^5.1.0", modules, 1, &out, &err));
+    ASSERT(strstr(out, "  version = \"^5.1.0\"   \n") != NULL);
+    free(out);
+    PASS();
+}
+
+static const char *FOUR_SPACE_INDENT =
+    "[[consumers]]\n"
+    "id = \"stub\"\n"
+    "language = \"npm\"\n"
+    "\n"
+    "    [consumers.dependencies.\"forebay/basekit\"]\n"
+    "    version = \"^1.0.0\"\n"
+    "    modules = [\"ir\"]\n";
+
+TEST mirrors_a_four_space_indent_when_appending_a_new_dependency(void) {
+    fr_error err;
+    char *out = NULL;
+    const char *modules[] = { "ir" };
+    ASSERT_EQ(FR_OK, fr_toml_edit_set_dependency(FOUR_SPACE_INDENT, "stub", "forebay/other",
+                                                 "^2.0.0", modules, 1, &out, &err));
+    ASSERT(strstr(out,
+                 "    [consumers.dependencies.\"forebay/other\"]\n"
+                 "    version = \"^2.0.0\"\n"
+                 "    modules = [\"ir\"]\n") != NULL);
+    free(out);
+    PASS();
+}
+
+static const char *TAB_INDENT =
+    "[[consumers]]\n"
+    "id = \"stub\"\n"
+    "language = \"npm\"\n"
+    "\n"
+    "\t[consumers.dependencies.\"forebay/basekit\"]\n"
+    "\tversion = \"^1.0.0\"\n"
+    "\tmodules = [\"ir\"]\n";
+
+TEST mirrors_a_tab_indent_when_appending_a_new_dependency(void) {
+    fr_error err;
+    char *out = NULL;
+    const char *modules[] = { "ir" };
+    ASSERT_EQ(FR_OK, fr_toml_edit_set_dependency(TAB_INDENT, "stub", "forebay/other",
+                                                 "^2.0.0", modules, 1, &out, &err));
+    ASSERT(strstr(out,
+                 "\t[consumers.dependencies.\"forebay/other\"]\n"
+                 "\tversion = \"^2.0.0\"\n"
+                 "\tmodules = [\"ir\"]\n") != NULL);
+    free(out);
+    PASS();
+}
+
+TEST reports_an_oversized_consumer_id_instead_of_truncating_it(void) {
+    fr_error err;
+    char *out = NULL;
+    const char *modules[] = { "ir" };
+    char oversized_id[600];
+    memset(oversized_id, 'a', sizeof oversized_id - 1);
+    oversized_id[sizeof oversized_id - 1] = '\0';
+
+    ASSERT_EQ(FR_ERR, fr_toml_edit_set_dependency(ORIGINAL, oversized_id, "forebay/basekit",
+                                                  "^5.0.0", modules, 1, &out, &err));
+    ASSERT(strstr(err.message, "too long") != NULL);
+    free(out);
+    PASS();
+}
+
+TEST reports_an_oversized_project_name_instead_of_truncating_it(void) {
+    fr_error err;
+    char *out = NULL;
+    const char *modules[] = { "ir" };
+    char oversized_project[600];
+    memset(oversized_project, 'b', sizeof oversized_project - 1);
+    oversized_project[sizeof oversized_project - 1] = '\0';
+
+    ASSERT_EQ(FR_ERR, fr_toml_edit_set_dependency(ORIGINAL, "stub", oversized_project,
+                                                  "^5.0.0", modules, 1, &out, &err));
+    ASSERT(strstr(err.message, "too long") != NULL);
+    free(out);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -206,5 +324,11 @@ int main(int argc, char **argv) {
     RUN_TEST(does_not_confuse_an_id_line_inside_a_dependency_table_with_a_consumers_own);
     RUN_TEST(appends_a_dependency_when_the_file_has_no_trailing_newline);
     RUN_TEST(keeps_crlf_line_endings_in_the_text_it_writes);
+    RUN_TEST(preserves_an_inline_comment_on_the_version_line_it_updates);
+    RUN_TEST(preserves_trailing_whitespace_on_a_version_line_with_no_comment);
+    RUN_TEST(mirrors_a_four_space_indent_when_appending_a_new_dependency);
+    RUN_TEST(mirrors_a_tab_indent_when_appending_a_new_dependency);
+    RUN_TEST(reports_an_oversized_consumer_id_instead_of_truncating_it);
+    RUN_TEST(reports_an_oversized_project_name_instead_of_truncating_it);
     GREATEST_MAIN_END();
 }
