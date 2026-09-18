@@ -65,6 +65,52 @@ TEST daukle_log_routes_through_the_caller_supplied_sink(void) {
     PASS();
 }
 
+TEST an_untouched_empty_array_survives_the_round_trip(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-array-untouched/daukle.toml",
+                                         registry, &manifest, &err));
+    const fr_module *core = fr_project_module(&manifest.self, "core");
+    ASSERT(core != NULL);
+    ASSERT_EQ(0, (int) core->requires_count);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST a_script_clearing_an_array_to_an_empty_table_still_yields_an_array(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-array-cleared/daukle.toml",
+                                         registry, &manifest, &err));
+    const fr_module *core = fr_project_module(&manifest.self, "core");
+    ASSERT(core != NULL);
+    ASSERT_EQ(0, (int) core->requires_count);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST a_script_clearing_an_object_to_an_empty_table_stays_an_object(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-object-cleared/daukle.toml",
+                                         registry, &manifest, &err));
+    ASSERT(fr_project_module(&manifest.self, "seed") == NULL);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -72,5 +118,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_script_beside_a_toml_manifest_changes_it);
     RUN_TEST(a_failing_script_names_its_file);
     RUN_TEST(daukle_log_routes_through_the_caller_supplied_sink);
+    RUN_TEST(an_untouched_empty_array_survives_the_round_trip);
+    RUN_TEST(a_script_clearing_an_array_to_an_empty_table_still_yields_an_array);
+    RUN_TEST(a_script_clearing_an_object_to_an_empty_table_stays_an_object);
     GREATEST_MAIN_END();
 }

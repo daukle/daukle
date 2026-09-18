@@ -55,6 +55,61 @@ static int lua_log(lua_State *state) {
     return 0;
 }
 
+static int is_empty_object(const cJSON *value) {
+    return cJSON_IsObject(value) && value->child == NULL;
+}
+
+static void restore_empty_arrays(const cJSON *original, cJSON *converted);
+
+/* A key the script never touched, or overwrote with another empty table, reads back
+   from Lua as an empty object either way: a table has no way to carry "I am an array"
+   when it has no elements. The original document still knows, so a key whose original
+   value was an array and whose converted value came back as an empty object is put
+   back the way it started; a key the original did not have is left exactly as the
+   script wrote it, and a non-empty converted object is never touched. */
+static void restore_empty_arrays_in_object(const cJSON *original, cJSON *converted) {
+    cJSON *child = converted->child;
+    while (child != NULL) {
+        cJSON *next = child->next;
+        const char *key = child->string;
+        const cJSON *original_child = cJSON_GetObjectItemCaseSensitive(original, key);
+        if (original_child != NULL) {
+            if (cJSON_IsArray(original_child) && is_empty_object(child)) {
+                cJSON *empty_array = cJSON_CreateArray();
+                if (empty_array != NULL) cJSON_ReplaceItemInObjectCaseSensitive(converted, key, empty_array);
+            } else {
+                restore_empty_arrays(original_child, child);
+            }
+        }
+        child = next;
+    }
+}
+
+static void restore_empty_arrays_in_array(const cJSON *original, cJSON *converted) {
+    int original_size = cJSON_GetArraySize(original);
+    int converted_size = cJSON_GetArraySize(converted);
+    int common = original_size < converted_size ? original_size : converted_size;
+    for (int index = 0; index < common; index++) {
+        const cJSON *original_child = cJSON_GetArrayItem(original, index);
+        cJSON *converted_child = cJSON_GetArrayItem(converted, index);
+        if (cJSON_IsArray(original_child) && is_empty_object(converted_child)) {
+            cJSON *empty_array = cJSON_CreateArray();
+            if (empty_array != NULL) cJSON_ReplaceItemInArray(converted, index, empty_array);
+        } else {
+            restore_empty_arrays(original_child, converted_child);
+        }
+    }
+}
+
+static void restore_empty_arrays(const cJSON *original, cJSON *converted) {
+    if (original == NULL || converted == NULL) return;
+    if (cJSON_IsObject(converted)) {
+        restore_empty_arrays_in_object(original, converted);
+    } else if (cJSON_IsArray(converted)) {
+        restore_empty_arrays_in_array(original, converted);
+    }
+}
+
 static int publish_daukle_table(lua_State *state, const cJSON *document, fr_error *err) {
     lua_getglobal(state, "daukle");
 
@@ -104,6 +159,7 @@ static int config_lua_load(void *state_unused, const char *text, const char *ori
     lua_getfield(runtime_state, -1, "config");
     int status = fr_lua_to_json(runtime_state, -1, out, err);
     lua_pop(runtime_state, 2);
+    if (status == FR_OK && document != NULL) restore_empty_arrays(document, *out);
     return status;
 }
 
