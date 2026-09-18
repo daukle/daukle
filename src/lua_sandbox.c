@@ -90,6 +90,10 @@ int fr_lua_sandbox_install(lua_State *state, const char *base_dir, fr_error *err
     lua_newtable(state);
     lua_pushcfunction(state, removed_name);
     lua_setfield(state, -2, "__index");
+    /* __metatable makes setmetatable(_G, ...) raise instead of silently disarming
+       __index: without it a script can strip the removed-name diagnostic for free. */
+    lua_pushstring(state, "the daukle sandbox");
+    lua_setfield(state, -2, "__metatable");
     lua_setmetatable(state, -2);
 
     lua_newtable(state);

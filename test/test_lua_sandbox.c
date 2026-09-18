@@ -59,6 +59,17 @@ TEST refuses_an_include_that_climbs_out(void) {
     PASS();
 }
 
+TEST refuses_to_change_its_own_metatable(void) {
+    fr_error err;
+    lua_State *state = sandboxed(&err);
+    ASSERT_EQ(FR_ERR, fr_lua_run(state, "setmetatable(_G, nil)", "daukle.lua", &err));
+    ASSERT(strstr(err.message, "protected metatable") != NULL);
+    ASSERT_EQ(FR_ERR, fr_lua_run(state, "if io then end", "daukle.lua", &err));
+    ASSERT(strstr(err.message, "io is not available") != NULL);
+    fr_lua_close(state);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -68,5 +79,6 @@ int main(int argc, char **argv) {
     RUN_TEST(stops_a_script_that_never_finishes);
     RUN_TEST(includes_a_file_beside_the_manifest);
     RUN_TEST(refuses_an_include_that_climbs_out);
+    RUN_TEST(refuses_to_change_its_own_metatable);
     GREATEST_MAIN_END();
 }
