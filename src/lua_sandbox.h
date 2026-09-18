@@ -6,7 +6,10 @@
 #include "lua.h"
 
 /* Replaces the global table with a curated one and publishes daukle.include.
-   base_dir bounds every include, and is copied into the state's registry. */
+   base_dir bounds every include: its canonical form is resolved once here and
+   kept in the state's registry, and every include target is re-resolved and
+   checked against it, so a symlink or junction inside base_dir cannot reach
+   outside it. */
 int fr_lua_sandbox_install(lua_State *state, const char *base_dir, fr_error *err);
 
 #endif
