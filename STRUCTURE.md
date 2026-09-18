@@ -47,7 +47,7 @@ the client tier's rules.
 | --- | --- | --- |
 | reading a project or manifest file into structs | `manifest.c` | parsing JSON, which is `jsonx` over vendored cJSON |
 | choosing which module of which project answers a coordinate | `resolve.c` | fetching anything. It resolves, the source fetches |
-| the two plugin tables, source and language | `registry.c` | a plugin. It holds `fr_source_plugin` and `fr_language_plugin` |
+| the three plugin tables, source, language and config | `registry.c` | a plugin. It holds `fr_source_plugin`, `fr_language_plugin` and `fr_config_plugin` |
 | fetching a project from GitHub releases | `source_github.c` | the only possible source. It is one registered `fr_source_plugin` |
 | taking a project from a local path | `source_path.c` | a fallback for GitHub. It is a peer source |
 | emitting npm, Gradle and C coordinates | `lang_npm.c`, `lang_gradle.c`, `lang_c.c` | resolvers. Each is one registered `fr_language_plugin` |

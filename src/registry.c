@@ -12,6 +12,8 @@ struct fr_registry {
     size_t source_count;
     fr_language_plugin languages[FR_REGISTRY_CAPACITY];
     size_t language_count;
+    fr_config_plugin configs[FR_REGISTRY_CAPACITY];
+    size_t config_count;
 };
 
 fr_registry *fr_registry_create(void) {
@@ -64,4 +66,35 @@ const fr_language_plugin *fr_registry_language(const fr_registry *registry, cons
         if (strcmp(registry->languages[index].capability, capability) == 0) return &registry->languages[index];
     }
     return NULL;
+}
+
+int fr_registry_add_config(fr_registry *registry, const fr_config_plugin *plugin, fr_error *err) {
+    for (size_t index = 0; index < registry->config_count; index++) {
+        if (strcmp(registry->configs[index].capability, plugin->capability) == 0) {
+            fr_error_set(err, "capability \"%s\" is already registered", plugin->capability);
+            return FR_ERR;
+        }
+    }
+    if (registry->config_count == FR_REGISTRY_CAPACITY) {
+        fr_error_set(err, "cannot register \"%s\": registry is full", plugin->capability);
+        return FR_ERR;
+    }
+    registry->configs[registry->config_count++] = *plugin;
+    return FR_OK;
+}
+
+const fr_config_plugin *fr_registry_config(const fr_registry *registry, const char *capability) {
+    for (size_t index = 0; index < registry->config_count; index++) {
+        if (strcmp(registry->configs[index].capability, capability) == 0) return &registry->configs[index];
+    }
+    return NULL;
+}
+
+size_t fr_registry_config_count(const fr_registry *registry) {
+    return registry->config_count;
+}
+
+const fr_config_plugin *fr_registry_config_at(const fr_registry *registry, size_t index) {
+    if (index >= registry->config_count) return NULL;
+    return &registry->configs[index];
 }
