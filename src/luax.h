@@ -25,4 +25,10 @@ int fr_lua_load_named(lua_State *state, const char *text, size_t length, const c
    count is spent, which bounds run time independently of the memory cap. */
 void fr_lua_set_instruction_limit(lua_State *state, long limit);
 
+/* fr_error's message is capped at 512 bytes, too small for a traceback, so a
+   caller that wants the untruncated text from the last fr_lua_run failure asks
+   here instead; returns NULL when the last run did not fail or left no
+   traceback. */
+const char *fr_lua_last_traceback(void);
+
 #endif

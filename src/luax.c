@@ -45,6 +45,14 @@ static int add_traceback(lua_State *state) {
     return 1;
 }
 
+#define FR_LUA_TRACEBACK_MAX 4096
+static char last_traceback[FR_LUA_TRACEBACK_MAX];
+static int has_traceback = 0;
+
+const char *fr_lua_last_traceback(void) {
+    return has_traceback ? last_traceback : NULL;
+}
+
 static int protected_openlibs(lua_State *state) {
     luaL_openlibs(state);
     return 0;
@@ -112,13 +120,17 @@ int fr_lua_load_named(lua_State *state, const char *text, size_t length, const c
 int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_error *err) {
     if (fr_lua_load_named(state, text, strlen(text), chunk_name) != LUA_OK) {
         fr_error_set(err, "%s", lua_tostring(state, -1));
+        has_traceback = 0;
         lua_pop(state, 1);
         return FR_ERR;
     }
     lua_pushcfunction(state, add_traceback);
     lua_insert(state, -2);
     if (lua_pcall(state, 0, 0, -2) != LUA_OK) {
-        fr_error_set(err, "%s", lua_tostring(state, -1));
+        const char *traceback = lua_tostring(state, -1);
+        fr_error_set(err, "%s", traceback);
+        snprintf(last_traceback, sizeof last_traceback, "%s", traceback == NULL ? "" : traceback);
+        has_traceback = 1;
         lua_pop(state, 2);
         return FR_ERR;
     }
