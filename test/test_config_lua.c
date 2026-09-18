@@ -261,6 +261,21 @@ TEST a_low_memory_limit_fails_a_script_that_would_otherwise_finish(void) {
     PASS();
 }
 
+/* lua_tostring yields NULL for an error object that is neither a string nor a
+   number, and "%s" with NULL is undefined; a script needs one line to get there. */
+TEST a_script_raising_a_table_produces_a_clean_failure(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    fr_manifest manifest;
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-error-object/daukle.toml",
+                                          registry, &manifest, &err));
+    ASSERT(err.message[0] != '\0');
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -279,5 +294,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_source_plugin_that_raises_an_error_produces_a_clean_failure);
     RUN_TEST(a_low_instruction_limit_stops_a_script_that_would_otherwise_finish);
     RUN_TEST(a_low_memory_limit_fails_a_script_that_would_otherwise_finish);
+    RUN_TEST(a_script_raising_a_table_produces_a_clean_failure);
     GREATEST_MAIN_END();
 }

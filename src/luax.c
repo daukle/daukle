@@ -39,6 +39,19 @@ static void *capped_alloc(void *ud, void *pointer, size_t old_size, size_t new_s
     return moved;
 }
 
+/* lua_tostring yields NULL for an error object that is neither a string nor a
+   number, and converts a number one in place, which allocates outside any
+   protected frame; neither is safe where an error is being reported. */
+const char *fr_lua_error_text(lua_State *state) {
+    if (lua_type(state, -1) == LUA_TSTRING) return lua_tostring(state, -1);
+    if (lua_type(state, -1) == LUA_TNUMBER) {
+        static char number_text[64];
+        snprintf(number_text, sizeof number_text, "%.14g", (double) lua_tonumber(state, -1));
+        return number_text;
+    }
+    return "<non-string error>";
+}
+
 static int add_traceback(lua_State *state) {
     const char *message = lua_tostring(state, 1);
     luaL_traceback(state, state, message == NULL ? "error" : message, 1);
@@ -87,7 +100,7 @@ lua_State *fr_lua_open(size_t memory_limit, fr_error *err) {
        abort(). Run it under our own pcall so a tight cap fails gracefully instead. */
     lua_pushcfunction(state, protected_openlibs);
     if (lua_pcall(state, 0, 0, 0) != LUA_OK) {
-        fr_error_set(err, "%s", lua_tostring(state, -1));
+        fr_error_set(err, "%s", fr_lua_error_text(state));
         lua_close(state);
         free(budget);
         return NULL;
@@ -119,7 +132,7 @@ int fr_lua_load_named(lua_State *state, const char *text, size_t length, const c
 
 int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_error *err) {
     if (fr_lua_load_named(state, text, strlen(text), chunk_name) != LUA_OK) {
-        fr_error_set(err, "%s", lua_tostring(state, -1));
+        fr_error_set(err, "%s", fr_lua_error_text(state));
         has_traceback = 0;
         lua_pop(state, 1);
         return FR_ERR;
@@ -127,9 +140,9 @@ int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_er
     lua_pushcfunction(state, add_traceback);
     lua_insert(state, -2);
     if (lua_pcall(state, 0, 0, -2) != LUA_OK) {
-        const char *traceback = lua_tostring(state, -1);
+        const char *traceback = fr_lua_error_text(state);
         fr_error_set(err, "%s", traceback);
-        snprintf(last_traceback, sizeof last_traceback, "%s", traceback == NULL ? "" : traceback);
+        snprintf(last_traceback, sizeof last_traceback, "%s", traceback);
         has_traceback = 1;
         lua_pop(state, 2);
         return FR_ERR;
@@ -139,7 +152,31 @@ int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_er
     return FR_OK;
 }
 
-int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
+/* A manifest reaches depth 7 (root, consumers, an entry, dependencies, a
+   project, modules, an entry), so 64 leaves ample room while keeping both
+   conversions clear of the C stack and of a table that refers to itself. */
+#define FR_LUA_MAX_DEPTH 64
+
+static int too_deep(int depth, fr_error *err) {
+    if (depth <= FR_LUA_MAX_DEPTH) return 0;
+    fr_error_set(err, "a configuration value nests deeper than %d levels, which is either a"
+                      " mistake or a cycle", FR_LUA_MAX_DEPTH);
+    return 1;
+}
+
+/* Lua promises a C function only LUA_MINSTACK free slots, and every level of
+   these conversions keeps a table plus a key or a value live across its
+   recursive call, so each level reserves its own before pushing anything. */
+static int reserve_slots(lua_State *state, int slots, fr_error *err) {
+    if (lua_checkstack(state, slots)) return 1;
+    fr_error_set(err, "the lua stack cannot grow to hold this configuration");
+    return 0;
+}
+
+static int push_json(lua_State *state, const cJSON *value, int depth, fr_error *err) {
+    if (too_deep(depth, err)) return FR_ERR;
+    if (!reserve_slots(state, 3, err)) return FR_ERR;
+
     int stack_top = lua_gettop(state);
     if (value == NULL || cJSON_IsNull(value)) {
         lua_pushnil(state);
@@ -163,7 +200,7 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
         int position = 1;
         const cJSON *item = NULL;
         cJSON_ArrayForEach(item, value) {
-            if (fr_lua_push_json(state, item, err) != FR_OK) {
+            if (push_json(state, item, depth + 1, err) != FR_OK) {
                 /* Restore stack to honor the exactly-one-value contract (zero values on error, one on success). */
                 lua_settop(state, stack_top);
                 return FR_ERR;
@@ -176,7 +213,7 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
         lua_newtable(state);
         const cJSON *item = NULL;
         cJSON_ArrayForEach(item, value) {
-            if (fr_lua_push_json(state, item, err) != FR_OK) {
+            if (push_json(state, item, depth + 1, err) != FR_OK) {
                 lua_settop(state, stack_top);
                 return FR_ERR;
             }
@@ -187,6 +224,10 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
     fr_error_set(err, "cannot represent a json value of an unknown type in lua");
     lua_settop(state, stack_top);
     return FR_ERR;
+}
+
+int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
+    return push_json(state, value, 0, err);
 }
 
 /* An empty table is an object, and a table whose keys are exactly 1..n is an
@@ -211,8 +252,10 @@ static int table_sequence_length(lua_State *state, int index, lua_Integer *count
     return total > 0 && max_key == total;
 }
 
-int fr_lua_to_json(lua_State *state, int index, cJSON **out, fr_error *err) {
+static int to_json(lua_State *state, int index, int depth, cJSON **out, fr_error *err) {
     *out = NULL;
+    if (too_deep(depth, err)) return FR_ERR;
+    if (!reserve_slots(state, 4, err)) return FR_ERR;
     int absolute = lua_absindex(state, index);
 
     switch (lua_type(state, absolute)) {
@@ -241,7 +284,7 @@ int fr_lua_to_json(lua_State *state, int index, cJSON **out, fr_error *err) {
                 for (lua_Integer position = 1; position <= count; position++) {
                     lua_rawgeti(state, absolute, position);
                     cJSON *value = NULL;
-                    int status = fr_lua_to_json(state, -1, &value, err);
+                    int status = to_json(state, -1, depth + 1, &value, err);
                     lua_pop(state, 1);
                     if (status != FR_OK) {
                         cJSON_Delete(container);
@@ -260,7 +303,7 @@ int fr_lua_to_json(lua_State *state, int index, cJSON **out, fr_error *err) {
                         return FR_ERR;
                     }
                     cJSON *value = NULL;
-                    if (fr_lua_to_json(state, -1, &value, err) != FR_OK) {
+                    if (to_json(state, -1, depth + 1, &value, err) != FR_OK) {
                         lua_pop(state, 2);
                         cJSON_Delete(container);
                         return FR_ERR;
@@ -283,4 +326,8 @@ int fr_lua_to_json(lua_State *state, int index, cJSON **out, fr_error *err) {
         return FR_ERR;
     }
     return FR_OK;
+}
+
+int fr_lua_to_json(lua_State *state, int index, cJSON **out, fr_error *err) {
+    return to_json(state, index, 0, out, err);
 }

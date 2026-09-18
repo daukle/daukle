@@ -152,6 +152,76 @@ TEST reads_a_lua_array_back_in_written_order(void) {
     PASS();
 }
 
+TEST refuses_a_lua_table_nested_past_the_depth_cap(void) {
+    fr_error err;
+    lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    ASSERT_EQ(FR_OK, fr_lua_run(state,
+        "result = {}\n"
+        "local node = result\n"
+        "for i = 1, 200 do node.child = {} node = node.child end",
+        "=build", &err));
+    lua_getglobal(state, "result");
+    int stack_before = lua_gettop(state);
+
+    cJSON *document = NULL;
+    ASSERT_EQ(FR_ERR, fr_lua_to_json(state, -1, &document, &err));
+    ASSERT_EQ(NULL, document);
+    ASSERT_EQ(stack_before, lua_gettop(state));
+    ASSERT(strstr(err.message, "nests deeper") != NULL);
+
+    fr_lua_close(state);
+    PASS();
+}
+
+/* "daukle.config.self = daukle.config" is one line to write and would otherwise
+   recurse until the C stack died, where the author expects an error. */
+TEST refuses_a_table_that_refers_to_itself(void) {
+    fr_error err;
+    lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    ASSERT_EQ(FR_OK, fr_lua_run(state, "result = {} result.self = result", "=build", &err));
+    lua_getglobal(state, "result");
+    int stack_before = lua_gettop(state);
+
+    cJSON *document = NULL;
+    ASSERT_EQ(FR_ERR, fr_lua_to_json(state, -1, &document, &err));
+    ASSERT_EQ(NULL, document);
+    ASSERT_EQ(stack_before, lua_gettop(state));
+
+    fr_lua_close(state);
+    PASS();
+}
+
+TEST refuses_a_json_document_nested_past_the_depth_cap(void) {
+    char deep[512];
+    size_t nesting = 200;
+    for (size_t index = 0; index < nesting; index++) deep[index] = '[';
+    for (size_t index = 0; index < nesting; index++) deep[nesting + index] = ']';
+    deep[nesting * 2] = '\0';
+
+    cJSON *document = cJSON_Parse(deep);
+    ASSERT(document != NULL);
+
+    fr_error err;
+    lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    int stack_before = lua_gettop(state);
+    ASSERT_EQ(FR_ERR, fr_lua_push_json(state, document, &err));
+    ASSERT_EQ(stack_before, lua_gettop(state));
+    ASSERT(strstr(err.message, "nests deeper") != NULL);
+
+    fr_lua_close(state);
+    cJSON_Delete(document);
+    PASS();
+}
+
+TEST reports_an_error_object_that_is_not_a_string(void) {
+    fr_error err;
+    lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    ASSERT_EQ(FR_ERR, fr_lua_run(state, "error({})", "=build", &err));
+    ASSERT(err.message[0] != '\0');
+    fr_lua_close(state);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -165,5 +235,9 @@ int main(int argc, char **argv) {
     RUN_TEST(reads_a_lua_table_back_as_json);
     RUN_TEST(rejects_a_table_key_that_is_not_a_string);
     RUN_TEST(reads_a_lua_array_back_in_written_order);
+    RUN_TEST(refuses_a_lua_table_nested_past_the_depth_cap);
+    RUN_TEST(refuses_a_table_that_refers_to_itself);
+    RUN_TEST(refuses_a_json_document_nested_past_the_depth_cap);
+    RUN_TEST(reports_an_error_object_that_is_not_a_string);
     GREATEST_MAIN_END();
 }

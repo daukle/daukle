@@ -232,7 +232,7 @@ int fr_lua_sandbox_install(lua_State *state, const char *base_dir, fr_error *err
     free(canonical_base);
 
     if (status != LUA_OK) {
-        fr_error_set(err, "%s", lua_tostring(state, -1));
+        fr_error_set(err, "%s", fr_lua_error_text(state));
         lua_pop(state, 1);
         return FR_ERR;
     }

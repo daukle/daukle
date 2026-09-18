@@ -1,0 +1,6 @@
+schema = 1
+project = "forebay/error-object"
+version = "1.0.0"
+
+[modules]
+[sources]

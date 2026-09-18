@@ -215,7 +215,7 @@ static int lua_language_apply(void *state, const fr_consumer *consumer,
     apply_context = NULL;
 
     if (status != LUA_OK) {
-        fr_error_set(err, "%s", lua_tostring(runtime_state, -1));
+        fr_error_set(err, "%s", fr_lua_error_text(runtime_state));
         lua_settop(runtime_state, top);
         return FR_ERR;
     }
@@ -262,7 +262,7 @@ static int lua_source_load(void *state, const char *project, const cJSON *block,
     source_context = NULL;
 
     if (status != LUA_OK) {
-        fr_error_set(err, "%s", lua_tostring(runtime_state, -1));
+        fr_error_set(err, "%s", fr_lua_error_text(runtime_state));
         lua_settop(runtime_state, top);
         return FR_ERR;
     }
@@ -389,7 +389,7 @@ static int publish_daukle_table(lua_State *state, const cJSON *document, fr_erro
     publish_document = NULL;
 
     if (status != LUA_OK) {
-        fr_error_set(err, "%s", lua_tostring(state, -1));
+        fr_error_set(err, "%s", fr_lua_error_text(state));
         lua_settop(state, top);
         return FR_ERR;
     }
@@ -437,7 +437,7 @@ static int config_lua_load(void *state_unused, const char *text, const char *ori
     extract_config_out = NULL;
 
     if (status != LUA_OK) {
-        fr_error_set(err, "%s", lua_tostring(runtime_state, -1));
+        fr_error_set(err, "%s", fr_lua_error_text(runtime_state));
         lua_settop(runtime_state, top);
         return FR_ERR;
     }

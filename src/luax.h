@@ -12,8 +12,20 @@ struct cJSON;
 lua_State *fr_lua_open(size_t memory_limit, fr_error *err);
 void fr_lua_close(lua_State *state);
 int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_error *err);
+
+/* Pushes exactly one value on success and none on failure, leaving the stack as
+   it found it either way. Fails rather than overrunning the lua stack when the
+   document nests too deeply. */
 int fr_lua_push_json(lua_State *state, const struct cJSON *value, fr_error *err);
+
+/* Reads the value at index without popping it. Uses raw access throughout, so a
+   metatable cannot fabricate what daukle reads, and fails rather than recursing
+   without end on a table that refers to itself. */
 int fr_lua_to_json(lua_State *state, int index, struct cJSON **out, fr_error *err);
+
+/* The text of the error object on top of the stack, never NULL, for a caller
+   reporting a failed lua_pcall that had no message handler. */
+const char *fr_lua_error_text(lua_State *state);
 
 /* Compiles text under chunk_name, prefixing it with '@' when the caller has not
    already marked it as a source name (with '@' or '='), so every daukle error
