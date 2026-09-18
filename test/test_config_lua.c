@@ -326,6 +326,25 @@ TEST records_every_environment_variable_a_script_read(void) {
     PASS();
 }
 
+/* The record is diagnostic; a script that makes it unconvertible must lose the
+   record and keep its config load. */
+TEST an_unconvertible_env_read_record_does_not_fail_the_load(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-env-cycle/daukle.toml",
+                                         registry, &manifest, &err));
+    ASSERT_STR_EQ("forebay/env-cycle", manifest.self.project);
+    ASSERT(fr_lua_env_reads() == NULL);
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -347,5 +366,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_script_raising_a_table_produces_a_clean_failure);
     RUN_TEST(refuses_a_second_load_while_a_registry_still_holds_the_plugins);
     RUN_TEST(records_every_environment_variable_a_script_read);
+    RUN_TEST(an_unconvertible_env_read_record_does_not_fail_the_load);
     GREATEST_MAIN_END();
 }
