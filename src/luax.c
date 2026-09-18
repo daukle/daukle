@@ -163,3 +163,95 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
     lua_settop(state, stack_top);
     return FR_ERR;
 }
+
+/* An empty table is an object, and a table whose keys are exactly 1..n is an
+   array: lua cannot tell the two apart and the schema's arrays are never
+   empty at the point this runs. */
+static int table_sequence_length(lua_State *state, int index, lua_Integer *count) {
+    lua_Integer expected = 0;
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0) {
+        if (!lua_isinteger(state, -2) || lua_tointeger(state, -2) != expected + 1) {
+            lua_pop(state, 2);
+            return 0;
+        }
+        expected++;
+        lua_pop(state, 1);
+    }
+    *count = expected;
+    return expected > 0;
+}
+
+int fr_lua_to_json(lua_State *state, int index, cJSON **out, fr_error *err) {
+    *out = NULL;
+    int absolute = lua_absindex(state, index);
+
+    switch (lua_type(state, absolute)) {
+        case LUA_TNIL:
+            *out = cJSON_CreateNull();
+            break;
+        case LUA_TBOOLEAN:
+            *out = cJSON_CreateBool(lua_toboolean(state, absolute));
+            break;
+        case LUA_TNUMBER:
+            *out = cJSON_CreateNumber(lua_tonumber(state, absolute));
+            break;
+        case LUA_TSTRING:
+            *out = cJSON_CreateString(lua_tostring(state, absolute));
+            break;
+        case LUA_TTABLE: {
+            lua_Integer count = 0;
+            int is_array = table_sequence_length(state, absolute, &count);
+            cJSON *container = is_array ? cJSON_CreateArray() : cJSON_CreateObject();
+            if (container == NULL) {
+                fr_error_set(err, "out of memory reading a lua table");
+                return FR_ERR;
+            }
+            if (is_array) {
+                /* Indexed reads in written order: lua_next gives no ordering guarantee. */
+                for (lua_Integer position = 1; position <= count; position++) {
+                    lua_rawgeti(state, absolute, position);
+                    cJSON *value = NULL;
+                    int status = fr_lua_to_json(state, -1, &value, err);
+                    lua_pop(state, 1);
+                    if (status != FR_OK) {
+                        cJSON_Delete(container);
+                        return FR_ERR;
+                    }
+                    cJSON_AddItemToArray(container, value);
+                }
+            } else {
+                lua_pushnil(state);
+                while (lua_next(state, absolute) != 0) {
+                    if (lua_type(state, -2) != LUA_TSTRING) {
+                        fr_error_set(err, "a config table key must be a string, found %s",
+                                     lua_typename(state, lua_type(state, -2)));
+                        lua_pop(state, 2);
+                        cJSON_Delete(container);
+                        return FR_ERR;
+                    }
+                    cJSON *value = NULL;
+                    if (fr_lua_to_json(state, -1, &value, err) != FR_OK) {
+                        lua_pop(state, 2);
+                        cJSON_Delete(container);
+                        return FR_ERR;
+                    }
+                    cJSON_AddItemToObject(container, lua_tostring(state, -2), value);
+                    lua_pop(state, 1);
+                }
+            }
+            *out = container;
+            break;
+        }
+        default:
+            fr_error_set(err, "a config value may not be a %s",
+                         lua_typename(state, lua_type(state, absolute)));
+            return FR_ERR;
+    }
+
+    if (*out == NULL) {
+        fr_error_set(err, "out of memory reading a lua value");
+        return FR_ERR;
+    }
+    return FR_OK;
+}

@@ -82,6 +82,71 @@ TEST pushes_a_json_document_as_a_lua_table(void) {
     PASS();
 }
 
+TEST reads_a_lua_table_back_as_json(void) {
+    fr_error err;
+    lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    ASSERT_EQ(FR_OK, fr_lua_run(state,
+        "result = { name = 'x', count = 2, on = true, list = { 'a', 'b' },"
+        " nested = { key = 'value' }, empty = {} }", "=build", &err));
+    lua_getglobal(state, "result");
+
+    int stack_before = lua_gettop(state);
+    cJSON *document = NULL;
+    ASSERT_EQ(FR_OK, fr_lua_to_json(state, -1, &document, &err));
+    ASSERT_EQ(stack_before, lua_gettop(state));
+    ASSERT_STR_EQ("x", cJSON_GetObjectItemCaseSensitive(document, "name")->valuestring);
+    ASSERT_EQ(2, cJSON_GetObjectItemCaseSensitive(document, "count")->valueint);
+    ASSERT(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(document, "on")));
+    ASSERT(cJSON_IsArray(cJSON_GetObjectItemCaseSensitive(document, "list")));
+    ASSERT_EQ(2, cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(document, "list")));
+    ASSERT_STR_EQ("value",
+        cJSON_GetObjectItemCaseSensitive(
+            cJSON_GetObjectItemCaseSensitive(document, "nested"), "key")->valuestring);
+    ASSERT(cJSON_IsObject(cJSON_GetObjectItemCaseSensitive(document, "empty")));
+
+    cJSON_Delete(document);
+    fr_lua_close(state);
+    PASS();
+}
+
+TEST rejects_a_table_key_that_is_not_a_string(void) {
+    fr_error err;
+    lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    fr_lua_run(state, "result = { [true] = 'x' }", "=build", &err);
+    lua_getglobal(state, "result");
+    int stack_before = lua_gettop(state);
+    cJSON *document = NULL;
+    ASSERT_EQ(FR_ERR, fr_lua_to_json(state, -1, &document, &err));
+    ASSERT_EQ(stack_before, lua_gettop(state));
+    ASSERT_EQ(NULL, document);
+    fr_lua_close(state);
+    PASS();
+}
+
+TEST reads_a_lua_array_back_in_written_order(void) {
+    fr_error err;
+    lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    ASSERT_EQ(FR_OK, fr_lua_run(state,
+        "result = { 'first', 'second', 'third', 'fourth', 'fifth', 'sixth' }",
+        "=build", &err));
+    lua_getglobal(state, "result");
+
+    cJSON *document = NULL;
+    ASSERT_EQ(FR_OK, fr_lua_to_json(state, -1, &document, &err));
+    ASSERT(cJSON_IsArray(document));
+    ASSERT_EQ(6, cJSON_GetArraySize(document));
+    ASSERT_STR_EQ("first", cJSON_GetArrayItem(document, 0)->valuestring);
+    ASSERT_STR_EQ("second", cJSON_GetArrayItem(document, 1)->valuestring);
+    ASSERT_STR_EQ("third", cJSON_GetArrayItem(document, 2)->valuestring);
+    ASSERT_STR_EQ("fourth", cJSON_GetArrayItem(document, 3)->valuestring);
+    ASSERT_STR_EQ("fifth", cJSON_GetArrayItem(document, 4)->valuestring);
+    ASSERT_STR_EQ("sixth", cJSON_GetArrayItem(document, 5)->valuestring);
+
+    cJSON_Delete(document);
+    fr_lua_close(state);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -92,5 +157,8 @@ int main(int argc, char **argv) {
     RUN_TEST(stops_a_script_that_allocates_without_end);
     RUN_TEST(fails_gracefully_when_the_cap_is_too_tight_for_the_standard_libraries);
     RUN_TEST(pushes_a_json_document_as_a_lua_table);
+    RUN_TEST(reads_a_lua_table_back_as_json);
+    RUN_TEST(rejects_a_table_key_that_is_not_a_string);
+    RUN_TEST(reads_a_lua_array_back_in_written_order);
     GREATEST_MAIN_END();
 }
