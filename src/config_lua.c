@@ -279,6 +279,9 @@ static int lua_source_load(void *state, const char *project, const cJSON *block,
     return parse_status;
 }
 
+/* Returns 0 with *out set, or does not return at all: every failure below is
+   raised, not reported. Callers still check, because the 0-on-success return
+   would otherwise invite a dereference that only longjmp keeps safe. */
 static int take_slot(lua_State *state, const char *prefix, const char *field,
                      fr_lua_plugin_slot **out) {
     lua_getfield(state, 1, "name");
@@ -320,7 +323,9 @@ static int take_slot(lua_State *state, const char *prefix, const char *field,
 static int lua_declare_language(lua_State *state) {
     luaL_checktype(state, 1, LUA_TTABLE);
     fr_lua_plugin_slot *slot = NULL;
-    take_slot(state, "daukle.language/", "apply", &slot);
+    if (take_slot(state, "daukle.language/", "apply", &slot) != 0 || slot == NULL) {
+        return luaL_error(state, "a language plugin could not be declared");
+    }
 
     fr_language_plugin plugin = { slot->capability, lua_language_apply, slot };
     fr_error err;
@@ -333,7 +338,9 @@ static int lua_declare_language(lua_State *state) {
 static int lua_declare_source(lua_State *state) {
     luaL_checktype(state, 1, LUA_TTABLE);
     fr_lua_plugin_slot *slot = NULL;
-    take_slot(state, "daukle.source/", "load", &slot);
+    if (take_slot(state, "daukle.source/", "load", &slot) != 0 || slot == NULL) {
+        return luaL_error(state, "a source plugin could not be declared");
+    }
 
     fr_source_plugin plugin = { slot->capability, lua_source_load, slot };
     fr_error err;
@@ -413,6 +420,16 @@ static int config_lua_load(void *state_unused, const char *text, const char *ori
                            const char *base_dir, fr_registry *registry, const cJSON *document,
                            cJSON **out, fr_error *err) {
     (void) state_unused;
+
+    /* The shutdown below frees every capability string a previous load handed
+       to a registry, and the registry holds them by value. A registry that is
+       still registered here has not been destroyed, so freeing them now would
+       leave it comparing pointers that are gone. */
+    if (registering_into != NULL) {
+        fr_error_set(err, "a previous configuration's plugins are still registered: destroy the"
+                          " registry before loading another configuration");
+        return FR_ERR;
+    }
 
     fr_lua_runtime_shutdown();
     registering_into = registry;

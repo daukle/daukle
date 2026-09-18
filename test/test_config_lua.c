@@ -276,6 +276,26 @@ TEST a_script_raising_a_table_produces_a_clean_failure(void) {
     PASS();
 }
 
+/* The runtime owns the capability strings a registry holds by value, so a second
+   load against a live registry would free what that registry still compares. */
+TEST refuses_a_second_load_while_a_registry_still_holds_the_plugins(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-plugin/daukle.toml",
+                                         registry, &manifest, &err));
+    fr_manifest_free(&manifest);
+
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-plugin/daukle.toml",
+                                          registry, &manifest, &err));
+    ASSERT(strstr(err.message, "still registered") != NULL);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -295,5 +315,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_low_instruction_limit_stops_a_script_that_would_otherwise_finish);
     RUN_TEST(a_low_memory_limit_fails_a_script_that_would_otherwise_finish);
     RUN_TEST(a_script_raising_a_table_produces_a_clean_failure);
+    RUN_TEST(refuses_a_second_load_while_a_registry_still_holds_the_plugins);
     GREATEST_MAIN_END();
 }

@@ -70,6 +70,12 @@ the client tier's rules.
 | what a configuration script may touch | `lua_sandbox.c` | a permission system. It curates one globals table and bounds daukle.include |
 | running a configuration script, reading it back, and registering any source or language plugin the script declares | `config_lua.c` | the sandbox or the lua state, which are `lua_sandbox.c` and `luax.c` |
 
+**The registry is destroyed before the lua runtime is shut down, always.** A `daukle.lua` may
+register plugins, and `config_lua.c` owns their capability strings while the registry stores the
+plugin structs by value. So the order is: build the registry, load the configuration, destroy the
+registry, then `fr_lua_runtime_shutdown()`. `config_lua_load` refuses a second load while a registry
+still holds the previous one's plugins rather than freeing what that registry would go on reading.
+
 **Adding a source means adding an `fr_source_plugin` and registering it.** Adding a language means
 adding an `fr_language_plugin` and registering it. Neither touches `resolve.c`, and a change that
 does touch it for a new source or language is the signal that the seam was bypassed.
