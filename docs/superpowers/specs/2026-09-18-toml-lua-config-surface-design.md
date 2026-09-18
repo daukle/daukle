@@ -235,10 +235,11 @@ TOML, the script, and a closed set of host facts. That set is:
 built: a configuration that branches on daukle's own version resolves differently under two daukle
 builds, which is the same purity the clock argument above rules out.
 
-Every `daukle.env` read is recorded, name and value, on the in-memory config result, and
-`daukle config print` prints the list. Nothing writes it to a file in this spec. The point is that a
-future lockfile can record what a configuration actually depended on without a second pass over
-this code.
+Every `daukle.env` read is recorded, name and value, in `daukle._env_reads`, which the runtime reads
+back alongside the config and keeps until it is shut down; `fr_lua_env_reads` hands it to
+`daukle config print`, which prints the list after the document. Nothing writes it to a file in this
+spec. The point is that a future lockfile can record what a configuration actually depended on
+without a second pass over this code.
 
 ### 3.7 `tomledit.c`: edits that keep the file
 

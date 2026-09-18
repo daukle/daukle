@@ -16,9 +16,9 @@ static int has_value_argument(int index, int argc, char **argv) {
     return index + 1 < argc && argv[index + 1][0] != '-';
 }
 
-/* Zero means "keep the built-in default" in both limits, which is exactly what
-   strtol returns for text it cannot read, so an unparseable "--lua-memory-limit
-   banana" would otherwise be accepted and ignored. */
+/* Zero means "keep the built-in default" in both limits, and it is also what
+   strtoul returns for text it cannot read, so an unparseable
+   "--lua-memory-limit banana" would otherwise be accepted and ignored. */
 static int parse_positive_number(const char *text, unsigned long *out) {
     char *end = NULL;
     errno = 0;
