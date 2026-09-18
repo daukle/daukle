@@ -5,6 +5,9 @@
 #include "region.h"
 #include "registry.h"
 #include "sync.h"
+#include "support.h"
+
+#include "cJSON.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -296,6 +299,33 @@ TEST refuses_a_second_load_while_a_registry_still_holds_the_plugins(void) {
     PASS();
 }
 
+/* Spec 3.6: the reads a configuration made are what "daukle config print"
+   reports, and what a future lockfile records without a second pass here. */
+TEST records_every_environment_variable_a_script_read(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_test_set_env("DAUKLE_TEST_CHANNEL", "nightly");
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-env/daukle.toml",
+                                         registry, &manifest, &err));
+    ASSERT_EQ(2, manifest.self.version.major);
+
+    const cJSON *reads = fr_lua_env_reads();
+    ASSERT(reads != NULL);
+    const cJSON *channel = cJSON_GetObjectItemCaseSensitive(reads, "DAUKLE_TEST_CHANNEL");
+    ASSERT(channel != NULL);
+    ASSERT_STR_EQ("nightly", channel->valuestring);
+
+    fr_test_set_env("DAUKLE_TEST_CHANNEL", NULL);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(fr_lua_env_reads() == NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -316,5 +346,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_low_memory_limit_fails_a_script_that_would_otherwise_finish);
     RUN_TEST(a_script_raising_a_table_produces_a_clean_failure);
     RUN_TEST(refuses_a_second_load_while_a_registry_still_holds_the_plugins);
+    RUN_TEST(records_every_environment_variable_a_script_read);
     GREATEST_MAIN_END();
 }

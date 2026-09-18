@@ -405,6 +405,7 @@ static int publish_daukle_table(lua_State *state, const cJSON *document, fr_erro
 }
 
 static cJSON **extract_config_out;
+static cJSON *env_reads_document;
 
 static int protected_extract_config(lua_State *state) {
     lua_getglobal(state, "daukle");
@@ -413,7 +414,15 @@ static int protected_extract_config(lua_State *state) {
     if (fr_lua_to_json(state, -1, extract_config_out, &to_json_err) != FR_OK) {
         return luaL_error(state, "%s", to_json_err.message);
     }
+    lua_getfield(state, -2, "_env_reads");
+    if (fr_lua_to_json(state, -1, &env_reads_document, &to_json_err) != FR_OK) {
+        return luaL_error(state, "%s", to_json_err.message);
+    }
     return 0;
+}
+
+const cJSON *fr_lua_env_reads(void) {
+    return env_reads_document;
 }
 
 static int config_lua_load(void *state_unused, const char *text, const char *origin,
@@ -433,6 +442,8 @@ static int config_lua_load(void *state_unused, const char *text, const char *ori
 
     fr_lua_runtime_shutdown();
     registering_into = registry;
+    cJSON_Delete(env_reads_document);
+    env_reads_document = NULL;
     size_t memory_limit = memory_limit_override != 0 ? memory_limit_override : FR_LUA_DEFAULT_MEMORY_LIMIT;
     runtime_state = fr_lua_open(memory_limit, err);
     if (runtime_state == NULL) return FR_ERR;
@@ -472,6 +483,8 @@ void fr_lua_runtime_shutdown(void) {
     for (size_t index = 0; index < plugin_slot_count; index++) free(plugin_slots[index].capability);
     plugin_slot_count = 0;
     registering_into = NULL;
+    cJSON_Delete(env_reads_document);
+    env_reads_document = NULL;
 }
 
 void fr_lua_set_log_sink(void (*sink)(const char *message)) {

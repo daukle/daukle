@@ -95,6 +95,17 @@ static int run_with_resolved_manifest(const char *manifest_path, int write, int 
     return status;
 }
 
+/* What the configuration actually depended on, so a future lockfile has a
+   record of it without a second pass over the config surface. */
+static void print_env_reads(const cJSON *env_reads) {
+    if (env_reads == NULL || env_reads->child == NULL) return;
+    printf("daukle: environment reads\n");
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, env_reads) {
+        if (cJSON_IsString(entry)) printf("  %s = %s\n", entry->string, entry->valuestring);
+    }
+}
+
 static int print_config(const char *manifest_path, int verbose) {
     fr_error err;
     char *resolved = NULL;
@@ -112,11 +123,14 @@ static int print_config(const char *manifest_path, int verbose) {
 
     fr_manifest manifest;
     int status = fr_config_load_file(resolved, registry, &manifest, &err);
+    /* The runtime owns the recorded reads and the shutdown below frees them. */
+    cJSON *env_reads = cJSON_Duplicate(fr_lua_env_reads(), 1);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
 
     if (status != FR_OK) {
         report_error(&err, verbose);
+        cJSON_Delete(env_reads);
         fr_manifest_free(&manifest);
         free(resolved);
         return 1;
@@ -125,6 +139,7 @@ static int print_config(const char *manifest_path, int verbose) {
     char *printed = cJSON_Print(manifest.document);
     if (printed == NULL) {
         fprintf(stderr, "daukle: out of memory printing \"%s\"\n", resolved);
+        cJSON_Delete(env_reads);
         fr_manifest_free(&manifest);
         free(resolved);
         return 1;
@@ -132,6 +147,8 @@ static int print_config(const char *manifest_path, int verbose) {
 
     printf("%s\n", printed);
     free(printed);
+    print_env_reads(env_reads);
+    cJSON_Delete(env_reads);
     fr_manifest_free(&manifest);
     free(resolved);
     return 0;
