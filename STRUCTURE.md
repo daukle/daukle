@@ -51,6 +51,8 @@ the client tier's rules.
 | fetching a project from GitHub releases | `source_github.c` | the only possible source. It is one registered `fr_source_plugin` |
 | taking a project from a local path | `source_path.c` | a fallback for GitHub. It is a peer source |
 | emitting npm, Gradle and C coordinates | `lang_npm.c`, `lang_gradle.c`, `lang_c.c` | resolvers. Each is one registered `fr_language_plugin` |
+| finding the manifest and choosing its format | `config.c` | a parser. It dispatches to a registered `fr_config_plugin` |
+| reading a json manifest | `config_json.c` | the only possible format. It is one registered `fr_config_plugin` |
 | rewriting a marked region of a file in place | `region.c` | a JSON editor. `jsonedit.c` is, for files that are JSON |
 | the whole write pass over a manifest | `sync.c` | per-language. It drives the language plugins |
 | HTTP, per platform | `http.c` over `http_curl.c` and `http_winhttp.c` | two implementations to keep in step. One interface, one backend per platform |

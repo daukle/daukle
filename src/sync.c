@@ -1,6 +1,8 @@
 #include "sync.h"
 
 #include "cache.h"
+#include "config.h"
+#include "config_json.h"
 #include "error.h"
 #include "lang_c.h"
 #include "lang_gradle.h"
@@ -66,7 +68,7 @@ static int report_adopt(fr_sync_report *report, char *path, fr_error *err) {
     return FR_OK;
 }
 
-static int build_registry(fr_registry **out, fr_error *err) {
+int fr_build_registry(fr_registry **out, fr_error *err) {
     fr_registry *registry = fr_registry_create();
     if (registry == NULL) {
         fr_error_set(err, "out of memory creating the plugin registry");
@@ -89,6 +91,10 @@ static int build_registry(fr_registry **out, fr_error *err) {
         return FR_ERR;
     }
     if (fr_registry_add_language(registry, &FR_LANGUAGE_C, err) != FR_OK) {
+        fr_registry_destroy(registry);
+        return FR_ERR;
+    }
+    if (fr_registry_add_config(registry, &FR_CONFIG_JSON, err) != FR_OK) {
         fr_registry_destroy(registry);
         return FR_ERR;
     }
@@ -165,20 +171,20 @@ int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report 
     memset(report, 0, sizeof *report);
     fr_cache_set_enabled(use_cache);
 
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, err) != FR_OK) return FR_ERR;
+
     fr_manifest manifest;
-    if (fr_manifest_read(manifest_path, &manifest, err) != FR_OK) return FR_ERR;
+    if (fr_config_load_file(manifest_path, registry, &manifest, err) != FR_OK) {
+        fr_registry_destroy(registry);
+        return FR_ERR;
+    }
 
     char *manifest_dir = manifest_directory(manifest_path);
     if (manifest_dir == NULL) {
         fr_error_set(err, "out of memory deriving the manifest directory");
         fr_manifest_free(&manifest);
-        return FR_ERR;
-    }
-
-    fr_registry *registry = NULL;
-    if (build_registry(&registry, err) != FR_OK) {
-        free(manifest_dir);
-        fr_manifest_free(&manifest);
+        fr_registry_destroy(registry);
         return FR_ERR;
     }
 

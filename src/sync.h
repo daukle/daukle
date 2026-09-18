@@ -2,6 +2,7 @@
 #define DAUKLE_SYNC_H
 
 #include "types.h"
+#include "registry.h"
 
 #include <stddef.h>
 
@@ -10,6 +11,7 @@ typedef struct {
     size_t count;
 } fr_sync_report;
 
+int fr_build_registry(fr_registry **out, fr_error *err);
 int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report *report, fr_error *err);
 void fr_sync_report_free(fr_sync_report *report);
 
