@@ -118,6 +118,7 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
     int stack_top = lua_gettop(state);
     if (value == NULL || cJSON_IsNull(value)) {
         lua_pushnil(state);
+        /* JSON null becomes nil, removing the key from the table (daukle schema has no nullable keys). */
         return FR_OK;
     }
     if (cJSON_IsBool(value)) {
@@ -138,6 +139,7 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
         const cJSON *item = NULL;
         cJSON_ArrayForEach(item, value) {
             if (fr_lua_push_json(state, item, err) != FR_OK) {
+                /* Restore stack to honor the exactly-one-value contract (zero values on error, one on success). */
                 lua_settop(state, stack_top);
                 return FR_ERR;
             }
@@ -161,4 +163,3 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
     lua_settop(state, stack_top);
     return FR_ERR;
 }
-

@@ -64,7 +64,9 @@ TEST pushes_a_json_document_as_a_lua_table(void) {
         "\"list\":[\"a\",\"b\"],\"nested\":{\"key\":\"value\"}}");
     ASSERT(document != NULL);
 
+    int stack_before = lua_gettop(state);
     ASSERT_EQ(FR_OK, fr_lua_push_json(state, document, &err));
+    ASSERT_EQ(stack_before + 1, lua_gettop(state));
     lua_setglobal(state, "document");
     cJSON_Delete(document);
 
