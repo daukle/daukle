@@ -18,7 +18,14 @@ static const char *extension_of(const char *file_path) {
 static char *directory_of(const char *file_path) {
     const char *slash = strrchr(file_path, '/');
     const char *backslash = strrchr(file_path, '\\');
-    const char *last = slash > backslash ? slash : backslash;
+    const char *last;
+    if (slash == NULL) {
+        last = backslash;
+    } else if (backslash == NULL) {
+        last = slash;
+    } else {
+        last = slash > backslash ? slash : backslash;
+    }
     if (last == NULL) {
         char *here = malloc(2);
         if (here != NULL) memcpy(here, ".", 2);
@@ -174,6 +181,16 @@ int fr_config_find(const char *directory, const fr_registry *registry, char **ou
         *out_path = overlay;
         return FR_OK;
     }
-    fr_error_set(err, "\"%s\" holds no manifest: expected daukle.json", directory);
+    char expected[256];
+    size_t written = 0;
+    expected[0] = '\0';
+    for (size_t index = 0; index < fr_registry_config_count(registry); index++) {
+        const fr_config_plugin *plugin = fr_registry_config_at(registry, index);
+        int added = snprintf(expected + written, sizeof expected - written,
+                             written == 0 ? "%s" : ", %s", plugin->file_name);
+        if (added < 0 || (size_t) added >= sizeof expected - written) break;
+        written += (size_t) added;
+    }
+    fr_error_set(err, "\"%s\" holds no manifest: expected one of %s", directory, expected);
     return FR_ERR;
 }

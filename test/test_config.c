@@ -7,14 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int primary_format_count(const fr_registry *registry) {
-    int count = 0;
-    for (size_t index = 0; index < fr_registry_config_count(registry); index++) {
-        if (!fr_registry_config_at(registry, index)->overlay) count++;
-    }
-    return count;
-}
-
 TEST loads_a_json_manifest_through_the_seam(void) {
     fr_error err;
     fr_registry *registry = NULL;
@@ -54,10 +46,6 @@ TEST refuses_two_manifests_in_one_directory(void) {
     fr_error err;
     fr_registry *registry = NULL;
     fr_build_registry(&registry, &err);
-    if (primary_format_count(registry) < 2) {
-        fr_registry_destroy(registry);
-        SKIPm("a second primary format lands in task 4");
-    }
     char *found = NULL;
     ASSERT_EQ(FR_ERR, fr_config_find("test/fixtures/search/both", registry, &found, &err));
     ASSERT(strstr(err.message, "daukle.json") != NULL);
@@ -72,6 +60,7 @@ TEST reports_a_directory_with_no_manifest(void) {
     char *found = NULL;
     ASSERT_EQ(FR_ERR, fr_config_find("test/fixtures/search/empty", registry, &found, &err));
     ASSERT(strstr(err.message, "daukle.json") != NULL);
+    ASSERT(strstr(err.message, "daukle.toml") != NULL);
     fr_registry_destroy(registry);
     PASS();
 }

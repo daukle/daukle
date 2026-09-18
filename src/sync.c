@@ -3,6 +3,7 @@
 #include "cache.h"
 #include "config.h"
 #include "config_json.h"
+#include "config_toml.h"
 #include "error.h"
 #include "lang_c.h"
 #include "lang_gradle.h"
@@ -95,6 +96,10 @@ int fr_build_registry(fr_registry **out, fr_error *err) {
         return FR_ERR;
     }
     if (fr_registry_add_config(registry, &FR_CONFIG_JSON, err) != FR_OK) {
+        fr_registry_destroy(registry);
+        return FR_ERR;
+    }
+    if (fr_registry_add_config(registry, &FR_CONFIG_TOML, err) != FR_OK) {
         fr_registry_destroy(registry);
         return FR_ERR;
     }

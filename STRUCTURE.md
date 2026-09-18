@@ -30,6 +30,7 @@ daukle/daukle
   src/                  the whole program, one concern per pair of .c/.h files
   test/                 one test file per src module, plus a real HTTP server fixture
   vendor/cJSON          JSON parsing
+  vendor/toml           TOML parsing
   vendor/greatest       the test harness
   cmake/  build/        build machinery and output
   plugin.json           id daukle, category tool, tech c
@@ -53,6 +54,7 @@ the client tier's rules.
 | emitting npm, Gradle and C coordinates | `lang_npm.c`, `lang_gradle.c`, `lang_c.c` | resolvers. Each is one registered `fr_language_plugin` |
 | finding the manifest and choosing its format | `config.c` | a parser. It dispatches to a registered `fr_config_plugin` |
 | reading a json manifest | `config_json.c` | the only possible format. It is one registered `fr_config_plugin` |
+| reading a toml manifest | `config_toml.c` | a json reader. It is a peer format, registered the same way |
 | rewriting a marked region of a file in place | `region.c` | a JSON editor. `jsonedit.c` is, for files that are JSON |
 | the whole write pass over a manifest | `sync.c` | per-language. It drives the language plugins |
 | HTTP, per platform | `http.c` over `http_curl.c` and `http_winhttp.c` | two implementations to keep in step. One interface, one backend per platform |

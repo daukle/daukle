@@ -14,8 +14,8 @@ else()
     set(DAUKLE_TEST_WARNING_FLAGS ${DAUKLE_WARNING_FLAGS})
 endif()
 
-add_library(daukle_vendor STATIC vendor/cJSON/cJSON.c)
-target_include_directories(daukle_vendor PUBLIC vendor/cJSON)
+add_library(daukle_vendor STATIC vendor/cJSON/cJSON.c vendor/toml/toml.c)
+target_include_directories(daukle_vendor PUBLIC vendor/cJSON vendor/toml)
 
 file(GLOB DAUKLE_CORE_SOURCES CONFIGURE_DEPENDS src/*.c)
 list(REMOVE_ITEM DAUKLE_CORE_SOURCES

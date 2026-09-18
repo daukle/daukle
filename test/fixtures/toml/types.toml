@@ -1,0 +1,15 @@
+# a comment, which json cannot hold
+name = "daukle"
+count = 3
+ratio = 1.5
+enabled = true
+tags = ["a", "b"]
+
+[nested]
+key = "value"
+
+[[rows]]
+id = "first"
+
+[[rows]]
+id = "second"
