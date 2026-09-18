@@ -50,6 +50,15 @@ static int protected_openlibs(lua_State *state) {
     return 0;
 }
 
+static void instruction_budget_spent(lua_State *state, lua_Debug *activation) {
+    (void) activation;
+    luaL_error(state, "this configuration ran for too long and was stopped");
+}
+
+void fr_lua_set_instruction_limit(lua_State *state, long limit) {
+    lua_sethook(state, instruction_budget_spent, LUA_MASKCOUNT, (int) limit);
+}
+
 lua_State *fr_lua_open(size_t memory_limit, fr_error *err) {
     fr_lua_budget *budget = calloc(1, sizeof *budget);
     if (budget == NULL) {
@@ -75,6 +84,7 @@ lua_State *fr_lua_open(size_t memory_limit, fr_error *err) {
         free(budget);
         return NULL;
     }
+    fr_lua_set_instruction_limit(state, 50000000);
     return state;
 }
 
@@ -90,15 +100,17 @@ void fr_lua_close(lua_State *state) {
    width (LUA_IDSIZE) is smaller still, so nothing meaningful is lost. */
 #define FR_LUA_CHUNK_NAME_MAX 300
 
-int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_error *err) {
-    /* Without a '@' or '=' prefix, Lua treats the name as literal source text and
-       reports errors as [string "..."], not as chunk_name:line. */
+int fr_lua_load_named(lua_State *state, const char *text, size_t length, const char *chunk_name) {
     char source_name[FR_LUA_CHUNK_NAME_MAX];
     if (chunk_name[0] != '@' && chunk_name[0] != '=') {
         snprintf(source_name, sizeof source_name, "@%s", chunk_name);
         chunk_name = source_name;
     }
-    if (luaL_loadbuffer(state, text, strlen(text), chunk_name) != LUA_OK) {
+    return luaL_loadbuffer(state, text, length, chunk_name);
+}
+
+int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_error *err) {
+    if (fr_lua_load_named(state, text, strlen(text), chunk_name) != LUA_OK) {
         fr_error_set(err, "%s", lua_tostring(state, -1));
         lua_pop(state, 1);
         return FR_ERR;
