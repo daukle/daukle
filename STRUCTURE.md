@@ -18,8 +18,12 @@ Verified against disk on 2026-09-18.
 ## 1. Where it lives
 
 `F:/Documents/GitHub/daukle/daukle`, its own org folder since 2026-09-17, because more related repos
-are expected beside it. The git remote is still `github.com/intisy/daukle`: the folder tier and the
-GitHub organisation are independent, as they are for the rest of this tree.
+are expected beside it. The git remote is `github.com/daukle/daukle`, moved out of the `intisy`
+organisation on 2026-09-18 so that the folder tier and the GitHub organisation agree. daukle is its
+own org: it keeps its own queue and its own docs repo, and spisor merely happens to use it.
+
+`daukle/docs` beside this repo is that docs repo, holding the task queue and the design documents.
+Nothing under `docs/` is ever tracked inside a code repo.
 
 It has been renamed three times. It was `ferrule`, then `tiestone`, then `terko`, then `daukle`, and
 anything naming the first three means this repo.
