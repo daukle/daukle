@@ -1,5 +1,6 @@
 #include "greatest.h"
 #include "luax.h"
+#include "cJSON.h"
 
 #include <string.h>
 
@@ -55,6 +56,30 @@ TEST fails_gracefully_when_the_cap_is_too_tight_for_the_standard_libraries(void)
     PASS();
 }
 
+TEST pushes_a_json_document_as_a_lua_table(void) {
+    fr_error err;
+    lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    cJSON *document = cJSON_Parse(
+        "{\"name\":\"x\",\"count\":2,\"on\":true,\"off\":false,\"none\":null,"
+        "\"list\":[\"a\",\"b\"],\"nested\":{\"key\":\"value\"}}");
+    ASSERT(document != NULL);
+
+    ASSERT_EQ(FR_OK, fr_lua_push_json(state, document, &err));
+    lua_setglobal(state, "document");
+    cJSON_Delete(document);
+
+    ASSERT_EQ(FR_OK, fr_lua_run(state,
+        "assert(document.name == 'x')\n"
+        "assert(document.count == 2)\n"
+        "assert(document.on == true)\n"
+        "assert(document.off == false)\n"
+        "assert(document.none == nil)\n"
+        "assert(#document.list == 2 and document.list[2] == 'b')\n"
+        "assert(document.nested.key == 'value')\n", "=check", &err));
+    fr_lua_close(state);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -64,5 +89,6 @@ int main(int argc, char **argv) {
     RUN_TEST(reports_a_runtime_error_with_its_line);
     RUN_TEST(stops_a_script_that_allocates_without_end);
     RUN_TEST(fails_gracefully_when_the_cap_is_too_tight_for_the_standard_libraries);
+    RUN_TEST(pushes_a_json_document_as_a_lua_table);
     GREATEST_MAIN_END();
 }

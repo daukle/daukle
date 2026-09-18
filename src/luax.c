@@ -1,6 +1,7 @@
 #include "luax.h"
 
 #include "error.h"
+#include "cJSON.h"
 
 #include "lauxlib.h"
 #include "lualib.h"
@@ -111,4 +112,44 @@ int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_er
     }
     lua_pop(state, 1);
     return FR_OK;
+}
+
+int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
+    if (value == NULL || cJSON_IsNull(value)) {
+        lua_pushnil(state);
+        return FR_OK;
+    }
+    if (cJSON_IsBool(value)) {
+        lua_pushboolean(state, cJSON_IsTrue(value));
+        return FR_OK;
+    }
+    if (cJSON_IsNumber(value)) {
+        lua_pushnumber(state, value->valuedouble);
+        return FR_OK;
+    }
+    if (cJSON_IsString(value)) {
+        lua_pushstring(state, value->valuestring);
+        return FR_OK;
+    }
+    if (cJSON_IsArray(value)) {
+        lua_newtable(state);
+        int position = 1;
+        const cJSON *item = NULL;
+        cJSON_ArrayForEach(item, value) {
+            if (fr_lua_push_json(state, item, err) != FR_OK) return FR_ERR;
+            lua_rawseti(state, -2, position++);
+        }
+        return FR_OK;
+    }
+    if (cJSON_IsObject(value)) {
+        lua_newtable(state);
+        const cJSON *item = NULL;
+        cJSON_ArrayForEach(item, value) {
+            if (fr_lua_push_json(state, item, err) != FR_OK) return FR_ERR;
+            lua_setfield(state, -2, item->string);
+        }
+        return FR_OK;
+    }
+    fr_error_set(err, "cannot represent a json value of an unknown type in lua");
+    return FR_ERR;
 }
