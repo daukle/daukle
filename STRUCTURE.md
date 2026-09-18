@@ -11,7 +11,7 @@ resolver.
 
 Living document. Update it in the same commit as the change it describes.
 
-Verified against disk on 2026-09-17.
+Verified against disk on 2026-09-18.
 
 ---
 
@@ -68,7 +68,7 @@ the client tier's rules.
 | errors | `error.c`, `fr_error` | logging. The caller decides what to print |
 | the lua state, its memory cap and its errors | `luax.c` | the sandbox, which is `lua_sandbox.c`, nor the config format, which is `config_lua.c` |
 | what a configuration script may touch | `lua_sandbox.c` | a permission system. It curates one globals table and bounds daukle.include |
-| running a configuration script and reading it back | `config_lua.c` | the sandbox or the lua state, which are `lua_sandbox.c` and `luax.c` |
+| running a configuration script, reading it back, and registering any source or language plugin the script declares | `config_lua.c` | the sandbox or the lua state, which are `lua_sandbox.c` and `luax.c` |
 
 **Adding a source means adding an `fr_source_plugin` and registering it.** Adding a language means
 adding an `fr_language_plugin` and registering it. Neither touches `resolve.c`, and a change that
@@ -91,7 +91,13 @@ tests themselves.
 ## 4. State
 
 The resolver, the two sources, the three languages, the cache, the sync pass and the CLI are all
-implemented and tested. What is open is not in this repo: task **F-7** in `spisor/docs/TASKS.md` says
-both of the phase-2 manifest writers are proven against fixtures only, because nothing in the
-ecosystem publishes a manifest release asset yet. basekit's 5.0.0 release carries eight jars and no
-manifest. Until something publishes one, the writers have never met real input.
+implemented and tested. The configuration surface is TOML with an optional Lua overlay: `config.c`
+finds the manifest and dispatches to a registered `fr_config_plugin` by a capability string built
+from the file's extension, and `config_json.c`, `config_toml.c` and `config_lua.c` are all
+registered formats, chosen the same way, with none named in `config.c` itself. TOML is the format a
+manifest is authored in going forward; JSON keeps working, both as a manifest format and as the
+asset a source publishes, since `source_github.c` still fetches `daukle.json` by default from a
+release. Task **F-7** in `spisor/docs/TASKS.md` is unaffected by this work: it says both of the
+phase-2 manifest writers are proven against fixtures only, because nothing in the ecosystem
+publishes a manifest release asset yet. basekit's 5.0.0 release carries eight jars and no manifest.
+Until something publishes one, the writers have never met real input.

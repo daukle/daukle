@@ -1,8 +1,9 @@
 set(CORE_FILES
     resolve.c resolve.h manifest.c manifest.h registry.c registry.h
-    types.h sync.c sync.h main.c cli.c cli.h)
+    types.h sync.c sync.h main.c cli.c cli.h config.c config.h)
 
-set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]" "daukle\\.language/[a-z]")
+set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
+              "daukle\\.language/[a-z]" "daukle\\.config/[a-z]")
 
 set(FINDINGS "")
 foreach(name ${CORE_FILES})
