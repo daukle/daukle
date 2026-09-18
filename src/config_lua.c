@@ -14,6 +14,10 @@
 
 static lua_State *runtime_state = NULL;
 static void (*log_sink)(const char *message) = NULL;
+static long instruction_limit_override = 0;
+static size_t memory_limit_override = 0;
+
+#define FR_LUA_DEFAULT_MEMORY_LIMIT (64u * 1024u * 1024u)
 
 static const char *host_os(void) {
 #if defined(_WIN32)
@@ -412,8 +416,12 @@ static int config_lua_load(void *state_unused, const char *text, const char *ori
 
     fr_lua_runtime_shutdown();
     registering_into = registry;
-    runtime_state = fr_lua_open(64u * 1024u * 1024u, err);
+    size_t memory_limit = memory_limit_override != 0 ? memory_limit_override : FR_LUA_DEFAULT_MEMORY_LIMIT;
+    runtime_state = fr_lua_open(memory_limit, err);
     if (runtime_state == NULL) return FR_ERR;
+    if (instruction_limit_override != 0) {
+        fr_lua_set_instruction_limit(runtime_state, instruction_limit_override);
+    }
     if (fr_lua_sandbox_install(runtime_state, base_dir, err) != FR_OK) {
         fr_lua_runtime_shutdown();
         return FR_ERR;
@@ -451,6 +459,11 @@ void fr_lua_runtime_shutdown(void) {
 
 void fr_lua_set_log_sink(void (*sink)(const char *message)) {
     log_sink = sink;
+}
+
+void fr_lua_set_limits(long instruction_limit, size_t memory_limit) {
+    instruction_limit_override = instruction_limit;
+    memory_limit_override = memory_limit;
 }
 
 const fr_config_plugin FR_CONFIG_LUA = { "daukle.config/lua", "daukle.lua", 1, config_lua_load, NULL };

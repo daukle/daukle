@@ -279,6 +279,7 @@ int main(int argc, char **argv) {
     fr_cli_options options;
     fr_cli_parse(argc, argv, &options);
     fr_lua_set_log_sink(print_lua_log);
+    fr_lua_set_limits(options.instruction_limit, options.memory_limit);
 
     switch (options.command) {
         case FR_CLI_VERSION:

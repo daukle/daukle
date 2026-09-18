@@ -198,6 +198,63 @@ TEST a_source_plugin_that_raises_an_error_produces_a_clean_failure(void) {
     PASS();
 }
 
+/* Proves the limit set through fr_lua_set_limits actually reaches the state
+   fr_lua_open creates, not just that the flag parses: the same script finishes
+   under the default budget and is stopped once the budget is cut down. */
+TEST a_low_instruction_limit_stops_a_script_that_would_otherwise_finish(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    fr_manifest manifest;
+
+    fr_lua_set_limits(0, 0);
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-limit-instruction/daukle.toml",
+                                         registry, &manifest, &err));
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    fr_lua_set_limits(1000, 0);
+    registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-limit-instruction/daukle.toml",
+                                          registry, &manifest, &err));
+    ASSERT(strstr(err.message, "ran for too long") != NULL);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_lua_set_limits(0, 0);
+    PASS();
+}
+
+/* Same proof for the memory limit: the script's allocations fit under the
+   default 64 MiB budget and do not fit under a 2 MB one, and the two failures
+   are distinguishable by message ("ran for too long" vs "not enough memory"),
+   so a caller cannot mistake one budget for the other. */
+TEST a_low_memory_limit_fails_a_script_that_would_otherwise_finish(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    fr_manifest manifest;
+
+    fr_lua_set_limits(0, 0);
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-limit-memory/daukle.toml",
+                                         registry, &manifest, &err));
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    fr_lua_set_limits(0, 2000000);
+    registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-limit-memory/daukle.toml",
+                                          registry, &manifest, &err));
+    ASSERT(strstr(err.message, "not enough memory") != NULL);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_lua_set_limits(0, 0);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -214,5 +271,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_name_too_long_for_the_capability_buffer_is_rejected);
     RUN_TEST(a_language_plugin_that_raises_an_error_produces_a_clean_failure);
     RUN_TEST(a_source_plugin_that_raises_an_error_produces_a_clean_failure);
+    RUN_TEST(a_low_instruction_limit_stops_a_script_that_would_otherwise_finish);
+    RUN_TEST(a_low_memory_limit_fails_a_script_that_would_otherwise_finish);
     GREATEST_MAIN_END();
 }
