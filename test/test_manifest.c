@@ -105,6 +105,27 @@ TEST rejects_an_unknown_schema(void) {
     PASS();
 }
 
+TEST validates_a_document_built_in_memory(void) {
+    cJSON *root = cJSON_Parse(
+        "{\"schema\":1,\"project\":\"forebay/x\",\"version\":\"1.0.0\","
+        "\"modules\":{},\"sources\":{},\"consumers\":[]}");
+    ASSERT(root != NULL);
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_OK, fr_manifest_from_document(root, "<memory>", &manifest, &err));
+    ASSERT_STR_EQ("forebay/x", manifest.self.project);
+    fr_manifest_free(&manifest);
+    PASS();
+}
+
+TEST reports_the_origin_of_a_bad_document(void) {
+    cJSON *root = cJSON_Parse("{\"schema\":99}");
+    ASSERT(root != NULL);
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_ERR, fr_manifest_from_document(root, "<memory>", &manifest, &err));
+    ASSERT(strstr(err.message, "<memory>") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -117,5 +138,7 @@ int main(int argc, char **argv) {
     RUN_TEST(keeps_a_source_block_of_any_kind);
     RUN_TEST(rejects_a_consumer_language_that_names_a_reserved_module_key);
     RUN_TEST(rejects_an_unknown_schema);
+    RUN_TEST(validates_a_document_built_in_memory);
+    RUN_TEST(reports_the_origin_of_a_bad_document);
     GREATEST_MAIN_END();
 }

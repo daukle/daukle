@@ -306,17 +306,22 @@ int fr_project_read(const char *file_path, fr_project *out, fr_error *err) {
     return result;
 }
 
-int fr_manifest_read(const char *file_path, fr_manifest *out, fr_error *err) {
+int fr_manifest_from_document(cJSON *root, const char *origin, fr_manifest *out, fr_error *err) {
     memset(out, 0, sizeof *out);
-    cJSON *root = NULL;
-    if (fr_json_read_file(file_path, &root, err) != FR_OK) return FR_ERR;
-    if (manifest_from_json(root, file_path, out, err) != FR_OK) {
+    if (manifest_from_json(root, origin, out, err) != FR_OK) {
         fr_manifest_free(out);
         cJSON_Delete(root);
         return FR_ERR;
     }
     out->document = root;
     return FR_OK;
+}
+
+int fr_manifest_read(const char *file_path, fr_manifest *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+    cJSON *root = NULL;
+    if (fr_json_read_file(file_path, &root, err) != FR_OK) return FR_ERR;
+    return fr_manifest_from_document(root, file_path, out, err);
 }
 
 void fr_project_free(fr_project *project) {
