@@ -3,6 +3,8 @@
 #include "error.h"
 #include "luax.h"
 #include "lua_sandbox.h"
+#include "manifest.h"
+#include "resolve.h"
 
 #include "cJSON.h"
 #include "lauxlib.h"
@@ -110,6 +112,172 @@ static void restore_empty_arrays(const cJSON *original, cJSON *converted) {
     }
 }
 
+#define FR_LUA_MAX_PLUGINS 32
+
+typedef struct {
+    char *capability;
+    int callback;
+} fr_lua_plugin_slot;
+
+static fr_lua_plugin_slot plugin_slots[FR_LUA_MAX_PLUGINS];
+static size_t plugin_slot_count;
+static fr_registry *registering_into;
+
+static fr_lua_plugin_slot *slot_for(const char *capability) {
+    for (size_t index = 0; index < plugin_slot_count; index++) {
+        if (strcmp(plugin_slots[index].capability, capability) == 0) return &plugin_slots[index];
+    }
+    return NULL;
+}
+
+static int lua_language_apply(void *state, const fr_consumer *consumer,
+                              const fr_resolved *resolved, size_t count,
+                              const char *original_text, char **out_text, fr_error *err) {
+    fr_lua_plugin_slot *slot = state;
+    int top = lua_gettop(runtime_state);
+    lua_rawgeti(runtime_state, LUA_REGISTRYINDEX, slot->callback);
+
+    lua_newtable(runtime_state);
+    lua_pushstring(runtime_state, consumer->id);
+    lua_setfield(runtime_state, -2, "id");
+    lua_pushstring(runtime_state, consumer->configuration);
+    lua_setfield(runtime_state, -2, "configuration");
+
+    lua_newtable(runtime_state);
+    for (size_t index = 0; index < count; index++) {
+        lua_newtable(runtime_state);
+        lua_pushstring(runtime_state, resolved[index].project);
+        lua_setfield(runtime_state, -2, "project");
+        lua_pushstring(runtime_state, resolved[index].module);
+        lua_setfield(runtime_state, -2, "module");
+        if (fr_lua_push_json(runtime_state, resolved[index].block, err) != FR_OK) {
+            lua_settop(runtime_state, top);
+            return FR_ERR;
+        }
+        lua_setfield(runtime_state, -2, "block");
+        lua_rawseti(runtime_state, -2, (lua_Integer) index + 1);
+    }
+
+    lua_pushstring(runtime_state, original_text);
+
+    if (lua_pcall(runtime_state, 3, 1, 0) != LUA_OK) {
+        fr_error_set(err, "%s", lua_tostring(runtime_state, -1));
+        lua_settop(runtime_state, top);
+        return FR_ERR;
+    }
+    const char *produced = lua_tostring(runtime_state, -1);
+    if (produced == NULL) {
+        fr_error_set(err, "the \"%s\" plugin returned %s, expected a string",
+                     slot->capability, luaL_typename(runtime_state, -1));
+        lua_settop(runtime_state, top);
+        return FR_ERR;
+    }
+    size_t length = strlen(produced) + 1;
+    *out_text = malloc(length);
+    if (*out_text == NULL) {
+        fr_error_set(err, "out of memory taking the output of \"%s\"", slot->capability);
+        lua_settop(runtime_state, top);
+        return FR_ERR;
+    }
+    memcpy(*out_text, produced, length);
+    lua_settop(runtime_state, top);
+    return FR_OK;
+}
+
+static int lua_source_load(void *state, const char *project, const cJSON *block,
+                           const char *base_dir, fr_project *out, fr_error *err) {
+    fr_lua_plugin_slot *slot = state;
+    int top = lua_gettop(runtime_state);
+    lua_rawgeti(runtime_state, LUA_REGISTRYINDEX, slot->callback);
+    lua_pushstring(runtime_state, project);
+    if (fr_lua_push_json(runtime_state, block, err) != FR_OK) {
+        lua_settop(runtime_state, top);
+        return FR_ERR;
+    }
+    lua_pushstring(runtime_state, base_dir);
+
+    if (lua_pcall(runtime_state, 3, 1, 0) != LUA_OK) {
+        fr_error_set(err, "%s", lua_tostring(runtime_state, -1));
+        lua_settop(runtime_state, top);
+        return FR_ERR;
+    }
+    cJSON *document = NULL;
+    int status = fr_lua_to_json(runtime_state, -1, &document, err);
+    lua_settop(runtime_state, top);
+    if (status != FR_OK) return FR_ERR;
+
+    char *text = cJSON_PrintUnformatted(document);
+    cJSON_Delete(document);
+    if (text == NULL) {
+        fr_error_set(err, "out of memory reading the project \"%s\" produced", project);
+        return FR_ERR;
+    }
+    status = fr_project_parse(text, project, out, err);
+    free(text);
+    return status;
+}
+
+static int take_slot(lua_State *state, const char *prefix, const char *field,
+                     fr_lua_plugin_slot **out) {
+    lua_getfield(state, 1, "name");
+    const char *name = lua_tostring(state, -1);
+    if (name == NULL) return luaL_error(state, "a %s needs a name", prefix);
+
+    if (plugin_slot_count == FR_LUA_MAX_PLUGINS) {
+        return luaL_error(state, "too many plugins declared in one configuration");
+    }
+
+    char capability[128];
+    snprintf(capability, sizeof capability, "%s%s", prefix, name);
+    lua_pop(state, 1);
+
+    if (slot_for(capability) != NULL) {
+        return luaL_error(state, "\"%s\" is declared twice", capability);
+    }
+
+    fr_lua_plugin_slot *slot = &plugin_slots[plugin_slot_count];
+    size_t length = strlen(capability) + 1;
+    slot->capability = malloc(length);
+    if (slot->capability == NULL) return luaL_error(state, "out of memory");
+    memcpy(slot->capability, capability, length);
+
+    lua_getfield(state, 1, field);
+    if (!lua_isfunction(state, -1)) {
+        free(slot->capability);
+        return luaL_error(state, "\"%s\" needs a %s function", capability, field);
+    }
+    slot->callback = luaL_ref(state, LUA_REGISTRYINDEX);
+    plugin_slot_count++;
+    *out = slot;
+    return 0;
+}
+
+static int lua_declare_language(lua_State *state) {
+    luaL_checktype(state, 1, LUA_TTABLE);
+    fr_lua_plugin_slot *slot = NULL;
+    take_slot(state, "daukle.language/", "apply", &slot);
+
+    fr_language_plugin plugin = { slot->capability, lua_language_apply, slot };
+    fr_error err;
+    if (fr_registry_add_language(registering_into, &plugin, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    return 0;
+}
+
+static int lua_declare_source(lua_State *state) {
+    luaL_checktype(state, 1, LUA_TTABLE);
+    fr_lua_plugin_slot *slot = NULL;
+    take_slot(state, "daukle.source/", "load", &slot);
+
+    fr_source_plugin plugin = { slot->capability, lua_source_load, slot };
+    fr_error err;
+    if (fr_registry_add_source(registering_into, &plugin, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    return 0;
+}
+
 static int publish_daukle_table(lua_State *state, const cJSON *document, fr_error *err) {
     lua_getglobal(state, "daukle");
 
@@ -134,6 +302,10 @@ static int publish_daukle_table(lua_State *state, const cJSON *document, fr_erro
     lua_setfield(state, -2, "env");
     lua_pushcfunction(state, lua_log);
     lua_setfield(state, -2, "log");
+    lua_pushcfunction(state, lua_declare_language);
+    lua_setfield(state, -2, "language");
+    lua_pushcfunction(state, lua_declare_source);
+    lua_setfield(state, -2, "source");
 
     lua_pop(state, 1);
     return FR_OK;
@@ -142,9 +314,10 @@ static int publish_daukle_table(lua_State *state, const cJSON *document, fr_erro
 static int config_lua_load(void *state_unused, const char *text, const char *origin,
                            const char *base_dir, fr_registry *registry, const cJSON *document,
                            cJSON **out, fr_error *err) {
-    (void) state_unused; (void) registry;
+    (void) state_unused;
 
     fr_lua_runtime_shutdown();
+    registering_into = registry;
     runtime_state = fr_lua_open(64u * 1024u * 1024u, err);
     if (runtime_state == NULL) return FR_ERR;
     if (fr_lua_sandbox_install(runtime_state, base_dir, err) != FR_OK) {
@@ -164,9 +337,13 @@ static int config_lua_load(void *state_unused, const char *text, const char *ori
 }
 
 void fr_lua_runtime_shutdown(void) {
-    if (runtime_state == NULL) return;
-    fr_lua_close(runtime_state);
-    runtime_state = NULL;
+    if (runtime_state != NULL) {
+        fr_lua_close(runtime_state);
+        runtime_state = NULL;
+    }
+    for (size_t index = 0; index < plugin_slot_count; index++) free(plugin_slots[index].capability);
+    plugin_slot_count = 0;
+    registering_into = NULL;
 }
 
 void fr_lua_set_log_sink(void (*sink)(const char *message)) {

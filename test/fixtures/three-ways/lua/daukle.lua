@@ -1,0 +1,16 @@
+daukle.config = {
+  schema = 1,
+  project = "forebay/three-ways",
+  version = "1.0.0",
+  modules = {},
+  sources = { ["forebay/basekit"] = { kind = "path", path = "../../producer-languages" } },
+  consumers = {
+    {
+      id = "stub",
+      language = "npm",
+      file = "package.json",
+      configuration = "dependencies",
+      dependencies = { ["forebay/basekit"] = { version = "^5.0.0", modules = { "ir" } } },
+    },
+  },
+}

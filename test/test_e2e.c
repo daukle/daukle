@@ -331,7 +331,7 @@ TEST no_cache_bypasses_both_the_read_and_the_write(void) {
     PASS();
 }
 
-TEST the_same_manifest_in_json_and_toml_writes_the_same_file(void) {
+TEST the_same_manifest_in_three_formats_writes_the_same_file(void) {
     fr_error err;
     fr_sync_report report;
 
@@ -346,6 +346,14 @@ TEST the_same_manifest_in_json_and_toml_writes_the_same_file(void) {
     ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/three-ways/toml/package.json", &from_toml, &err));
 
     ASSERT_STR_EQ(from_json, from_toml);
+
+    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/three-ways/lua/daukle.lua", 1, 0, &report, &err));
+    fr_sync_report_free(&report);
+    char *from_lua = NULL;
+    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/three-ways/lua/package.json", &from_lua, &err));
+    ASSERT_STR_EQ(from_json, from_lua);
+    free(from_lua);
+
     free(from_json);
     free(from_toml);
     PASS();
@@ -361,6 +369,6 @@ int main(int argc, char **argv) {
     RUN_TEST(github_source_matches_path_source);
     RUN_TEST(check_reports_drift_through_the_github_source);
     RUN_TEST(no_cache_bypasses_both_the_read_and_the_write);
-    RUN_TEST(the_same_manifest_in_json_and_toml_writes_the_same_file);
+    RUN_TEST(the_same_manifest_in_three_formats_writes_the_same_file);
     GREATEST_MAIN_END();
 }

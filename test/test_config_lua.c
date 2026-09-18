@@ -2,6 +2,7 @@
 #include "config.h"
 #include "config_lua.h"
 #include "manifest.h"
+#include "region.h"
 #include "registry.h"
 #include "sync.h"
 
@@ -111,6 +112,51 @@ TEST a_script_clearing_an_object_to_an_empty_table_stays_an_object(void) {
     PASS();
 }
 
+TEST a_script_registers_a_language_plugin(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    fr_build_registry(&registry, &err);
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-plugin/daukle.toml",
+                                         registry, &manifest, &err));
+    ASSERT(fr_registry_language(registry, "daukle.language/plaintext") != NULL);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST a_script_may_not_take_over_a_built_in_capability(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    fr_build_registry(&registry, &err);
+    fr_manifest manifest;
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-collide/daukle.toml",
+                                          registry, &manifest, &err));
+    ASSERT(strstr(err.message, "npm") != NULL);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* Exercises lua_source_load and lua_language_apply together through a real
+   fr_sync, not just their registration: a source plugin's "load" must return
+   a document that satisfies fr_project_parse in full (schema, project,
+   version, modules), and a stack leak in either adapter would corrupt the
+   shared Lua state the other adapter runs in right after. */
+TEST a_script_registered_source_plugin_resolves_through_sync(void) {
+    fr_error err;
+    fr_sync_report report;
+    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/lua-plugin/daukle.toml", 1, 0, &report, &err));
+    fr_sync_report_free(&report);
+
+    char *deps = NULL;
+    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/lua-plugin/deps.txt", &deps, &err));
+    ASSERT_STR_EQ("forebay/basekit/ir\n", deps);
+    free(deps);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -121,5 +167,8 @@ int main(int argc, char **argv) {
     RUN_TEST(an_untouched_empty_array_survives_the_round_trip);
     RUN_TEST(a_script_clearing_an_array_to_an_empty_table_still_yields_an_array);
     RUN_TEST(a_script_clearing_an_object_to_an_empty_table_stays_an_object);
+    RUN_TEST(a_script_registers_a_language_plugin);
+    RUN_TEST(a_script_may_not_take_over_a_built_in_capability);
+    RUN_TEST(a_script_registered_source_plugin_resolves_through_sync);
     GREATEST_MAIN_END();
 }

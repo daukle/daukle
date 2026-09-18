@@ -1,0 +1,18 @@
+schema = 1
+project = "forebay/plugin"
+version = "1.0.0"
+
+[modules]
+
+[sources."forebay/basekit"]
+kind = "generated"
+
+[[consumers]]
+id = "text"
+language = "plaintext"
+file = "deps.txt"
+configuration = "deps"
+
+  [consumers.dependencies."forebay/basekit"]
+  version = "^5.0.0"
+  modules = ["ir"]
