@@ -154,13 +154,27 @@ The configuration of a repository you cloned should not be able to read your fil
 configuration declares; daukle acts.
 
 Available: `assert`, `error`, `ipairs`, `pairs`, `next`, `select`, `tonumber`, `tostring`, `type`,
-`pcall`, `xpcall`, `setmetatable`, `getmetatable`, `rawget`, `rawset`, `rawequal`, `rawlen`, and the
-`string`, `table` and `math` libraries whole.
+`setmetatable`, `getmetatable`, `_VERSION`, and the `string`, `table` and `math` libraries whole.
+The list that ships is `KEPT` in `src/lua_sandbox.c`, and it is the authority.
 
-Removed: `io`, `os` (except `os.time`, `os.clock` and `os.date`), `package`, `require`, `dofile`,
-`loadfile`, `load`, `debug`, `collectgarbage`, `print`. `print` is replaced by `daukle.log`, which
-routes through the CLI's output rather than straight to stdout, so the CLI stays the only layer that
-decides what the user sees.
+Removed: `io`, `os`, `package`, `require`, `dofile`, `loadfile`, `load`, `debug`, `collectgarbage`,
+`print`, `coroutine`, `utf8`, `pcall`, `xpcall`, `rawget`, `rawset`, `rawequal` and `rawlen`.
+`print` is replaced by `daukle.log`, which routes through the CLI's output rather than straight to
+stdout, so the CLI stays the only layer that decides what the user sees.
+
+Three of those removals are narrower than they look and are worth the sentence each:
+
+- `os` goes whole, `os.time` and `os.date` included, because 3.6 claims a configuration's output is
+  a pure function of the manifest, the script and a closed set of host facts. A clock is not in that
+  set, and a manifest that resolves differently on Tuesday is the bug that claim exists to prevent.
+- `pcall` and `xpcall` go because they catch the error the instruction budget raises, which would
+  let a script loop past its own cap.
+- `rawget`, `rawset`, `rawequal` and `rawlen` go because they reach past the metatable that reports
+  a removed name, which is how a script would be told it cannot have `io` rather than silently
+  reading nil.
+
+Reading a removed name raises an error naming it, rather than returning nil, so a script that wants
+one fails where it asks instead of somewhere later.
 
 Scripts split across files use `daukle.include("path")`, which resolves only inside the project
 directory, rejects `..` traversal and absolute paths, and executes in the same sandboxed state.
@@ -215,8 +229,11 @@ TOML, the script, and a closed set of host facts. That set is:
 
 - `daukle.host.os`: `"windows"`, `"linux"`, `"macos"`
 - `daukle.host.arch`: `"x86_64"`, `"aarch64"`, `"x86"`
-- `daukle.host.daukle_version`
 - `daukle.env(name)`: a read of one environment variable, returning nil when unset
+
+`daukle.host` carries `os` and `arch` and nothing else. A version field was considered and not
+built: a configuration that branches on daukle's own version resolves differently under two daukle
+builds, which is the same purity the clock argument above rules out.
 
 Every `daukle.env` read is recorded, name and value, on the in-memory config result, and
 `daukle config print` prints the list. Nothing writes it to a file in this spec. The point is that a

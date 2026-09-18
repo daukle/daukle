@@ -37,7 +37,9 @@ daukle/daukle
   plugin.json           id daukle, category tool, tech c
 ```
 
-`docs/` is gitignored here, so this file sits at the repo root rather than under it.
+`docs/` is gitignored except for `docs/superpowers/`, which `.gitignore` re-includes: the design
+spec and its plan are tracked and are part of the deliverable. This file still sits at the repo root
+rather than under `docs/`, because it is the map a contributor reads first.
 
 **It is a TOOL, which means it is outside every ecosystem and terminal.** Nothing may reference it.
 It is invoked, never linked. That is why it may carry whatever dependencies it likes and owes none of
@@ -68,7 +70,13 @@ the client tier's rules.
 | errors | `error.c`, `fr_error` | logging. The caller decides what to print |
 | the lua state, its memory cap and its errors | `luax.c` | the sandbox, which is `lua_sandbox.c`, nor the config format, which is `config_lua.c` |
 | what a configuration script may touch | `lua_sandbox.c` | a permission system. It curates one globals table and bounds daukle.include |
+| verifying a spliced manifest still parses | `tomledit.c`, through `FR_CONFIG_TOML` | a second parser. It reads its own output back so no caller is handed text it would be wrong to write |
 | running a configuration script, reading it back, and registering any source or language plugin the script declares | `config_lua.c` | the sandbox or the lua state, which are `lua_sandbox.c` and `luax.c` |
+
+**A `daukle.lua` runs against a curated globals table, not Lua's own.** The two lists that define it
+are `KEPT` and `REMOVED` at the top of `src/lua_sandbox.c`, and reading a removed name raises an
+error naming it rather than returning nil. Section 3.4 of the design spec explains each removal;
+the source lists are the authority and the spec follows them.
 
 **The registry is destroyed before the lua runtime is shut down, always.** A `daukle.lua` may
 register plugins, and `config_lua.c` owns their capability strings while the registry stores the
@@ -117,3 +125,8 @@ exception to the agnostic-core rule (ruling R29). The general form would be an e
 `fr_config_plugin`, so every format supplies its own editor and `main.c` names none of them, but that
 would touch a plugin struct four completed tasks already depend on and would buy nothing until a JSON
 or Lua manifest needs editing in place too, so it is deferred rather than built now.
+
+`daukle add` appends a dependency that is not there yet and updates the version of one that is. It
+does not rewrite an existing module list, so `--modules` for a dependency that already exists is an
+error rather than a silent discard, and whatever it produces is read back through the TOML reader
+before anything is written.
