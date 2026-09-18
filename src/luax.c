@@ -115,6 +115,7 @@ int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_er
 }
 
 int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
+    int stack_top = lua_gettop(state);
     if (value == NULL || cJSON_IsNull(value)) {
         lua_pushnil(state);
         return FR_OK;
@@ -136,7 +137,10 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
         int position = 1;
         const cJSON *item = NULL;
         cJSON_ArrayForEach(item, value) {
-            if (fr_lua_push_json(state, item, err) != FR_OK) return FR_ERR;
+            if (fr_lua_push_json(state, item, err) != FR_OK) {
+                lua_settop(state, stack_top);
+                return FR_ERR;
+            }
             lua_rawseti(state, -2, position++);
         }
         return FR_OK;
@@ -145,11 +149,16 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
         lua_newtable(state);
         const cJSON *item = NULL;
         cJSON_ArrayForEach(item, value) {
-            if (fr_lua_push_json(state, item, err) != FR_OK) return FR_ERR;
+            if (fr_lua_push_json(state, item, err) != FR_OK) {
+                lua_settop(state, stack_top);
+                return FR_ERR;
+            }
             lua_setfield(state, -2, item->string);
         }
         return FR_OK;
     }
     fr_error_set(err, "cannot represent a json value of an unknown type in lua");
+    lua_settop(state, stack_top);
     return FR_ERR;
 }
+
