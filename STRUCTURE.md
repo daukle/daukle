@@ -67,6 +67,7 @@ the client tier's rules.
 | errors | `error.c`, `fr_error` | logging. The caller decides what to print |
 | the lua state, its memory cap and its errors | `luax.c` | the sandbox, which is `lua_sandbox.c`, nor the config format, which is `config_lua.c` |
 | what a configuration script may touch | `lua_sandbox.c` | a permission system. It curates one globals table and bounds daukle.include |
+| running a configuration script and reading it back | `config_lua.c` | the sandbox or the lua state, which are `lua_sandbox.c` and `luax.c` |
 
 **Adding a source means adding an `fr_source_plugin` and registering it.** Adding a language means
 adding an `fr_language_plugin` and registering it. Neither touches `resolve.c`, and a change that

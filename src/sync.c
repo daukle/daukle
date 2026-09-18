@@ -3,6 +3,7 @@
 #include "cache.h"
 #include "config.h"
 #include "config_json.h"
+#include "config_lua.h"
 #include "config_toml.h"
 #include "error.h"
 #include "lang_c.h"
@@ -103,6 +104,10 @@ int fr_build_registry(fr_registry **out, fr_error *err) {
         fr_registry_destroy(registry);
         return FR_ERR;
     }
+    if (fr_registry_add_config(registry, &FR_CONFIG_LUA, err) != FR_OK) {
+        fr_registry_destroy(registry);
+        return FR_ERR;
+    }
     *out = registry;
     return FR_OK;
 }
@@ -182,6 +187,7 @@ int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report 
     fr_manifest manifest;
     if (fr_config_load_file(manifest_path, registry, &manifest, err) != FR_OK) {
         fr_registry_destroy(registry);
+        fr_lua_runtime_shutdown();
         return FR_ERR;
     }
 
@@ -190,6 +196,7 @@ int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report 
         fr_error_set(err, "out of memory deriving the manifest directory");
         fr_manifest_free(&manifest);
         fr_registry_destroy(registry);
+        fr_lua_runtime_shutdown();
         return FR_ERR;
     }
 
@@ -203,6 +210,7 @@ int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report 
     }
 
     fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
     free(manifest_dir);
     fr_manifest_free(&manifest);
     return result;
