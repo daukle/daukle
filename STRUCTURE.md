@@ -57,6 +57,7 @@ the client tier's rules.
 | reading a json manifest | `config_json.c` | the only possible format. It is one registered `fr_config_plugin` |
 | reading a toml manifest | `config_toml.c` | a json reader. It is a peer format, registered the same way |
 | rewriting a marked region of a file in place | `region.c` | a JSON editor. `jsonedit.c` is, for files that are JSON |
+| rewriting a toml manifest in place | `tomledit.c` | a toml parser. It splices spans, as `jsonedit.c` does for json |
 | the whole write pass over a manifest | `sync.c` | per-language. It drives the language plugins |
 | HTTP, per platform | `http.c` over `http_curl.c` and `http_winhttp.c` | two implementations to keep in step. One interface, one backend per platform |
 | caching a resolved artifact | `cache.c` | keyed by project and version alone. The artifact string is part of the key, deliberately |
