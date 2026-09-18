@@ -87,6 +87,16 @@ TEST rejects_an_add_without_a_consumer(void) {
     PASS();
 }
 
+/* A flag-shaped next token must be read as a missing value, not consumed as
+   one: otherwise "--to --modules" would silently set the consumer to the
+   literal string "--modules" and produce a confusing downstream failure
+   instead of a usage error at the point the mistake was actually made. */
+TEST rejects_a_flag_shaped_token_as_another_flags_value(void) {
+    const char *argv[] = { "daukle", "add", "forebay/basekit@^5.0.0", "--to", "--modules" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(5, argv).command);
+    PASS();
+}
+
 TEST parses_config_print(void) {
     const char *argv[] = { "daukle", "config", "print" };
     ASSERT_EQ(FR_CLI_CONFIG_PRINT, parse(3, argv).command);
@@ -129,6 +139,7 @@ int main(int argc, char **argv) {
     RUN_TEST(parses_an_add_command);
     RUN_TEST(rejects_an_add_without_a_range);
     RUN_TEST(rejects_an_add_without_a_consumer);
+    RUN_TEST(rejects_a_flag_shaped_token_as_another_flags_value);
     RUN_TEST(parses_config_print);
     RUN_TEST(parses_config_print_with_a_manifest_path);
     RUN_TEST(rejects_config_with_an_unknown_subcommand);

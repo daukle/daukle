@@ -7,6 +7,13 @@
    run with more positional words than this is a usage error regardless. */
 #define FR_CLI_MAX_WORDS 3
 
+/* A flag-shaped next token is treated as a missing value rather than consumed:
+   "add foo@1.0 --to --modules" must not set add_consumer to the literal
+   string "--modules". */
+static int has_value_argument(int index, int argc, char **argv) {
+    return index + 1 < argc && argv[index + 1][0] != '-';
+}
+
 /* An unrecognised option is a usage error rather than a positional argument:
    read as one, a mistyped "--no-chache" would become the manifest path and the
    run would fail against a file the user never named. */
@@ -33,13 +40,13 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
             return;
         } else if (strcmp(argument, "--verbose") == 0) {
             out->verbose = 1;
-        } else if (strcmp(argument, "--to") == 0 && index + 1 < argc) {
+        } else if (strcmp(argument, "--to") == 0 && has_value_argument(index, argc, argv)) {
             out->add_consumer = argv[++index];
-        } else if (strcmp(argument, "--modules") == 0 && index + 1 < argc) {
+        } else if (strcmp(argument, "--modules") == 0 && has_value_argument(index, argc, argv)) {
             out->add_modules = argv[++index];
-        } else if (strcmp(argument, "--lua-instruction-limit") == 0 && index + 1 < argc) {
+        } else if (strcmp(argument, "--lua-instruction-limit") == 0 && has_value_argument(index, argc, argv)) {
             out->instruction_limit = strtol(argv[++index], NULL, 10);
-        } else if (strcmp(argument, "--lua-memory-limit") == 0 && index + 1 < argc) {
+        } else if (strcmp(argument, "--lua-memory-limit") == 0 && has_value_argument(index, argc, argv)) {
             out->memory_limit = (size_t) strtoul(argv[++index], NULL, 10);
         } else if (argument[0] == '-') {
             return;

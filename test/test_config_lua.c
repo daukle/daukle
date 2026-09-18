@@ -206,6 +206,9 @@ TEST a_low_instruction_limit_stops_a_script_that_would_otherwise_finish(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest;
 
+    /* Reset on entry, not only at the end: an ASSERT that fails below returns
+       out of this test immediately and skips the trailing reset, which would
+       otherwise leak a tightened override into whichever test runs next. */
     fr_lua_set_limits(0, 0);
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-limit-instruction/daukle.toml",
@@ -235,6 +238,9 @@ TEST a_low_memory_limit_fails_a_script_that_would_otherwise_finish(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest;
 
+    /* Reset on entry for the same reason as the instruction-limit test above:
+       a failed ASSERT must not let this test's or the previous test's override
+       survive into whatever runs next. */
     fr_lua_set_limits(0, 0);
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-limit-memory/daukle.toml",

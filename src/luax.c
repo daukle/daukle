@@ -135,6 +135,7 @@ int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_er
         return FR_ERR;
     }
     lua_pop(state, 1);
+    has_traceback = 0;
     return FR_OK;
 }
 

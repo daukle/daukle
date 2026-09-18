@@ -117,6 +117,7 @@ static int print_config(const char *manifest_path, int verbose) {
 
     if (status != FR_OK) {
         report_error(&err, verbose);
+        fr_manifest_free(&manifest);
         free(resolved);
         return 1;
     }
