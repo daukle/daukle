@@ -398,9 +398,13 @@ static void consider_cached_version(const char *name, void *state_ptr) {
 }
 
 /* Scans the cache before any request is made: a hit here means the caller
-   never touches the network at all. */
+   never touches the network at all. Obeys --no-cache the same way
+   fr_cache_read does, so a disabled cache never serves a plugin either. */
 static int find_cached_version(const char *owner, const char *name, const fr_range *range,
                                fr_version *out_version, int *out_found, fr_error *err) {
+    *out_found = 0;
+    if (!fr_cache_enabled()) return FR_OK;
+
     char root[1024];
     if (fr_cache_root(root, sizeof root, err) != FR_OK) return FR_ERR;
 
@@ -428,6 +432,8 @@ static int find_cached_version(const char *owner, const char *name, const fr_ran
    plugin.lua that still happens to parse as valid, truncated Lua. */
 static void write_plugin_cache(const char *owner, const char *name, const char *version,
                                const char *text, size_t length) {
+    if (!fr_cache_enabled()) return;
+
     fr_error ignored;
     char *dir = NULL;
     if (build_plugin_cache_dir(owner, name, version, &dir, &ignored) != FR_OK) return;

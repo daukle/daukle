@@ -33,4 +33,9 @@ int fr_cache_write_atomic(char *path, const char *text, size_t length);
 
 void fr_cache_set_enabled(int enabled);
 
+/* Lets a caller with its own cache shape (see fr_cache_root) obey --no-cache
+   the same way fr_cache_read and fr_cache_write already do, rather than
+   duplicating the flag. */
+int fr_cache_enabled(void);
+
 #endif
