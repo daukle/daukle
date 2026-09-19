@@ -359,17 +359,16 @@ static int read_manifest_plugins(const char *manifest_path, fr_plugin_entry **ou
     return status;
 }
 
+/* "update which plugins?" has no answer without a manifest in scope, so every
+   call, labelled or not, starts by finding and reading one the same way the
+   other subcommands do. Scoping to this manifest's own [plugins] table (rather
+   than the whole, per-user, cross-project cache root) matters: without it, a
+   label-less update in one project would silently discard every other
+   project's cached plugins too. The scoping rule itself lives in
+   fr_plugins_update_cache, shared with, and covered directly by, test_plugins.c,
+   since main.c has no test binary of its own. */
 static int plugin_update(const char *label, int verbose) {
     fr_error err;
-
-    if (label == NULL) {
-        if (fr_plugins_remove_all_cache(&err) != FR_OK) {
-            report_error(&err, verbose);
-            return 1;
-        }
-        printf("daukle: cleared the plugin cache\n");
-        return 0;
-    }
 
     char *resolved = NULL;
     if (resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
@@ -386,34 +385,15 @@ static int plugin_update(const char *label, int verbose) {
         return 1;
     }
 
-    const fr_plugin_entry *found = NULL;
-    for (size_t index = 0; index < count; index++) {
-        if (strcmp(entries[index].label, label) == 0) {
-            found = &entries[index];
-            break;
-        }
-    }
-
-    if (found == NULL) {
-        fprintf(stderr, "daukle: no plugin named \"%s\"\n", label);
-        fr_plugins_free(entries, count);
-        return 1;
-    }
-
-    if (found->kind == FR_PLUGIN_LOCAL) {
-        printf("daukle: plugin \"%s\" loads from a local file; it has no cache to clear\n", label);
-        fr_plugins_free(entries, count);
-        return 0;
-    }
-
-    status = fr_plugins_remove_cache(found->repo, &err);
+    status = fr_plugins_update_cache(entries, count, label, &err);
     fr_plugins_free(entries, count);
     if (status != FR_OK) {
         report_error(&err, verbose);
         return 1;
     }
 
-    printf("daukle: cleared the cache for \"%s\"\n", label);
+    if (label == NULL) printf("daukle: cleared the plugin cache\n");
+    else printf("daukle: cleared the cache for \"%s\"\n", label);
     return 0;
 }
 

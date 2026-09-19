@@ -583,17 +583,22 @@ int fr_plugins_remove_cache(const char *repo, fr_error *err) {
     return FR_OK;
 }
 
-int fr_plugins_remove_all_cache(fr_error *err) {
-    char root[1024];
-    if (fr_cache_root(root, sizeof root, err) != FR_OK) return FR_ERR;
-
-    char dir[1024];
-    int written = snprintf(dir, sizeof dir, "%s/plugins", root);
-    if (written < 0 || (size_t) written >= sizeof dir) {
-        fr_error_set(err, "plugin cache root path is too long");
-        return FR_ERR;
+int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
+                            const char *label, fr_error *err) {
+    if (label == NULL) {
+        for (size_t index = 0; index < count; index++) {
+            if (entries[index].kind != FR_PLUGIN_REMOTE) continue;
+            if (fr_plugins_remove_cache(entries[index].repo, err) != FR_OK) return FR_ERR;
+        }
+        return FR_OK;
     }
 
-    remove_cache_tree(dir);
-    return FR_OK;
+    for (size_t index = 0; index < count; index++) {
+        if (strcmp(entries[index].label, label) != 0) continue;
+        if (entries[index].kind != FR_PLUGIN_REMOTE) return FR_OK;
+        return fr_plugins_remove_cache(entries[index].repo, err);
+    }
+
+    fr_error_set(err, "no plugin named \"%s\"", label);
+    return FR_ERR;
 }

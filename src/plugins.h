@@ -78,7 +78,13 @@ void fr_plugins_report_clear(void);
    cached is not an error. */
 int fr_plugins_remove_cache(const char *repo, fr_error *err);
 
-/* Deletes the whole plugin cache, every repo at once. Best effort, as above. */
-int fr_plugins_remove_all_cache(fr_error *err);
+/* "daukle plugin update [label]"'s scoping rule, over entries already parsed
+   from ONE manifest: label NULL removes the cache of every FR_PLUGIN_REMOTE
+   entry in entries, and nothing outside it, so a label-less update in one
+   project can never reach another project's cache. A label removes only the
+   entry it names (a local match has nothing cached, so this is a no-op, not
+   an error); a label entries does not declare is an error naming it. */
+int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
+                            const char *label, fr_error *err);
 
 #endif

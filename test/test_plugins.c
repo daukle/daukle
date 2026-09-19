@@ -694,52 +694,120 @@ TEST fr_plugins_remove_cache_forces_the_next_resolve_to_refetch(void) {
     PASS();
 }
 
-/* Isolated behind its own DAUKLE_CACHE_DIR, the same way test_cache.c protects
-   every test that might wipe a whole cache root: fr_plugins_remove_all_cache
-   deletes everything under "<root>/plugins", and running that against a real
-   developer cache would be a destructive surprise no test should risk. */
-TEST fr_plugins_remove_all_cache_clears_every_repo(void) {
+/* This is the property "daukle plugin update" with no label must have: the plugin
+   cache root is shared across every project on the machine, so removing the
+   cache for entries a manifest declares must never reach a repo it does not,
+   the way the earlier fr_plugins_remove_all_cache implementation did. "o" here
+   stands in for a plugin some OTHER project cached, never named in the
+   manifest entries this call is given. */
+TEST fr_plugins_update_cache_with_no_label_touches_only_the_given_entries(void) {
     fr_error err;
-    char isolated_root[512];
-    snprintf(isolated_root, sizeof isolated_root, "%s/daukle_test_plugin_cache_%d",
-            fr_test_temp_base(), fr_test_process_id());
-    fr_test_set_env("DAUKLE_CACHE_DIR", isolated_root);
-
-    const char *owner = "daukle-test-remove-all";
-    const char *name = "remote";
+    char owner[64];
+    snprintf(owner, sizeof owner, "daukle-test-%d-scope", fr_test_process_id());
     remove_plugin_cache(owner);
-
-    char coordinate[256];
-    remote_coordinate(coordinate, sizeof coordinate, owner, name);
-    cJSON *document = cJSON_Parse(coordinate);
 
     fr_http_fn previous = fr_http_set_backend(stub_releases);
 
-    fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
-    release_requests = 0;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
-    ASSERT(release_requests > 0);
-    fr_registry_destroy(registry);
+    /* Cached with two separate fr_plugins_load calls, each its own registry:
+       both fetch the same stub body, which registers one fixed language name,
+       and loading them together in one call would collide on that name. Two
+       calls sidestep that and are still enough to cache both repos. */
+    char declared_only[256];
+    snprintf(declared_only, sizeof declared_only, "{\"plugins\":{\"d\":\"%s/declared@^1.0.0\"}}",
+            owner);
+    char other_only[256];
+    snprintf(other_only, sizeof other_only, "{\"plugins\":{\"o\":\"%s/other@^1.0.0\"}}", owner);
+
+    cJSON *seed_declared = cJSON_Parse(declared_only);
+    fr_registry *seed_registry_d = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&seed_registry_d, &err));
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", seed_registry_d, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_load(seed_registry_d, seed_declared, ".", &err));
+    cJSON_Delete(seed_declared);
+    fr_registry_destroy(seed_registry_d);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
 
-    ASSERT_EQ(FR_OK, fr_plugins_remove_all_cache(&err));
+    cJSON *seed_other = cJSON_Parse(other_only);
+    fr_registry *seed_registry_o = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&seed_registry_o, &err));
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", seed_registry_o, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_load(seed_registry_o, seed_other, ".", &err));
+    cJSON_Delete(seed_other);
+    fr_registry_destroy(seed_registry_o);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
 
+    cJSON *declared_document = cJSON_Parse(declared_only);
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    ASSERT_EQ(FR_OK, fr_plugins_parse(declared_document, &entries, &count, &err));
+    ASSERT_EQ(1, (int) count);
+
+    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, NULL, &err));
+
+    fr_plugins_free(entries, count);
+    cJSON_Delete(declared_document);
+
+    /* "d" was in the entries fr_plugins_update_cache was given: its cache must
+       be gone, so loading it again reaches the network. */
+    cJSON *reload_declared = cJSON_Parse(declared_only);
     fr_registry *second = NULL;
     ASSERT_EQ(FR_OK, fr_build_registry(&second, &err));
     release_requests = 0;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", second, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(second, document, ".", &err));
+    ASSERT_EQ(FR_OK, fr_plugins_load(second, reload_declared, ".", &err));
     ASSERT(release_requests > 0);
-
-    cJSON_Delete(document);
+    cJSON_Delete(reload_declared);
     fr_registry_destroy(second);
     fr_lua_runtime_shutdown();
-    fr_http_set_backend(previous);
     fr_plugins_report_clear();
-    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+
+    /* "o" was never in the entries fr_plugins_update_cache was given: its cache
+       must survive, so loading it again makes zero requests. */
+    cJSON *reload_other = cJSON_Parse(other_only);
+    fr_registry *third = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&third, &err));
+    release_requests = 0;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", third, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_load(third, reload_other, ".", &err));
+    ASSERT_EQ(0, release_requests);
+    cJSON_Delete(reload_other);
+    fr_registry_destroy(third);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+
+    fr_http_set_backend(previous);
+    remove_plugin_cache(owner);
+    PASS();
+}
+
+TEST fr_plugins_update_cache_with_an_unknown_label_errors_naming_it(void) {
+    fr_error err;
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"npm\":\"daukle/npm@^1.0.0\"}}");
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, &entries, &count, &err));
+
+    ASSERT_EQ(FR_ERR, fr_plugins_update_cache(entries, count, "gradle", &err));
+    ASSERT(strstr(err.message, "gradle") != NULL);
+
+    fr_plugins_free(entries, count);
+    cJSON_Delete(document);
+    PASS();
+}
+
+TEST fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error(void) {
+    fr_error err;
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"hello\":\"./plugins/hello.lua\"}}");
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, &entries, &count, &err));
+
+    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, "hello", &err));
+
+    fr_plugins_free(entries, count);
+    cJSON_Delete(document);
     PASS();
 }
 
@@ -821,7 +889,9 @@ int main(int argc, char **argv) {
     RUN_TEST(the_report_names_the_resolved_version_for_a_remote_plugin);
     RUN_TEST(fr_plugins_remove_cache_of_an_uncached_repo_is_not_an_error);
     RUN_TEST(fr_plugins_remove_cache_forces_the_next_resolve_to_refetch);
-    RUN_TEST(fr_plugins_remove_all_cache_clears_every_repo);
+    RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);
+    RUN_TEST(fr_plugins_update_cache_with_an_unknown_label_errors_naming_it);
+    RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error);
     RUN_TEST(a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_digests);
     GREATEST_MAIN_END();
 }

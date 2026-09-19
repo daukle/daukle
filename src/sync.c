@@ -10,6 +10,7 @@
 #include "lang_gradle.h"
 #include "lang_npm.h"
 #include "manifest.h"
+#include "plugins.h"
 #include "region.h"
 #include "registry.h"
 #include "resolve.h"
@@ -188,6 +189,7 @@ int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report 
     if (fr_config_load_file(manifest_path, registry, &manifest, err) != FR_OK) {
         fr_registry_destroy(registry);
         fr_lua_runtime_shutdown();
+        fr_plugins_report_clear();
         return FR_ERR;
     }
 
@@ -197,6 +199,7 @@ int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report 
         fr_manifest_free(&manifest);
         fr_registry_destroy(registry);
         fr_lua_runtime_shutdown();
+        fr_plugins_report_clear();
         return FR_ERR;
     }
 
@@ -211,6 +214,7 @@ int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report 
 
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
     free(manifest_dir);
     fr_manifest_free(&manifest);
     return result;
