@@ -130,48 +130,62 @@ static int within_base_dir(const char *canonical_base, const char *canonical_tar
     return boundary == '/' || boundary == '\\';
 }
 
-static int sandbox_include(lua_State *state) {
-    const char *relative_path = luaL_checkstring(state, 1);
-    if (climbs_out(relative_path)) {
-        return luaL_error(state, "\"%s\" is outside the project directory", relative_path);
+int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_path, fr_error *err) {
+    if (climbs_out(relative)) {
+        fr_error_set(err, "\"%s\" is outside the project directory", relative);
+        return FR_ERR;
     }
 
     lua_getfield(state, LUA_REGISTRYINDEX, FR_SANDBOX_BASE_DIR);
     const char *canonical_base = lua_tostring(state, -1);
 
     char path[512];
-    int written = snprintf(path, sizeof path, "%s/%s", canonical_base, relative_path);
+    int written = snprintf(path, sizeof path, "%s/%s", canonical_base, relative);
     lua_pop(state, 1);
     if (written < 0 || (size_t) written >= sizeof path) {
         /* The path itself, not just this message, is bounded by a fixed buffer;
            echoing an over-long argument back would just overflow fr_error's own
            bound and truncate this message before "too long" is ever written. */
-        return luaL_error(state, "the include path is too long (%d characters)",
-                          (int) strlen(relative_path));
+        fr_error_set(err, "the include path is too long (%d characters)", (int) strlen(relative));
+        return FR_ERR;
     }
 
-    fr_error err;
     char *canonical_target = NULL;
-    if (canonical_file_path(path, &canonical_target, &err) != FR_OK) {
-        return luaL_error(state, "%s", err.message);
+    if (canonical_file_path(path, &canonical_target, err) != FR_OK) {
+        return FR_ERR;
     }
     /* A symlink or an NTFS junction inside base_dir can point anywhere on disk;
        climbs_out only rejects the literal argument, so the real destination has
        to be resolved and re-checked, not just the lexical request. */
-    int contained = within_base_dir(canonical_base, canonical_target);
-    free(canonical_target);
-    if (!contained) {
-        return luaL_error(state, "\"%s\" is outside the project directory", relative_path);
+    if (!within_base_dir(canonical_base, canonical_target)) {
+        free(canonical_target);
+        fr_error_set(err, "\"%s\" is outside the project directory", relative);
+        return FR_ERR;
     }
 
-    char *text = NULL;
-    if (fr_file_read_text(path, &text, &err) != FR_OK) {
+    *out_path = canonical_target;
+    return FR_OK;
+}
+
+static int sandbox_include(lua_State *state) {
+    const char *relative_path = luaL_checkstring(state, 1);
+
+    fr_error err;
+    char *resolved = NULL;
+    if (fr_lua_sandbox_resolve(state, relative_path, &resolved, &err) != FR_OK) {
         return luaL_error(state, "%s", err.message);
     }
 
-    int status = fr_lua_load_named(state, text, strlen(text), relative_path);
+    char *text = NULL;
+    int status = fr_file_read_text(resolved, &text, &err);
+    free(resolved);
+    if (status != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    int load_status = fr_lua_load_named(state, text, strlen(text), relative_path);
     free(text);
-    if (status != LUA_OK) return lua_error(state);
+    if (load_status != LUA_OK) return lua_error(state);
 
     lua_call(state, 0, 0);
     return 0;

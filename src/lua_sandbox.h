@@ -12,4 +12,8 @@
    outside it. */
 int fr_lua_sandbox_install(lua_State *state, const char *base_dir, fr_error *err);
 
+/* Resolves relative against the base directory recorded at install time and
+   fails if the result escapes it. The caller owns *out_path. */
+int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_path, fr_error *err);
+
 #endif

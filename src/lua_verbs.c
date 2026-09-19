@@ -2,7 +2,9 @@
 
 #include "config_lua.h"
 #include "error.h"
+#include "lua_sandbox.h"
 #include "luax.h"
+#include "region.h"
 
 #include "lauxlib.h"
 
@@ -45,16 +47,36 @@ static int verb_env(lua_State *state) {
     return 1;
 }
 
+static int verb_read(lua_State *state) {
+    const char *relative = luaL_checkstring(state, 1);
+    char *resolved = NULL;
+    fr_error err;
+    if (fr_lua_sandbox_resolve(state, relative, &resolved, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    char *text = NULL;
+    int status = fr_file_read_text(resolved, &text, &err);
+    free(resolved);
+    if (status != FR_OK) return luaL_error(state, "%s", err.message);
+
+    lua_pushstring(state, text);
+    free(text);
+    return 1;
+}
+
 static int reserved_verb(lua_State *state) {
     return luaL_error(state, "daukle.exec is not implemented in this version");
 }
 
-/* Tasks 5 to 7 add a case per newly implemented verb; a name that is known
+/* Tasks 6 and 7 add a case per newly implemented verb; a name that is known
    (fr_lua_verbs_is_known) but neither handled here nor reserved is simply
    left unset until its task lands. */
 static void install_one(lua_State *state, const char *name) {
     if (strcmp(name, "env") == 0) {
         lua_pushcfunction(state, verb_env);
+    } else if (strcmp(name, "read") == 0) {
+        lua_pushcfunction(state, verb_read);
     } else if (fr_lua_verbs_is_reserved(name)) {
         lua_pushcfunction(state, reserved_verb);
     } else {
