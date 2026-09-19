@@ -1,0 +1,9 @@
+schema = 1
+project = "forebay/plugin-future-api"
+version = "1.0.0"
+
+[modules]
+[sources]
+
+[plugins]
+gradle = "./plugin.lua"

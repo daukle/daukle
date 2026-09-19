@@ -235,14 +235,10 @@ static int declare_plugin(lua_State *state) {
     return lua_error(state);
 }
 
-static int ignore_call(lua_State *state) {
-    (void) state;
-    return 0;
-}
-
-static int ignore_field(lua_State *state) {
-    lua_pushcfunction(state, ignore_call);
-    return 1;
+static int require_declaration_first(lua_State *state) {
+    const fr_plugin_declaration *declaration = declaration_in_progress;
+    return luaL_error(state, "daukle.plugin must be the first call in \"%s\"",
+                      declaration != NULL ? declaration->label : "?");
 }
 
 static int protected_declaration_env(lua_State *state) {
@@ -251,7 +247,7 @@ static int protected_declaration_env(lua_State *state) {
     lua_setfield(state, -2, "plugin");
 
     lua_newtable(state);
-    lua_pushcfunction(state, ignore_field);
+    lua_pushcfunction(state, require_declaration_first);
     lua_setfield(state, -2, "__index");
     lua_setmetatable(state, -2);
 

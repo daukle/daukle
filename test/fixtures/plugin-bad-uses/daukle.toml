@@ -1,0 +1,9 @@
+schema = 1
+project = "forebay/plugin-bad-uses"
+version = "1.0.0"
+
+[modules]
+[sources]
+
+[plugins]
+cargo = "./plugin.lua"

@@ -1,0 +1,9 @@
+schema = 1
+project = "forebay/plugin-verb-before-declaration"
+version = "1.0.0"
+
+[modules]
+[sources]
+
+[plugins]
+early = "./plugin.lua"

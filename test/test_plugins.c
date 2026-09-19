@@ -143,6 +143,49 @@ TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
     PASS();
 }
 
+static int load_manifest(const char *file_path, fr_error *err) {
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, err) != FR_OK) return FR_ERR;
+
+    fr_manifest manifest;
+    int status = fr_config_load_file(file_path, registry, &manifest, err);
+    if (status == FR_OK) fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    return status;
+}
+
+TEST a_verb_uses_does_not_know_is_refused(void) {
+    fr_error err;
+    ASSERT_EQ(FR_ERR, load_manifest("test/fixtures/plugin-unknown-verb/daukle.toml", &err));
+    ASSERT(strstr(err.message, "npm") != NULL);
+    ASSERT(strstr(err.message, "teleport") != NULL);
+    PASS();
+}
+
+TEST a_plugin_written_against_a_later_api_says_which(void) {
+    fr_error err;
+    ASSERT_EQ(FR_ERR, load_manifest("test/fixtures/plugin-future-api/daukle.toml", &err));
+    ASSERT(strstr(err.message, "gradle") != NULL);
+    ASSERT(strstr(err.message, "needs daukle api 3, this daukle provides 1") != NULL);
+    PASS();
+}
+
+TEST a_uses_entry_that_is_not_a_string_is_refused(void) {
+    fr_error err;
+    ASSERT_EQ(FR_ERR, load_manifest("test/fixtures/plugin-bad-uses/daukle.toml", &err));
+    ASSERT(strstr(err.message, "cargo") != NULL);
+    PASS();
+}
+
+TEST a_verb_used_before_the_declaration_says_so(void) {
+    fr_error err;
+    ASSERT_EQ(FR_ERR, load_manifest("test/fixtures/plugin-verb-before-declaration/daukle.toml", &err));
+    ASSERT(strstr(err.message, "early") != NULL);
+    ASSERT(strstr(err.message, "daukle.plugin must be the first call") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -156,5 +199,9 @@ int main(int argc, char **argv) {
     RUN_TEST(rejects_a_coordinate_with_an_empty_half);
     RUN_TEST(a_local_plugin_registers_its_language);
     RUN_TEST(a_manifest_declaring_no_plugins_opens_no_lua_state);
+    RUN_TEST(a_verb_uses_does_not_know_is_refused);
+    RUN_TEST(a_plugin_written_against_a_later_api_says_which);
+    RUN_TEST(a_uses_entry_that_is_not_a_string_is_refused);
+    RUN_TEST(a_verb_used_before_the_declaration_says_so);
     GREATEST_MAIN_END();
 }

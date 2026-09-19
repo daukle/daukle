@@ -1,0 +1,9 @@
+schema = 1
+project = "forebay/plugin-unknown-verb"
+version = "1.0.0"
+
+[modules]
+[sources]
+
+[plugins]
+npm = "./plugin.lua"
