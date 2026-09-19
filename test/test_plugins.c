@@ -69,6 +69,33 @@ TEST parses_a_local_path(void) {
     PASS();
 }
 
+TEST a_table_entry_naming_both_path_and_repo_is_refused(void) {
+    cJSON *document = document_from(
+        "{\"plugins\":{\"both\":{\"path\":\"./x.lua\",\"repo\":\"daukle/x\",\"version\":\"^1.0.0\"}}}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, &entries, &count, &err));
+    ASSERT(strstr(err.message, "both") != NULL);
+    ASSERT(strstr(err.message, "path") != NULL);
+    ASSERT(strstr(err.message, "repo") != NULL);
+
+    cJSON_Delete(document);
+    PASS();
+}
+
+TEST a_table_entry_naming_neither_path_nor_repo_is_refused(void) {
+    cJSON *document = document_from("{\"plugins\":{\"neither\":{\"version\":\"^1.0.0\"}}}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, &entries, &count, &err));
+    ASSERT(strstr(err.message, "neither") != NULL);
+    ASSERT(strstr(err.message, "path") != NULL);
+    ASSERT(strstr(err.message, "repo") != NULL);
+
+    cJSON_Delete(document);
+    PASS();
+}
+
 TEST an_absent_plugins_table_yields_no_entries(void) {
     cJSON *document = document_from("{\"schema\":1}");
     fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
@@ -463,6 +490,8 @@ int main(int argc, char **argv) {
     RUN_TEST(parses_the_string_coordinate_form);
     RUN_TEST(parses_the_table_form_with_a_pin);
     RUN_TEST(parses_a_local_path);
+    RUN_TEST(a_table_entry_naming_both_path_and_repo_is_refused);
+    RUN_TEST(a_table_entry_naming_neither_path_nor_repo_is_refused);
     RUN_TEST(an_absent_plugins_table_yields_no_entries);
     RUN_TEST(rejects_a_coordinate_with_no_version);
     RUN_TEST(rejects_a_plugins_member_that_is_not_a_table);

@@ -71,15 +71,33 @@ static int parse_table_form(const char *label, const cJSON *member, fr_plugin_en
 
     /* "path" marks a local entry in table form, the same discrimination the
        string form makes on a leading "." or "/", so a local plugin can also
-       carry a pin. */
-    if (cJSON_GetObjectItemCaseSensitive(member, "path") != NULL) {
+       carry a pin. Exactly one of path/repo is required: both together would
+       silently ignore repo, neither would fall through to repo's generic
+       missing-key message and never mention path at all. */
+    int has_path = cJSON_GetObjectItemCaseSensitive(member, "path") != NULL;
+    int has_repo = cJSON_GetObjectItemCaseSensitive(member, "repo") != NULL;
+    if (has_path && has_repo) {
+        fr_error_set(err, "plugin \"%s\": a table entry names either path or repo, not both",
+                    label);
+        return FR_ERR;
+    }
+    if (!has_path && !has_repo) {
+        fr_error_set(err, "plugin \"%s\": a table entry needs either path or repo", label);
+        return FR_ERR;
+    }
+
+    if (has_path) {
         const char *path = NULL;
         if (fr_json_string(member, "path", label, &path, err) != FR_OK) return FR_ERR;
 
         out->kind = FR_PLUGIN_LOCAL;
         out->path = dup_string(path);
         out->sha256 = sha256 != NULL ? dup_string(sha256) : NULL;
-        return (out->path != NULL && (sha256 == NULL || out->sha256 != NULL)) ? FR_OK : FR_ERR;
+        if (out->path == NULL || (sha256 != NULL && out->sha256 == NULL)) {
+            fr_error_set(err, "out of memory reading plugin \"%s\"", label);
+            return FR_ERR;
+        }
+        return FR_OK;
     }
 
     const char *repo = NULL;
@@ -92,6 +110,7 @@ static int parse_table_form(const char *label, const cJSON *member, fr_plugin_en
     out->version = dup_string(version);
     out->sha256 = sha256 != NULL ? dup_string(sha256) : NULL;
     if (out->repo == NULL || out->version == NULL || (sha256 != NULL && out->sha256 == NULL)) {
+        fr_error_set(err, "out of memory reading plugin \"%s\"", label);
         return FR_ERR;
     }
     return FR_OK;
