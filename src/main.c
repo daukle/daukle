@@ -1,9 +1,12 @@
 #include "cli.h"
 #include "config.h"
+#include "config_json.h"
 #include "config_lua.h"
+#include "config_toml.h"
 #include "error.h"
 #include "luax.h"
 #include "manifest.h"
+#include "plugins.h"
 #include "region.h"
 #include "registry.h"
 #include "sync.h"
@@ -54,6 +57,7 @@ static int resolve_manifest_path(const char *manifest_path, char **out_path, fr_
     int status = fr_config_find(".", registry, out_path, err);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
     return status;
 }
 
@@ -106,6 +110,30 @@ static void print_env_reads(const cJSON *env_reads) {
     }
 }
 
+/* Printed after the manifest itself, exactly what fr_plugins_load recorded on
+   this run: label, resolved version or local location, declared verbs and
+   digest, so adopting a pin is a copy of the printed line's sha256, not a
+   separate lookup. Reads fr_plugins_report before it is cleared, never after. */
+static void print_plugin_report(void) {
+    const fr_plugin_report *report = fr_plugins_report();
+    if (report->count == 0) return;
+
+    printf("daukle: plugins\n");
+    for (size_t index = 0; index < report->count; index++) {
+        const fr_plugin_report_entry *entry = &report->entries[index];
+        printf("  %s: %s, sha256 %s", entry->label, entry->resolved, entry->sha256);
+        if (entry->uses_count == 0) {
+            printf(", uses none\n");
+            continue;
+        }
+        printf(", uses ");
+        for (size_t use_index = 0; use_index < entry->uses_count; use_index++) {
+            printf("%s%s", use_index == 0 ? "" : ",", entry->uses[use_index]);
+        }
+        printf("\n");
+    }
+}
+
 static int print_config(const char *manifest_path, int verbose) {
     fr_error err;
     char *resolved = NULL;
@@ -133,6 +161,7 @@ static int print_config(const char *manifest_path, int verbose) {
         cJSON_Delete(env_reads);
         fr_manifest_free(&manifest);
         free(resolved);
+        fr_plugins_report_clear();
         return 1;
     }
 
@@ -142,6 +171,7 @@ static int print_config(const char *manifest_path, int verbose) {
         cJSON_Delete(env_reads);
         fr_manifest_free(&manifest);
         free(resolved);
+        fr_plugins_report_clear();
         return 1;
     }
 
@@ -149,6 +179,8 @@ static int print_config(const char *manifest_path, int verbose) {
     free(printed);
     print_env_reads(env_reads);
     cJSON_Delete(env_reads);
+    print_plugin_report();
+    fr_plugins_report_clear();
     fr_manifest_free(&manifest);
     free(resolved);
     return 0;
@@ -300,6 +332,91 @@ static int add_dependency(const fr_cli_options *options) {
     return 0;
 }
 
+/* Reads only the manifest's own document, never fr_config_load_file: that also
+   runs fr_plugins_load, which resolves and executes every declared plugin, the
+   opposite of what "plugin update" wants when a plugin's current cache is what
+   it is trying to discard. */
+static int read_manifest_plugins(const char *manifest_path, fr_plugin_entry **out_entries,
+                                 size_t *out_count, fr_error *err) {
+    const fr_config_plugin *plugin = NULL;
+    if (ends_with(manifest_path, ".toml")) plugin = &FR_CONFIG_TOML;
+    else if (ends_with(manifest_path, ".json")) plugin = &FR_CONFIG_JSON;
+    if (plugin == NULL) {
+        fr_error_set(err, "daukle does not recognise the format of \"%s\"", manifest_path);
+        return FR_ERR;
+    }
+
+    char *text = NULL;
+    if (fr_file_read_text(manifest_path, &text, err) != FR_OK) return FR_ERR;
+
+    cJSON *document = NULL;
+    int status = plugin->load(plugin->state, text, manifest_path, ".", NULL, NULL, &document, err);
+    free(text);
+    if (status != FR_OK) return FR_ERR;
+
+    status = fr_plugins_parse(document, out_entries, out_count, err);
+    cJSON_Delete(document);
+    return status;
+}
+
+static int plugin_update(const char *label, int verbose) {
+    fr_error err;
+
+    if (label == NULL) {
+        if (fr_plugins_remove_all_cache(&err) != FR_OK) {
+            report_error(&err, verbose);
+            return 1;
+        }
+        printf("daukle: cleared the plugin cache\n");
+        return 0;
+    }
+
+    char *resolved = NULL;
+    if (resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    int status = read_manifest_plugins(resolved, &entries, &count, &err);
+    free(resolved);
+    if (status != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    const fr_plugin_entry *found = NULL;
+    for (size_t index = 0; index < count; index++) {
+        if (strcmp(entries[index].label, label) == 0) {
+            found = &entries[index];
+            break;
+        }
+    }
+
+    if (found == NULL) {
+        fprintf(stderr, "daukle: no plugin named \"%s\"\n", label);
+        fr_plugins_free(entries, count);
+        return 1;
+    }
+
+    if (found->kind == FR_PLUGIN_LOCAL) {
+        printf("daukle: plugin \"%s\" loads from a local file; it has no cache to clear\n", label);
+        fr_plugins_free(entries, count);
+        return 0;
+    }
+
+    status = fr_plugins_remove_cache(found->repo, &err);
+    fr_plugins_free(entries, count);
+    if (status != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    printf("daukle: cleared the cache for \"%s\"\n", label);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     fr_cli_options options;
     fr_cli_parse(argc, argv, &options);
@@ -318,12 +435,19 @@ int main(int argc, char **argv) {
             return print_config(options.manifest_path, options.verbose);
         case FR_CLI_ADD:
             return add_dependency(&options);
+        case FR_CLI_PLUGIN_UPDATE:
+            return plugin_update(options.plugin_label, options.verbose);
         case FR_CLI_USAGE:
             break;
     }
 
+    if (options.plugin_unknown_subcommand != NULL) {
+        fprintf(stderr, "daukle: unknown plugin subcommand \"%s\"\n", options.plugin_unknown_subcommand);
+        return 2;
+    }
+
     fprintf(stderr, "usage: daukle [--version | sync [manifest] | check [manifest]"
                     " | add <project>@<range> --to <consumer> [--modules a,b]"
-                    " | config print] [--no-cache] [--verbose]\n");
+                    " | config print | plugin update [label]] [--no-cache] [--verbose]\n");
     return 2;
 }

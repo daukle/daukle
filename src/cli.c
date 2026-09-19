@@ -41,6 +41,8 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
     out->add_spec = NULL;
     out->add_consumer = NULL;
     out->add_modules = NULL;
+    out->plugin_label = NULL;
+    out->plugin_unknown_subcommand = NULL;
 
     const char *words[FR_CLI_MAX_WORDS];
     size_t word_count = 0;
@@ -91,5 +93,13 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
         if (word_count < 2 || strcmp(words[1], "print") != 0) return;
         out->command = FR_CLI_CONFIG_PRINT;
         if (word_count == 3) out->manifest_path = words[2];
+    } else if (strcmp(command, "plugin") == 0) {
+        if (word_count < 2) return;
+        if (strcmp(words[1], "update") != 0) {
+            out->plugin_unknown_subcommand = words[1];
+            return;
+        }
+        out->command = FR_CLI_PLUGIN_UPDATE;
+        if (word_count == 3) out->plugin_label = words[2];
     }
 }

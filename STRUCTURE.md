@@ -11,7 +11,7 @@ resolver.
 
 Living document. Update it in the same commit as the change it describes.
 
-Verified against disk on 2026-09-18.
+Verified against disk on 2026-09-19.
 
 ---
 
@@ -76,6 +76,10 @@ the client tier's rules.
 | what a configuration script may touch | `lua_sandbox.c` | a permission system. It curates one globals table and bounds daukle.include |
 | verifying a spliced manifest still parses | `tomledit.c`, through `FR_CONFIG_TOML` | a second parser. It reads its own output back so no caller is handed text it would be wrong to write |
 | running a configuration script, reading it back, and registering any source or language plugin the script declares | `config_lua.c` | the sandbox or the lua state, which are `lua_sandbox.c` and `luax.c` |
+| what a plugin may touch, and building one environment per plugin | `lua_verbs.c` | the configuration sandbox, which is `lua_sandbox.c`. One is per plugin, the other is the state's globals |
+| reading `[plugins]`, the declaration pass, and loading a local plugin | `plugins.c` | the remote half, which is `plugins_remote.c` |
+| resolving a remote coordinate, the plugin cache, and fetching from GitHub | `plugins_remote.c` | the parser or the declaration reader, which are `plugins.c` |
+| a sha-256 digest | `sha256.c` | a general crypto library |
 
 **A `daukle.lua` runs against a curated globals table, not Lua's own.** The two lists that define it
 are `KEPT` and `REMOVED` at the top of `src/lua_sandbox.c`, and reading a removed name raises an
@@ -134,3 +138,15 @@ or Lua manifest needs editing in place too, so it is deferred rather than built 
 does not rewrite an existing module list, so `--modules` for a dependency that already exists is an
 error rather than a silent discard, and whatever it produces is read back through the TOML reader
 before anything is written.
+
+A manifest's `[plugins]` table now registers a source or a language the same way the five built-ins
+do, through `plugins.c` and `plugins_remote.c` running each declared plugin in a `lua_verbs.c`
+environment scoped to exactly the verbs it declared. This is a second route to the same registry, not
+a replacement for the first: `source_path.c`, `source_github.c`, `lang_npm.c`, `lang_gradle.c` and
+`lang_c.c` are still compiled in and registered by `fr_build_registry`, unconditionally, beside
+whatever a manifest's plugins add. Removing them, and adding `FR_SOURCE_[A-Z]` and
+`FR_LANGUAGE_[A-Z]` to the agnostic check so `config.c` cannot silently regain one, is a separate,
+later plan. `daukle plugin update [label]` removes a remote plugin's cached copies, for one label or
+for all of them, so the next run re-resolves it; `daukle config print` shows every loaded plugin's
+label, its resolved version or local path, its declared verbs and its sha-256 digest, pinned or not,
+so adopting a pin is a copy of that printed digest rather than a separate lookup.

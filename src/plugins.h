@@ -19,6 +19,24 @@ typedef struct {
     char *sha256;   /* optional, NULL when unpinned */
 } fr_plugin_entry;
 
+/* One reported plugin, holding copies of everything an fr_plugin_entry held:
+   fr_plugins_load frees the entries it parsed before returning, so a report
+   that borrowed their pointers would dangle the moment anything read it. */
+typedef struct {
+    char *label;
+    fr_plugin_kind kind;
+    char *resolved;    /* FR_PLUGIN_REMOTE: the version resolved; FR_PLUGIN_LOCAL: the path used */
+    char **uses;
+    size_t uses_count;
+    char sha256[65];   /* always computed, pinned or not: this is what makes adopting a
+                          pin a copy and a paste rather than a separate command */
+} fr_plugin_report_entry;
+
+typedef struct {
+    fr_plugin_report_entry *entries;
+    size_t count;
+} fr_plugin_report;
+
 /* strdup is not C11 and strndup is absent on MSVC, so plugins.c and
    plugins_remote.c share these rather than each keeping a copy. Defined in
    plugins.c, the original owner of both. */
@@ -44,5 +62,23 @@ void fr_plugins_free(fr_plugin_entry *entries, size_t count);
    manifest declaring no plugins opens no lua state at all. */
 int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const char *base_dir,
                     fr_error *err);
+
+/* What the last fr_plugins_load resolved, cleared and rebuilt at the start of
+   every call so a manifest declaring no plugins reports none, not whatever the
+   previous manifest loaded. Never NULL; count is 0 before any load. */
+const fr_plugin_report *fr_plugins_report(void);
+
+/* Frees every copy fr_plugins_report holds. Called alongside
+   fr_lua_runtime_shutdown once a caller is done reading the report, and
+   internally at the start of every fr_plugins_load. */
+void fr_plugins_report_clear(void);
+
+/* Deletes every cached version of repo ("owner/name") under the plugin cache
+   root, so the next resolve re-fetches. Best effort: a repo with nothing
+   cached is not an error. */
+int fr_plugins_remove_cache(const char *repo, fr_error *err);
+
+/* Deletes the whole plugin cache, every repo at once. Best effort, as above. */
+int fr_plugins_remove_all_cache(fr_error *err);
 
 #endif

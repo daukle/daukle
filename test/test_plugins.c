@@ -520,6 +520,229 @@ TEST an_uppercase_pin_still_matches_the_lowercase_digest(void) {
     PASS();
 }
 
+TEST config_print_reports_each_plugin_with_its_verbs_and_digest(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-local/daukle.toml",
+                                         registry, &manifest, &err));
+
+    const fr_plugin_report *report = fr_plugins_report();
+    ASSERT(report != NULL);
+    ASSERT_EQ(1, (int) report->count);
+    ASSERT_STR_EQ("hello", report->entries[0].label);
+    ASSERT_EQ(64, (int) strlen(report->entries[0].sha256));
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    PASS();
+}
+
+TEST the_report_names_a_plugins_declared_verbs(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-declared-verb/daukle.toml",
+                                         registry, &manifest, &err));
+
+    const fr_plugin_report *report = fr_plugins_report();
+    ASSERT_EQ(1, (int) report->count);
+    ASSERT_STR_EQ("brew", report->entries[0].label);
+    ASSERT_EQ(FR_PLUGIN_LOCAL, report->entries[0].kind);
+    ASSERT_EQ(1, (int) report->entries[0].uses_count);
+    ASSERT_STR_EQ("env", report->entries[0].uses[0]);
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    PASS();
+}
+
+/* The report is read only after the entries fr_plugins_load parsed, the
+   manifest built from them, the registry and the lua runtime are all freed:
+   under a sanitizer this is exactly the sequence that would surface a report
+   holding borrowed pointers rather than its own copies. */
+TEST the_report_survives_the_entries_it_describes_being_freed(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-local/daukle.toml",
+                                         registry, &manifest, &err));
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    const fr_plugin_report *report = fr_plugins_report();
+    ASSERT_EQ(1, (int) report->count);
+    ASSERT_STR_EQ("hello", report->entries[0].label);
+    ASSERT(report->entries[0].resolved != NULL);
+    ASSERT_EQ(64, (int) strlen(report->entries[0].sha256));
+
+    fr_plugins_report_clear();
+    PASS();
+}
+
+TEST fr_plugins_report_clear_empties_the_report(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-local/daukle.toml",
+                                         registry, &manifest, &err));
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    fr_plugins_report_clear();
+    const fr_plugin_report *report = fr_plugins_report();
+    ASSERT(report != NULL);
+    ASSERT_EQ(0, (int) report->count);
+    PASS();
+}
+
+TEST the_report_names_the_resolved_version_for_a_remote_plugin(void) {
+    fr_error err;
+    char owner[64];
+    snprintf(owner, sizeof owner, "daukle-test-%d-report", fr_test_process_id());
+    const char *name = "remote";
+    remove_plugin_cache(owner);
+
+    release_requests = 0;
+    fr_http_fn previous = fr_http_set_backend(stub_releases);
+
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    char coordinate[256];
+    remote_coordinate(coordinate, sizeof coordinate, owner, name);
+    cJSON *document = cJSON_Parse(coordinate);
+
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
+
+    const fr_plugin_report *report = fr_plugins_report();
+    ASSERT_EQ(1, (int) report->count);
+    ASSERT_EQ(FR_PLUGIN_REMOTE, report->entries[0].kind);
+    ASSERT_STR_EQ("1.2.0", report->entries[0].resolved);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_http_set_backend(previous);
+    remove_plugin_cache(owner);
+    fr_plugins_report_clear();
+    PASS();
+}
+
+TEST fr_plugins_remove_cache_of_an_uncached_repo_is_not_an_error(void) {
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_plugins_remove_cache("daukle-test-nobody/nothing-here-ever", &err));
+    PASS();
+}
+
+TEST fr_plugins_remove_cache_forces_the_next_resolve_to_refetch(void) {
+    fr_error err;
+    char owner[64];
+    snprintf(owner, sizeof owner, "daukle-test-%d-remove-cache", fr_test_process_id());
+    const char *name = "remote";
+    remove_plugin_cache(owner);
+
+    char coordinate[256];
+    remote_coordinate(coordinate, sizeof coordinate, owner, name);
+    cJSON *document = cJSON_Parse(coordinate);
+
+    fr_http_fn previous = fr_http_set_backend(stub_releases);
+
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    release_requests = 0;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
+    ASSERT(release_requests > 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+
+    char repo[128];
+    snprintf(repo, sizeof repo, "%s/%s", owner, name);
+    ASSERT_EQ(FR_OK, fr_plugins_remove_cache(repo, &err));
+
+    fr_registry *second = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&second, &err));
+    release_requests = 0;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", second, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_load(second, document, ".", &err));
+    ASSERT(release_requests > 0);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(second);
+    fr_lua_runtime_shutdown();
+    fr_http_set_backend(previous);
+    remove_plugin_cache(owner);
+    fr_plugins_report_clear();
+    PASS();
+}
+
+/* Isolated behind its own DAUKLE_CACHE_DIR, the same way test_cache.c protects
+   every test that might wipe a whole cache root: fr_plugins_remove_all_cache
+   deletes everything under "<root>/plugins", and running that against a real
+   developer cache would be a destructive surprise no test should risk. */
+TEST fr_plugins_remove_all_cache_clears_every_repo(void) {
+    fr_error err;
+    char isolated_root[512];
+    snprintf(isolated_root, sizeof isolated_root, "%s/daukle_test_plugin_cache_%d",
+            fr_test_temp_base(), fr_test_process_id());
+    fr_test_set_env("DAUKLE_CACHE_DIR", isolated_root);
+
+    const char *owner = "daukle-test-remove-all";
+    const char *name = "remote";
+    remove_plugin_cache(owner);
+
+    char coordinate[256];
+    remote_coordinate(coordinate, sizeof coordinate, owner, name);
+    cJSON *document = cJSON_Parse(coordinate);
+
+    fr_http_fn previous = fr_http_set_backend(stub_releases);
+
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    release_requests = 0;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
+    ASSERT(release_requests > 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+
+    ASSERT_EQ(FR_OK, fr_plugins_remove_all_cache(&err));
+
+    fr_registry *second = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&second, &err));
+    release_requests = 0;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", second, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_load(second, document, ".", &err));
+    ASSERT(release_requests > 0);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(second);
+    fr_lua_runtime_shutdown();
+    fr_http_set_backend(previous);
+    fr_plugins_report_clear();
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    PASS();
+}
+
 TEST a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_digests(void) {
     fr_error err;
     char *fixture_text = NULL;
@@ -591,6 +814,14 @@ int main(int argc, char **argv) {
     RUN_TEST(a_cached_plugin_is_used_without_touching_the_network);
     RUN_TEST(a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests);
     RUN_TEST(an_uppercase_pin_still_matches_the_lowercase_digest);
+    RUN_TEST(config_print_reports_each_plugin_with_its_verbs_and_digest);
+    RUN_TEST(the_report_names_a_plugins_declared_verbs);
+    RUN_TEST(the_report_survives_the_entries_it_describes_being_freed);
+    RUN_TEST(fr_plugins_report_clear_empties_the_report);
+    RUN_TEST(the_report_names_the_resolved_version_for_a_remote_plugin);
+    RUN_TEST(fr_plugins_remove_cache_of_an_uncached_repo_is_not_an_error);
+    RUN_TEST(fr_plugins_remove_cache_forces_the_next_resolve_to_refetch);
+    RUN_TEST(fr_plugins_remove_all_cache_clears_every_repo);
     RUN_TEST(a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_digests);
     GREATEST_MAIN_END();
 }

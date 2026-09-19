@@ -1,6 +1,7 @@
 #include "plugins.h"
 
 #include "cJSON.h"
+#include "cache.h"
 #include "config_lua.h"
 #include "error.h"
 #include "jsonx.h"
@@ -16,6 +17,15 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <direct.h>
+#include <windows.h>
+#else
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#endif
 
 char *dup_string(const char *text) {
     if (text == NULL) return NULL;
@@ -333,6 +343,90 @@ static int digest_matches(const char *actual, const char *pinned) {
     return 1;
 }
 
+/* fr_plugins_resolve_remote's origin is <cache root>/plugins/<owner>/<name>/<version>/plugin.lua:
+   the version segment between the last two slashes is what the report shows, since a resolved
+   plugin's cache location is an implementation detail no report reader should need. Falls back to
+   the whole origin if it is ever shaped otherwise, rather than reporting nothing. */
+static char *remote_resolved_from_origin(const char *origin) {
+    const char *file_slash = strrchr(origin, '/');
+    if (file_slash == NULL || file_slash == origin) return dup_string(origin);
+
+    const char *version_start = file_slash;
+    while (version_start > origin && version_start[-1] != '/') version_start--;
+    if (version_start == file_slash) return dup_string(origin);
+
+    return dup_prefix(version_start, (size_t) (file_slash - version_start));
+}
+
+static fr_plugin_report_entry *report_entries;
+static size_t report_count;
+
+static void free_report_entry(fr_plugin_report_entry *entry) {
+    free(entry->label);
+    free(entry->resolved);
+    for (size_t index = 0; index < entry->uses_count; index++) free(entry->uses[index]);
+    free(entry->uses);
+}
+
+void fr_plugins_report_clear(void) {
+    for (size_t index = 0; index < report_count; index++) free_report_entry(&report_entries[index]);
+    free(report_entries);
+    report_entries = NULL;
+    report_count = 0;
+}
+
+const fr_plugin_report *fr_plugins_report(void) {
+    static fr_plugin_report view;
+    view.entries = report_entries;
+    view.count = report_count;
+    return &view;
+}
+
+/* Appends one entry, owning copies of everything it stores: entry and declaration are both
+   about to be freed by their callers (fr_plugins_free and free_declaration), so nothing here
+   may keep a pointer into either. */
+static int append_report_entry(const fr_plugin_entry *entry, const char *resolved,
+                               const char *digest, const fr_plugin_declaration *declaration,
+                               fr_error *err) {
+    fr_plugin_report_entry *grown = realloc(report_entries, (report_count + 1) * sizeof *grown);
+    if (grown == NULL) {
+        fr_error_set(err, "out of memory recording plugin \"%s\" in the report", entry->label);
+        return FR_ERR;
+    }
+    report_entries = grown;
+
+    fr_plugin_report_entry *slot = &report_entries[report_count];
+    memset(slot, 0, sizeof *slot);
+    slot->kind = entry->kind;
+    memcpy(slot->sha256, digest, sizeof slot->sha256);
+
+    slot->label = dup_string(entry->label);
+    slot->resolved = dup_string(resolved);
+    slot->uses = declaration->uses_count > 0
+                     ? malloc(declaration->uses_count * sizeof *slot->uses)
+                     : NULL;
+    if (slot->label == NULL || slot->resolved == NULL
+        || (declaration->uses_count > 0 && slot->uses == NULL)) {
+        free_report_entry(slot);
+        fr_error_set(err, "out of memory recording plugin \"%s\" in the report", entry->label);
+        return FR_ERR;
+    }
+
+    for (size_t index = 0; index < declaration->uses_count; index++) {
+        slot->uses[index] = dup_string(declaration->uses[index]);
+        if (slot->uses[index] == NULL) {
+            slot->uses_count = index;
+            free_report_entry(slot);
+            fr_error_set(err, "out of memory recording plugin \"%s\" in the report", entry->label);
+            return FR_ERR;
+        }
+    }
+    slot->uses_count = declaration->uses_count;
+
+    report_count++;
+    return FR_OK;
+}
+
 static int load_one(const fr_plugin_entry *entry, fr_error *err) {
     lua_State *state = fr_lua_runtime_state();
 
@@ -348,18 +442,18 @@ static int load_one(const fr_plugin_entry *entry, fr_error *err) {
         if (fr_plugins_resolve_remote(entry, &text, &path, err) != FR_OK) return FR_ERR;
     }
 
-    /* Checked before read_declaration, which already runs the chunk: verifying
-       after would mean the mismatched code had already executed. */
-    if (entry->sha256 != NULL) {
-        char actual[65];
-        fr_sha256_hex(text, strlen(text), actual);
-        if (!digest_matches(actual, entry->sha256)) {
-            fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
-                        entry->label, entry->sha256, actual);
-            free(text);
-            free(path);
-            return FR_ERR;
-        }
+    /* Computed for every plugin, pinned or not: an unpinned entry's digest is what
+       "daukle config print" shows, so adopting a pin is a copy and a paste. Checked
+       before read_declaration, which already runs the chunk: verifying after would
+       mean the mismatched code had already executed. */
+    char digest[65];
+    fr_sha256_hex(text, strlen(text), digest);
+    if (entry->sha256 != NULL && !digest_matches(digest, entry->sha256)) {
+        fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
+                    entry->label, entry->sha256, digest);
+        free(text);
+        free(path);
+        return FR_ERR;
     }
 
     fr_plugin_declaration declaration = { entry->label, { NULL }, 0 };
@@ -367,6 +461,18 @@ static int load_one(const fr_plugin_entry *entry, fr_error *err) {
     if (status == FR_OK) {
         status = fr_lua_plugin_load(text, path, (const char *const *) declaration.uses,
                                     declaration.uses_count, err);
+    }
+
+    if (status == FR_OK) {
+        char *resolved = entry->kind == FR_PLUGIN_LOCAL ? dup_string(path)
+                                                         : remote_resolved_from_origin(path);
+        if (resolved == NULL) {
+            fr_error_set(err, "out of memory recording plugin \"%s\" in the report", entry->label);
+            status = FR_ERR;
+        } else {
+            status = append_report_entry(entry, resolved, digest, &declaration, err);
+            free(resolved);
+        }
     }
 
     free_declaration(&declaration);
@@ -377,6 +483,8 @@ static int load_one(const fr_plugin_entry *entry, fr_error *err) {
 
 int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const char *base_dir,
                     fr_error *err) {
+    fr_plugins_report_clear();
+
     fr_plugin_entry *entries = NULL;
     size_t count = 0;
     if (fr_plugins_parse(document, &entries, &count, err) != FR_OK) return FR_ERR;
@@ -393,4 +501,99 @@ int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const c
     }
     fr_plugins_free(entries, count);
     return status;
+}
+
+typedef void (*fr_cache_visit_fn)(const char *child_path, int is_directory, void *state);
+
+/* Only plugins.c's own cache cleanup needs both files and directories from one
+   walk; plugins_remote.c's for_each_subdirectory only ever needs the latter, so
+   the two stay separate rather than sharing one over-general helper. */
+static void for_each_cache_child(const char *path, fr_cache_visit_fn visit, void *state) {
+#ifdef _WIN32
+    char pattern[1024];
+    int written = snprintf(pattern, sizeof pattern, "%s/*", path);
+    if (written < 0 || (size_t) written >= sizeof pattern) return;
+
+    WIN32_FIND_DATAA found;
+    HANDLE handle = FindFirstFileA(pattern, &found);
+    if (handle == INVALID_HANDLE_VALUE) return;
+    do {
+        if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) continue;
+        char child[1024];
+        int child_written = snprintf(child, sizeof child, "%s/%s", path, found.cFileName);
+        if (child_written < 0 || (size_t) child_written >= sizeof child) continue;
+        visit(child, (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0, state);
+    } while (FindNextFileA(handle, &found));
+    FindClose(handle);
+#else
+    DIR *dir = opendir(path);
+    if (dir == NULL) return;
+    const struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        char child[1024];
+        int child_written = snprintf(child, sizeof child, "%s/%s", path, entry->d_name);
+        if (child_written < 0 || (size_t) child_written >= sizeof child) continue;
+        struct stat info;
+        if (stat(child, &info) != 0) continue;
+        visit(child, S_ISDIR(info.st_mode), state);
+    }
+    closedir(dir);
+#endif
+}
+
+static void remove_cache_tree(const char *path);
+
+static void remove_cache_child(const char *child_path, int is_directory, void *state) {
+    (void) state;
+    if (is_directory) remove_cache_tree(child_path);
+    else remove(child_path);
+}
+
+/* Best effort throughout, like fr_cache_write: a directory that was never created
+   (nothing of this plugin was ever fetched) is not an error, and a stray file the
+   OS would not let go of must not fail the whole "plugin update". */
+static void remove_cache_tree(const char *path) {
+    for_each_cache_child(path, remove_cache_child, NULL);
+#ifdef _WIN32
+    _rmdir(path);
+#else
+    rmdir(path);
+#endif
+}
+
+int fr_plugins_remove_cache(const char *repo, fr_error *err) {
+    const char *slash = strchr(repo, '/');
+    if (slash == NULL || slash == repo || slash[1] == '\0') {
+        fr_error_set(err, "repo \"%s\" must be \"owner/name\"", repo);
+        return FR_ERR;
+    }
+
+    char root[1024];
+    if (fr_cache_root(root, sizeof root, err) != FR_OK) return FR_ERR;
+
+    char dir[1024];
+    int written = snprintf(dir, sizeof dir, "%s/plugins/%s", root, repo);
+    if (written < 0 || (size_t) written >= sizeof dir) {
+        fr_error_set(err, "plugin cache directory for \"%s\" is too long", repo);
+        return FR_ERR;
+    }
+
+    remove_cache_tree(dir);
+    return FR_OK;
+}
+
+int fr_plugins_remove_all_cache(fr_error *err) {
+    char root[1024];
+    if (fr_cache_root(root, sizeof root, err) != FR_OK) return FR_ERR;
+
+    char dir[1024];
+    int written = snprintf(dir, sizeof dir, "%s/plugins", root);
+    if (written < 0 || (size_t) written >= sizeof dir) {
+        fr_error_set(err, "plugin cache root path is too long");
+        return FR_ERR;
+    }
+
+    remove_cache_tree(dir);
+    return FR_OK;
 }
