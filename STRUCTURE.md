@@ -89,8 +89,10 @@ the source lists are the authority and the spec follows them.
 **The registry is destroyed before the lua runtime is shut down, always.** A `daukle.lua` may
 register plugins, and `config_lua.c` owns their capability strings while the registry stores the
 plugin structs by value. So the order is: build the registry, load the configuration, destroy the
-registry, then `fr_lua_runtime_shutdown()`. `config_lua_load` refuses a second load while a registry
-still holds the previous one's plugins rather than freeing what that registry would go on reading.
+registry, then `fr_lua_runtime_shutdown()`. `fr_lua_runtime_begin`, which `config_lua_load`
+delegates to, returns `FR_OK` for a load into the registry the open phase already belongs to, an
+idempotent no-op, and refuses a load into a different one while that registry still holds the
+first one's plugins rather than freeing what it would go on reading.
 
 **Adding a source means adding an `fr_source_plugin` and registering it.** Adding a language means
 adding an `fr_language_plugin` and registering it. Neither touches `resolve.c`, and a change that
@@ -102,7 +104,8 @@ the cache serves one for the other and emits silently wrong coordinates.
 
 ## 3. Tests
 
-One test file per src module, under `test/`, on the `greatest` harness. Beyond the per-module tests
+One test file per src module, under `test/`, on the `greatest` harness, except that `plugins.c` and
+`plugins_remote.c` share `test_plugins.c`. Beyond the per-module tests
 there are `test_e2e.c` and `test_e2e_languages.c` for whole-pass behaviour, and `test_http.c`,
 `test_network.c` and `test_redirect.c` run against `test/http_server.c`, a real local server rather
 than a mock, so redirect and transport behaviour is exercised as it will be in use.
@@ -110,8 +113,8 @@ than a mock, so redirect and transport behaviour is exercised as it will be in u
 `test/fixtures/` holds consumer build files. Several are gitignored, because they are written by the
 tests themselves.
 
-`config_json.c` is the one module with no dedicated test file: it is exercised through
-`test_config.c`'s json-manifest test instead.
+Two modules have no dedicated test file: `config_json.c`, exercised through `test_config.c`'s
+json-manifest test, and `plugins_remote.c`, exercised through `test_plugins.c`.
 
 ## 4. State
 
