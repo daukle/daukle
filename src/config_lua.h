@@ -22,6 +22,11 @@ int fr_lua_runtime_begin(const char *base_dir, fr_registry *registry, fr_error *
 
 lua_State *fr_lua_runtime_state(void);
 
+/* Sets language, source and plugin on the table on top of the stack, for
+   lua_verbs.c to build a plugin environment around; the underlying functions
+   are file statics here, so this is their only way out. */
+void fr_lua_verbs_install_registration(lua_State *state);
+
 /* The registry stores plugin structs by value and does not own their capability
    strings, so the runtime that owns them outlives the registry and is torn down
    only after it. */

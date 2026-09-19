@@ -350,6 +350,20 @@ static int lua_declare_source(lua_State *state) {
     return 0;
 }
 
+static int lua_declare_plugin(lua_State *state) {
+    (void) state;
+    return 0;
+}
+
+void fr_lua_verbs_install_registration(lua_State *state) {
+    lua_pushcfunction(state, lua_declare_language);
+    lua_setfield(state, -2, "language");
+    lua_pushcfunction(state, lua_declare_source);
+    lua_setfield(state, -2, "source");
+    lua_pushcfunction(state, lua_declare_plugin);
+    lua_setfield(state, -2, "plugin");
+}
+
 static const cJSON *publish_document;
 
 static int protected_publish_daukle_table(lua_State *state) {
