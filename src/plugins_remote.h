@@ -11,4 +11,10 @@
 int fr_plugins_resolve_remote(const fr_plugin_entry *entry, char **out_text, char **out_origin,
                               fr_error *err);
 
+/* Deletes every cached version of repo ("owner/name") under the plugin cache
+   root, so the next resolve re-fetches. Best effort: a repo with nothing
+   cached is not an error. Called from plugins.c's fr_plugins_update_cache,
+   once per FR_PLUGIN_REMOTE entry it removes. */
+int fr_plugins_remove_cache(const char *repo, fr_error *err);
+
 #endif

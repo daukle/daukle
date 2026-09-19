@@ -73,18 +73,18 @@ const fr_plugin_report *fr_plugins_report(void);
    internally at the start of every fr_plugins_load. */
 void fr_plugins_report_clear(void);
 
-/* Deletes every cached version of repo ("owner/name") under the plugin cache
-   root, so the next resolve re-fetches. Best effort: a repo with nothing
-   cached is not an error. */
-int fr_plugins_remove_cache(const char *repo, fr_error *err);
-
 /* "daukle plugin update [label]"'s scoping rule, over entries already parsed
    from ONE manifest: label NULL removes the cache of every FR_PLUGIN_REMOTE
    entry in entries, and nothing outside it, so a label-less update in one
    project can never reach another project's cache. A label removes only the
    entry it names (a local match has nothing cached, so this is a no-op, not
-   an error); a label entries does not declare is an error naming it. */
-int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
-                            const char *label, fr_error *err);
+   an error); a label that entries does not declare is an error naming it.
+   *out_removed_count is how many entries actually had a cache removed (0 or 1
+   with a label, otherwise the count of remote entries touched), so a caller
+   can report a local no-op honestly rather than claiming a removal that never
+   happened. Calls plugins_remote.c's fr_plugins_remove_cache, declared in
+   plugins_remote.h, once per matched remote entry. */
+int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count, const char *label,
+                            size_t *out_removed_count, fr_error *err);
 
 #endif

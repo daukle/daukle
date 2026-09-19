@@ -12,6 +12,7 @@
 #include <string.h>
 
 #ifdef _WIN32
+#include <direct.h>
 #include <windows.h>
 #else
 #include <dirent.h>
@@ -49,7 +50,12 @@ static void format_version(const fr_version *version, char *out, size_t out_size
 typedef void (*fr_dir_name_fn)(const char *name, void *state);
 
 /* Only src/plugins_remote.c and test/support.c enumerate directories, and this
-   one may not include the test header, so its own small copy stays here. */
+   one may not include the test header, so its own small copy stays here. Visits
+   directories only, passing each one's bare name (not a full path), which is
+   all find_cached_version below needs. fr_plugins_remove_cache's own tree walk
+   further down needs files as well as directories, and full child paths to
+   recurse with, so it keeps its own, differently-shaped helper rather than
+   reusing this one. */
 static void for_each_subdirectory(const char *path, fr_dir_name_fn visit, void *state) {
 #ifdef _WIN32
     char pattern[1024];
@@ -362,4 +368,85 @@ int fr_plugins_resolve_remote(const fr_plugin_entry *entry, char **out_text, cha
     free(owner);
     free(name);
     return status;
+}
+
+typedef void (*fr_cache_visit_fn)(const char *child_path, int is_directory, void *state);
+
+/* Unlike for_each_subdirectory above, this visits files as well as directories
+   and passes each one's full child path rather than a bare name, since
+   remove_cache_tree below needs both to delete a whole plugin cache
+   directory, not just read the version names one level below it. */
+static void for_each_cache_child(const char *path, fr_cache_visit_fn visit, void *state) {
+#ifdef _WIN32
+    char pattern[1024];
+    int written = snprintf(pattern, sizeof pattern, "%s/*", path);
+    if (written < 0 || (size_t) written >= sizeof pattern) return;
+
+    WIN32_FIND_DATAA found;
+    HANDLE handle = FindFirstFileA(pattern, &found);
+    if (handle == INVALID_HANDLE_VALUE) return;
+    do {
+        if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) continue;
+        char child[1024];
+        int child_written = snprintf(child, sizeof child, "%s/%s", path, found.cFileName);
+        if (child_written < 0 || (size_t) child_written >= sizeof child) continue;
+        visit(child, (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0, state);
+    } while (FindNextFileA(handle, &found));
+    FindClose(handle);
+#else
+    DIR *dir = opendir(path);
+    if (dir == NULL) return;
+    const struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        char child[1024];
+        int child_written = snprintf(child, sizeof child, "%s/%s", path, entry->d_name);
+        if (child_written < 0 || (size_t) child_written >= sizeof child) continue;
+        struct stat info;
+        if (stat(child, &info) != 0) continue;
+        visit(child, S_ISDIR(info.st_mode), state);
+    }
+    closedir(dir);
+#endif
+}
+
+static void remove_cache_tree(const char *path);
+
+static void remove_cache_child(const char *child_path, int is_directory, void *state) {
+    (void) state;
+    if (is_directory) remove_cache_tree(child_path);
+    else remove(child_path);
+}
+
+/* Best effort throughout, like fr_cache_write: a directory that was never created
+   (nothing of this plugin was ever fetched) is not an error, and a stray file the
+   OS would not let go of must not fail the whole "plugin update". */
+static void remove_cache_tree(const char *path) {
+    for_each_cache_child(path, remove_cache_child, NULL);
+#ifdef _WIN32
+    _rmdir(path);
+#else
+    rmdir(path);
+#endif
+}
+
+int fr_plugins_remove_cache(const char *repo, fr_error *err) {
+    const char *slash = strchr(repo, '/');
+    if (slash == NULL || slash == repo || slash[1] == '\0') {
+        fr_error_set(err, "repo \"%s\" must be \"owner/name\"", repo);
+        return FR_ERR;
+    }
+
+    char root[1024];
+    if (fr_cache_root(root, sizeof root, err) != FR_OK) return FR_ERR;
+
+    char dir[1024];
+    int written = snprintf(dir, sizeof dir, "%s/plugins/%s", root, repo);
+    if (written < 0 || (size_t) written >= sizeof dir) {
+        fr_error_set(err, "plugin cache directory for \"%s\" is too long", repo);
+        return FR_ERR;
+    }
+
+    remove_cache_tree(dir);
+    return FR_OK;
 }

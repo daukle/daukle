@@ -7,6 +7,7 @@
 #include "http.h"
 #include "manifest.h"
 #include "plugins.h"
+#include "plugins_remote.h"
 #include "region.h"
 #include "registry.h"
 #include "sha256.h"
@@ -744,7 +745,9 @@ TEST fr_plugins_update_cache_with_no_label_touches_only_the_given_entries(void) 
     ASSERT_EQ(FR_OK, fr_plugins_parse(declared_document, &entries, &count, &err));
     ASSERT_EQ(1, (int) count);
 
-    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, NULL, &err));
+    size_t removed_count = 0;
+    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, NULL, &removed_count, &err));
+    ASSERT_EQ(1, (int) removed_count);
 
     fr_plugins_free(entries, count);
     cJSON_Delete(declared_document);
@@ -782,6 +785,45 @@ TEST fr_plugins_update_cache_with_no_label_touches_only_the_given_entries(void) 
     PASS();
 }
 
+/* The other half of the honesty fix: a label matching a REAL remote entry must
+   report removed_count 1, not just the local no-op case reporting 0. */
+TEST fr_plugins_update_cache_with_a_label_matching_a_remote_entry_removes_it(void) {
+    fr_error err;
+    char owner[64];
+    snprintf(owner, sizeof owner, "daukle-test-%d-label-remote", fr_test_process_id());
+    remove_plugin_cache(owner);
+
+    fr_http_fn previous = fr_http_set_backend(stub_releases);
+
+    char coordinate[256];
+    remote_coordinate(coordinate, sizeof coordinate, owner, "remote");
+    cJSON *document = cJSON_Parse(coordinate);
+
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+
+    cJSON *reparsed = cJSON_Parse(coordinate);
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    ASSERT_EQ(FR_OK, fr_plugins_parse(reparsed, &entries, &count, &err));
+
+    size_t removed_count = 0;
+    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, "r", &removed_count, &err));
+    ASSERT_EQ(1, (int) removed_count);
+
+    fr_plugins_free(entries, count);
+    cJSON_Delete(reparsed);
+    fr_http_set_backend(previous);
+    remove_plugin_cache(owner);
+    PASS();
+}
+
 TEST fr_plugins_update_cache_with_an_unknown_label_errors_naming_it(void) {
     fr_error err;
     cJSON *document = cJSON_Parse("{\"plugins\":{\"npm\":\"daukle/npm@^1.0.0\"}}");
@@ -789,14 +831,20 @@ TEST fr_plugins_update_cache_with_an_unknown_label_errors_naming_it(void) {
     size_t count = 0;
     ASSERT_EQ(FR_OK, fr_plugins_parse(document, &entries, &count, &err));
 
-    ASSERT_EQ(FR_ERR, fr_plugins_update_cache(entries, count, "gradle", &err));
+    size_t removed_count = 0;
+    ASSERT_EQ(FR_ERR, fr_plugins_update_cache(entries, count, "gradle", &removed_count, &err));
     ASSERT(strstr(err.message, "gradle") != NULL);
+    ASSERT_EQ(0, (int) removed_count);
 
     fr_plugins_free(entries, count);
     cJSON_Delete(document);
     PASS();
 }
 
+/* A local match has nothing cached, so the removal is a no-op: *out_removed_count
+   must come back 0, which is what lets main.c's plugin_update tell this case
+   apart from a real removal and report honestly rather than claiming to have
+   cleared a cache that never existed. */
 TEST fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error(void) {
     fr_error err;
     cJSON *document = cJSON_Parse("{\"plugins\":{\"hello\":\"./plugins/hello.lua\"}}");
@@ -804,7 +852,9 @@ TEST fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error
     size_t count = 0;
     ASSERT_EQ(FR_OK, fr_plugins_parse(document, &entries, &count, &err));
 
-    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, "hello", &err));
+    size_t removed_count = 1;
+    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, "hello", &removed_count, &err));
+    ASSERT_EQ(0, (int) removed_count);
 
     fr_plugins_free(entries, count);
     cJSON_Delete(document);
@@ -890,6 +940,7 @@ int main(int argc, char **argv) {
     RUN_TEST(fr_plugins_remove_cache_of_an_uncached_repo_is_not_an_error);
     RUN_TEST(fr_plugins_remove_cache_forces_the_next_resolve_to_refetch);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);
+    RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_remote_entry_removes_it);
     RUN_TEST(fr_plugins_update_cache_with_an_unknown_label_errors_naming_it);
     RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error);
     RUN_TEST(a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_digests);

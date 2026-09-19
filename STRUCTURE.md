@@ -146,7 +146,10 @@ a replacement for the first: `source_path.c`, `source_github.c`, `lang_npm.c`, `
 `lang_c.c` are still compiled in and registered by `fr_build_registry`, unconditionally, beside
 whatever a manifest's plugins add. Removing them, and adding `FR_SOURCE_[A-Z]` and
 `FR_LANGUAGE_[A-Z]` to the agnostic check so `config.c` cannot silently regain one, is a separate,
-later plan. `daukle plugin update [label]` removes a remote plugin's cached copies, for one label or
-for all of them, so the next run re-resolves it; `daukle config print` shows every loaded plugin's
-label, its resolved version or local path, its declared verbs and its sha-256 digest, pinned or not,
-so adopting a pin is a copy of that printed digest rather than a separate lookup.
+later plan. `daukle plugin update [label]` always reads the current manifest first and removes a
+remote plugin's cached copies scoped to what THAT manifest declares: one label's entry, or, with no
+label, every remote entry it declares, and nothing outside it, so the plugin cache root, which is
+shared across every project on the machine, is never touched beyond this manifest's own plugins. The
+next run re-resolves whatever was removed. `daukle config print` shows every loaded plugin's label,
+its resolved version or local path, its declared verbs and its sha-256 digest, pinned or not, so
+adopting a pin is a copy of that printed digest rather than a separate lookup.

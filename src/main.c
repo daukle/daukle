@@ -385,15 +385,21 @@ static int plugin_update(const char *label, int verbose) {
         return 1;
     }
 
-    status = fr_plugins_update_cache(entries, count, label, &err);
+    size_t removed_count = 0;
+    status = fr_plugins_update_cache(entries, count, label, &removed_count, &err);
     fr_plugins_free(entries, count);
     if (status != FR_OK) {
         report_error(&err, verbose);
         return 1;
     }
 
-    if (label == NULL) printf("daukle: cleared the plugin cache\n");
-    else printf("daukle: cleared the cache for \"%s\"\n", label);
+    if (label == NULL) {
+        printf("daukle: cleared the plugin cache\n");
+    } else if (removed_count == 0) {
+        printf("daukle: plugin \"%s\" loads from a local file; it has no cache to clear\n", label);
+    } else {
+        printf("daukle: cleared the cache for \"%s\"\n", label);
+    }
     return 0;
 }
 

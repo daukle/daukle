@@ -1,7 +1,6 @@
 #include "plugins.h"
 
 #include "cJSON.h"
-#include "cache.h"
 #include "config_lua.h"
 #include "error.h"
 #include "jsonx.h"
@@ -17,15 +16,6 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
-
-#ifdef _WIN32
-#include <direct.h>
-#include <windows.h>
-#else
-#include <dirent.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#endif
 
 char *dup_string(const char *text) {
     if (text == NULL) return NULL;
@@ -503,92 +493,22 @@ int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const c
     return status;
 }
 
-typedef void (*fr_cache_visit_fn)(const char *child_path, int is_directory, void *state);
+/* Entry-list work, not cache work: matching a label against entries already
+   parsed from ONE manifest belongs here, while actually locating and deleting
+   a remote plugin's cache directory is plugins_remote.c's fr_plugins_remove_cache,
+   called once per matched FR_PLUGIN_REMOTE entry. *out_removed_count tells the
+   caller how many entries actually had a cache removed, so it can report a
+   local match (nothing was ever cached for it) differently from a real
+   removal rather than claiming to have cleared a cache that never existed. */
+int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count, const char *label,
+                            size_t *out_removed_count, fr_error *err) {
+    *out_removed_count = 0;
 
-/* Only plugins.c's own cache cleanup needs both files and directories from one
-   walk; plugins_remote.c's for_each_subdirectory only ever needs the latter, so
-   the two stay separate rather than sharing one over-general helper. */
-static void for_each_cache_child(const char *path, fr_cache_visit_fn visit, void *state) {
-#ifdef _WIN32
-    char pattern[1024];
-    int written = snprintf(pattern, sizeof pattern, "%s/*", path);
-    if (written < 0 || (size_t) written >= sizeof pattern) return;
-
-    WIN32_FIND_DATAA found;
-    HANDLE handle = FindFirstFileA(pattern, &found);
-    if (handle == INVALID_HANDLE_VALUE) return;
-    do {
-        if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) continue;
-        char child[1024];
-        int child_written = snprintf(child, sizeof child, "%s/%s", path, found.cFileName);
-        if (child_written < 0 || (size_t) child_written >= sizeof child) continue;
-        visit(child, (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0, state);
-    } while (FindNextFileA(handle, &found));
-    FindClose(handle);
-#else
-    DIR *dir = opendir(path);
-    if (dir == NULL) return;
-    const struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-        char child[1024];
-        int child_written = snprintf(child, sizeof child, "%s/%s", path, entry->d_name);
-        if (child_written < 0 || (size_t) child_written >= sizeof child) continue;
-        struct stat info;
-        if (stat(child, &info) != 0) continue;
-        visit(child, S_ISDIR(info.st_mode), state);
-    }
-    closedir(dir);
-#endif
-}
-
-static void remove_cache_tree(const char *path);
-
-static void remove_cache_child(const char *child_path, int is_directory, void *state) {
-    (void) state;
-    if (is_directory) remove_cache_tree(child_path);
-    else remove(child_path);
-}
-
-/* Best effort throughout, like fr_cache_write: a directory that was never created
-   (nothing of this plugin was ever fetched) is not an error, and a stray file the
-   OS would not let go of must not fail the whole "plugin update". */
-static void remove_cache_tree(const char *path) {
-    for_each_cache_child(path, remove_cache_child, NULL);
-#ifdef _WIN32
-    _rmdir(path);
-#else
-    rmdir(path);
-#endif
-}
-
-int fr_plugins_remove_cache(const char *repo, fr_error *err) {
-    const char *slash = strchr(repo, '/');
-    if (slash == NULL || slash == repo || slash[1] == '\0') {
-        fr_error_set(err, "repo \"%s\" must be \"owner/name\"", repo);
-        return FR_ERR;
-    }
-
-    char root[1024];
-    if (fr_cache_root(root, sizeof root, err) != FR_OK) return FR_ERR;
-
-    char dir[1024];
-    int written = snprintf(dir, sizeof dir, "%s/plugins/%s", root, repo);
-    if (written < 0 || (size_t) written >= sizeof dir) {
-        fr_error_set(err, "plugin cache directory for \"%s\" is too long", repo);
-        return FR_ERR;
-    }
-
-    remove_cache_tree(dir);
-    return FR_OK;
-}
-
-int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
-                            const char *label, fr_error *err) {
     if (label == NULL) {
         for (size_t index = 0; index < count; index++) {
             if (entries[index].kind != FR_PLUGIN_REMOTE) continue;
             if (fr_plugins_remove_cache(entries[index].repo, err) != FR_OK) return FR_ERR;
+            (*out_removed_count)++;
         }
         return FR_OK;
     }
@@ -596,7 +516,9 @@ int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
     for (size_t index = 0; index < count; index++) {
         if (strcmp(entries[index].label, label) != 0) continue;
         if (entries[index].kind != FR_PLUGIN_REMOTE) return FR_OK;
-        return fr_plugins_remove_cache(entries[index].repo, err);
+        if (fr_plugins_remove_cache(entries[index].repo, err) != FR_OK) return FR_ERR;
+        *out_removed_count = 1;
+        return FR_OK;
     }
 
     fr_error_set(err, "no plugin named \"%s\"", label);
