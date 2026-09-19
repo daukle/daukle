@@ -441,6 +441,7 @@ static int load_one(const fr_plugin_entry *entry, fr_error *err) {
     if (entry->sha256 != NULL && !digest_matches(digest, entry->sha256)) {
         fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
                     entry->label, entry->sha256, digest);
+        if (entry->kind == FR_PLUGIN_REMOTE) fr_plugins_discard_cached_version(path);
         free(text);
         free(path);
         return FR_ERR;

@@ -338,6 +338,15 @@ static void remove_plugin_cache(const char *owner) {
     fr_test_remove_tree(dir);
 }
 
+static int cached_plugin_files(const char *owner) {
+    fr_error ignored;
+    char root[1024];
+    if (fr_cache_root(root, sizeof root, &ignored) != FR_OK) return -1;
+    char dir[1024];
+    snprintf(dir, sizeof dir, "%s/plugins/%s", root, owner);
+    return fr_test_count_files(dir, "plugin.lua");
+}
+
 TEST a_remote_coordinate_picks_the_highest_release_in_range(void) {
     fr_error err;
     char owner[64];
@@ -448,6 +457,7 @@ TEST a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests(void) {
     cJSON *ok_document = cJSON_Parse(good);
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     ASSERT_EQ(FR_OK, fr_plugins_load(registry, ok_document, ".", &err));
+    ASSERT_EQ(1, cached_plugin_files(owner_good));
     cJSON_Delete(ok_document);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
@@ -471,6 +481,7 @@ TEST a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests(void) {
     ASSERT(strstr(err.message, expected) != NULL);
     ASSERT(strstr(err.message, "0000000000") != NULL);
     ASSERT(strstr(err.message, "r") != NULL);
+    ASSERT_EQ(0, cached_plugin_files(owner_bad));
     cJSON_Delete(bad_document);
     fr_registry_destroy(second);
     fr_lua_runtime_shutdown();

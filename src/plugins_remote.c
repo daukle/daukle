@@ -443,6 +443,19 @@ static void remove_cache_tree(const char *path) {
 #endif
 }
 
+void fr_plugins_discard_cached_version(const char *origin) {
+    const char *file_slash = strrchr(origin, '/');
+    if (file_slash == NULL) return;
+
+    size_t length = (size_t) (file_slash - origin);
+    char dir[1024];
+    if (length == 0 || length >= sizeof dir) return;
+    memcpy(dir, origin, length);
+    dir[length] = '\0';
+
+    remove_cache_tree(dir);
+}
+
 int fr_plugins_remove_cache(const char *repo, fr_error *err) {
     if (check_repo_shape(repo, err) != FR_OK) return FR_ERR;
 
