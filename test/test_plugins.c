@@ -221,6 +221,12 @@ static char *copy_body(const char *text, size_t *out_length) {
     return copy;
 }
 
+/* p.lua (the 1.2.0 asset, in range for "^1.0.0") and q.lua (the 2.0.0 asset,
+   out of range) register differently-named languages, so a test can tell
+   which one was actually fetched rather than only that loading succeeded. A
+   selection bug that ignored fr_range_satisfies and always took the highest
+   tag would register remote-2-0-0 instead, which the positive assertion
+   alone would not catch. */
 static int stub_releases(const char *url, const fr_http_header *headers, size_t header_count,
                          char **out_body, size_t *out_length, fr_error *err) {
     (void) headers; (void) header_count; (void) err;
@@ -231,9 +237,13 @@ static int stub_releases(const char *url, const fr_http_header *headers, size_t 
                               "{\"tag_name\":\"2.0.0\",\"assets\":"
                               "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/q.lua\"}]}]",
                               out_length);
+    } else if (strstr(url, "/p.lua") != NULL) {
+        *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
+                              "daukle.language{ name = 'remote-1-2-0', apply = function() return '' end }\n",
+                              out_length);
     } else {
         *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
-                              "daukle.language{ name = 'remote', apply = function() return '' end }\n",
+                              "daukle.language{ name = 'remote-2-0-0', apply = function() return '' end }\n",
                               out_length);
     }
     return FR_OK;
@@ -277,7 +287,8 @@ TEST a_remote_coordinate_picks_the_highest_release_in_range(void) {
 
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
-    ASSERT(fr_registry_language(registry, "daukle.language/remote") != NULL);
+    ASSERT(fr_registry_language(registry, "daukle.language/remote-1-2-0") != NULL);
+    ASSERT(fr_registry_language(registry, "daukle.language/remote-2-0-0") == NULL);
 
     cJSON_Delete(document);
     fr_registry_destroy(registry);
@@ -315,7 +326,7 @@ TEST a_cached_plugin_is_used_without_touching_the_network(void) {
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", second, &err));
     ASSERT_EQ(FR_OK, fr_plugins_load(second, document, ".", &err));
     ASSERT_EQ(0, release_requests);
-    ASSERT(fr_registry_language(second, "daukle.language/remote") != NULL);
+    ASSERT(fr_registry_language(second, "daukle.language/remote-1-2-0") != NULL);
 
     cJSON_Delete(document);
     fr_registry_destroy(second);
