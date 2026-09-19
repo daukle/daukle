@@ -3,7 +3,20 @@ project = "forebay/local-plugin"
 version = "1.0.0"
 
 [modules]
-[sources]
+
+[sources."forebay/basekit"]
+kind = "path"
+path = "./producer"
 
 [plugins]
 hello = "./plugins/hello.lua"
+
+[[consumers]]
+id = "text"
+language = "hello"
+file = "hello.txt"
+configuration = "deps"
+
+  [consumers.dependencies."forebay/basekit"]
+  version = "^5.0.0"
+  modules = ["ir"]

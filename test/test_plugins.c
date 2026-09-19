@@ -202,6 +202,21 @@ TEST a_local_plugin_registers_its_language(void) {
     PASS();
 }
 
+/* Registration into the language table is not emission through it: this runs
+   the whole sync pass and reads what the plugin's apply actually wrote. */
+TEST sync_writes_through_a_plugin_registered_language(void) {
+    fr_error err;
+    fr_sync_report report;
+    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/plugin-local/daukle.toml", 1, 1, &report, &err));
+    fr_sync_report_free(&report);
+
+    char *written = NULL;
+    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/plugin-local/hello.txt", &written, &err));
+    ASSERT_STR_EQ("forebay/basekit/contracts\nforebay/basekit/ir\n", written);
+    free(written);
+    PASS();
+}
+
 TEST a_verb_a_plugin_declared_is_there_when_it_runs(void) {
     fr_error err;
     fr_registry *registry = NULL;
@@ -1007,6 +1022,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_fetched_manifest_without_plugins_is_accepted);
     RUN_TEST(fr_project_parse_refuses_a_fetched_manifest_declaring_plugins);
     RUN_TEST(a_local_plugin_registers_its_language);
+    RUN_TEST(sync_writes_through_a_plugin_registered_language);
     RUN_TEST(a_verb_a_plugin_declared_is_there_when_it_runs);
     RUN_TEST(a_manifest_declaring_no_plugins_opens_no_lua_state);
     RUN_TEST(a_verb_uses_does_not_know_is_refused);

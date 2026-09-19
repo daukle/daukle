@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "project": "forebay/basekit",
+  "version": "5.0.0",
+  "modules": {
+    "contracts": {
+      "requires": [],
+      "hello": {}
+    },
+    "ir": {
+      "requires": ["contracts"],
+      "hello": {}
+    }
+  }
+}
