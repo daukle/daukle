@@ -9,6 +9,11 @@
    renders silently wrong coordinates. Any string that distinguishes them will
    do, so a source plugin passes whatever it resolved (for github-releases,
    the release asset url). */
+/* The directory every cache entry lives under, for a caller that lays out its
+   own cache shape beneath it rather than the project/version/artifact one
+   fr_cache_path builds, so there remains exactly one place that computes it. */
+int fr_cache_root(char *out, size_t out_size, fr_error *err);
+
 int fr_cache_path(const char *project, const char *version, const char *artifact,
                   char **out_path, fr_error *err);
 int fr_cache_read(const char *project, const char *version, const char *artifact,

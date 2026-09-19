@@ -91,6 +91,10 @@ static void artifact_component(const char *artifact, char out[17]) {
     snprintf(out, 17, "%016llx", hash);
 }
 
+int fr_cache_root(char *out, size_t out_size, fr_error *err) {
+    return cache_root_dir(out, out_size, err);
+}
+
 int fr_cache_path(const char *project, const char *version, const char *artifact,
                   char **out_path, fr_error *err) {
     *out_path = NULL;
