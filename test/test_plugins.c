@@ -80,6 +80,31 @@ TEST rejects_a_coordinate_with_no_version(void) {
     PASS();
 }
 
+TEST rejects_a_plugins_member_that_is_not_a_table(void) {
+    cJSON *document = document_from("{\"plugins\":[1,2]}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, &entries, &count, &err));
+    ASSERT(strstr(err.message, "plugins") != NULL);
+
+    cJSON_Delete(document);
+    PASS();
+}
+
+TEST rejects_a_coordinate_with_an_empty_half(void) {
+    const char *bad[] = { "{\"plugins\":{\"a\":\"@\"}}",
+                          "{\"plugins\":{\"a\":\"owner@\"}}",
+                          "{\"plugins\":{\"a\":\"@1.0.0\"}}" };
+    for (size_t index = 0; index < 3; index++) {
+        cJSON *document = document_from(bad[index]);
+        fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+        ASSERT_EQ(FR_ERR, fr_plugins_parse(document, &entries, &count, &err));
+        ASSERT(strstr(err.message, "a") != NULL);
+        cJSON_Delete(document);
+    }
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -89,5 +114,7 @@ int main(int argc, char **argv) {
     RUN_TEST(parses_a_local_path);
     RUN_TEST(an_absent_plugins_table_yields_no_entries);
     RUN_TEST(rejects_a_coordinate_with_no_version);
+    RUN_TEST(rejects_a_plugins_member_that_is_not_a_table);
+    RUN_TEST(rejects_a_coordinate_with_an_empty_half);
     GREATEST_MAIN_END();
 }

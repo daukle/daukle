@@ -40,8 +40,15 @@ static int parse_string_form(const char *label, const char *value, fr_plugin_ent
         return FR_ERR;
     }
 
+    size_t repo_length = (size_t) (at - value);
+    if (repo_length == 0 || at[1] == '\0') {
+        fr_error_set(err, "plugin \"%s\": \"%s\" needs both a repo and a version around \"@\"",
+                          label, value);
+        return FR_ERR;
+    }
+
     out->kind = FR_PLUGIN_REMOTE;
-    out->repo = dup_prefix(value, (size_t) (at - value));
+    out->repo = dup_prefix(value, repo_length);
     out->version = dup_string(at + 1);
     return (out->repo != NULL && out->version != NULL) ? FR_OK : FR_ERR;
 }
