@@ -3,6 +3,8 @@
 
 #include "registry.h"
 
+#include "lua.h"
+
 #include <stddef.h>
 
 extern const fr_config_plugin FR_CONFIG_LUA;
@@ -11,6 +13,14 @@ extern const fr_config_plugin FR_CONFIG_LUA;
    object, or NULL when no script ran. Owned here and freed by the shutdown
    below, so a caller that needs it past then copies it. */
 const struct cJSON *fr_lua_env_reads(void);
+
+/* Opens the one state this load phase shares, or confirms the open one belongs
+   to registry. Every plugin and the daukle.lua overlay run in it, so their
+   capability strings share one lifetime and fr_lua_runtime_shutdown frees them
+   together, after the registry holding them is destroyed. */
+int fr_lua_runtime_begin(const char *base_dir, fr_registry *registry, fr_error *err);
+
+lua_State *fr_lua_runtime_state(void);
 
 /* The registry stores plugin structs by value and does not own their capability
    strings, so the runtime that owns them outlives the registry and is torn down

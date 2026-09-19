@@ -430,23 +430,16 @@ const cJSON *fr_lua_env_reads(void) {
     return env_reads_document;
 }
 
-static int config_lua_load(void *state_unused, const char *text, const char *origin,
-                           const char *base_dir, fr_registry *registry, const cJSON *document,
-                           cJSON **out, fr_error *err) {
-    (void) state_unused;
-
-    /* The shutdown below frees every capability string a previous load handed
-       to a registry, and the registry holds them by value. A registry that is
-       still registered here has not been destroyed, so freeing them now would
-       leave it comparing pointers that are gone. */
-    if (registering_into != NULL) {
-        fr_error_set(err, "a previous configuration's plugins are still registered: destroy the"
-                          " registry before loading another configuration");
-        return FR_ERR;
+int fr_lua_runtime_begin(const char *base_dir, fr_registry *registry, fr_error *err) {
+    if (runtime_state != NULL) {
+        if (registering_into != registry) {
+            fr_error_set(err, "another registry's plugins are still registered: destroy that"
+                              " registry before loading into a different one");
+            return FR_ERR;
+        }
+        return FR_OK;
     }
 
-    fr_lua_runtime_shutdown();
-    registering_into = registry;
     size_t memory_limit = memory_limit_override != 0 ? memory_limit_override : FR_LUA_DEFAULT_MEMORY_LIMIT;
     runtime_state = fr_lua_open(memory_limit, err);
     if (runtime_state == NULL) return FR_ERR;
@@ -457,6 +450,21 @@ static int config_lua_load(void *state_unused, const char *text, const char *ori
         fr_lua_runtime_shutdown();
         return FR_ERR;
     }
+    registering_into = registry;
+    return FR_OK;
+}
+
+lua_State *fr_lua_runtime_state(void) {
+    return runtime_state;
+}
+
+static int config_lua_load(void *state_unused, const char *text, const char *origin,
+                           const char *base_dir, fr_registry *registry, const cJSON *document,
+                           cJSON **out, fr_error *err) {
+    (void) state_unused;
+
+    if (fr_lua_runtime_begin(base_dir, registry, err) != FR_OK) return FR_ERR;
+
     if (publish_daukle_table(runtime_state, document, err) != FR_OK) return FR_ERR;
 
     if (fr_lua_run(runtime_state, text, origin, err) != FR_OK) return FR_ERR;
