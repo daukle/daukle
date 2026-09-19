@@ -2,6 +2,7 @@
 
 #include "error.h"
 #include "manifest.h"
+#include "plugins.h"
 #include "region.h"
 
 #include "cJSON.h"
@@ -124,6 +125,11 @@ int fr_config_load_file(const char *file_path, fr_registry *registry, fr_manifes
     int status = plugin->load(plugin->state, text, file_path, directory, registry, NULL, &document, err);
     free(text);
     if (status != FR_OK) {
+        free(directory);
+        return FR_ERR;
+    }
+
+    if (!plugin->overlay && fr_plugins_load(registry, document, directory, err) != FR_OK) {
         free(directory);
         return FR_ERR;
     }

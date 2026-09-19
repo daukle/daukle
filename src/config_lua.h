@@ -22,6 +22,11 @@ int fr_lua_runtime_begin(const char *base_dir, fr_registry *registry, fr_error *
 
 lua_State *fr_lua_runtime_state(void);
 
+/* Runs one plugin chunk in the shared state, in an environment holding the
+   registration functions and exactly the verbs named in verbs. */
+int fr_lua_plugin_load(const char *text, const char *origin, const char *const *verbs,
+                       size_t verb_count, fr_error *err);
+
 /* The registry the runtime is currently loading plugins into, or NULL when no
    load phase is open. */
 fr_registry *fr_lua_registering_registry(void);

@@ -1,0 +1,9 @@
+schema = 1
+project = "forebay/local-plugin"
+version = "1.0.0"
+
+[modules]
+[sources]
+
+[plugins]
+hello = "./plugins/hello.lua"

@@ -3,6 +3,7 @@
 #include "error.h"
 #include "luax.h"
 #include "lua_sandbox.h"
+#include "lua_verbs.h"
 #include "manifest.h"
 #include "resolve.h"
 
@@ -476,6 +477,23 @@ lua_State *fr_lua_runtime_state(void) {
 
 fr_registry *fr_lua_registering_registry(void) {
     return registering_into;
+}
+
+int fr_lua_plugin_load(const char *text, const char *origin, const char *const *verbs,
+                       size_t verb_count, fr_error *err) {
+    lua_State *state = fr_lua_runtime_state();
+    if (state == NULL) {
+        fr_error_set(err, "no lua runtime is open for \"%s\"", origin);
+        return FR_ERR;
+    }
+
+    int top = lua_gettop(state);
+    if (fr_lua_verbs_push_env(state, verbs, verb_count, err) != FR_OK) return FR_ERR;
+    int env = lua_gettop(state);
+
+    int status = fr_lua_run_in_env(state, text, origin, env, err);
+    lua_settop(state, top);
+    return status;
 }
 
 static int config_lua_load(void *state_unused, const char *text, const char *origin,

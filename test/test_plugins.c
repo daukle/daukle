@@ -1,7 +1,12 @@
 #include "greatest.h"
 
 #include "cJSON.h"
+#include "config.h"
+#include "config_lua.h"
+#include "manifest.h"
 #include "plugins.h"
+#include "registry.h"
+#include "sync.h"
 
 #include <string.h>
 
@@ -105,6 +110,39 @@ TEST rejects_a_coordinate_with_an_empty_half(void) {
     PASS();
 }
 
+TEST a_local_plugin_registers_its_language(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-local/daukle.toml",
+                                         registry, &manifest, &err));
+
+    ASSERT(fr_registry_language(registry, "daukle.language/hello") != NULL);
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle.json",
+                                         registry, &manifest, &err));
+
+    ASSERT(fr_lua_runtime_state() == NULL);
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -116,5 +154,7 @@ int main(int argc, char **argv) {
     RUN_TEST(rejects_a_coordinate_with_no_version);
     RUN_TEST(rejects_a_plugins_member_that_is_not_a_table);
     RUN_TEST(rejects_a_coordinate_with_an_empty_half);
+    RUN_TEST(a_local_plugin_registers_its_language);
+    RUN_TEST(a_manifest_declaring_no_plugins_opens_no_lua_state);
     GREATEST_MAIN_END();
 }
