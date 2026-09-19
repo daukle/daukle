@@ -113,8 +113,9 @@ than a mock, so redirect and transport behaviour is exercised as it will be in u
 `test/fixtures/` holds consumer build files. Several are gitignored, because they are written by the
 tests themselves.
 
-Two modules have no dedicated test file: `config_json.c`, exercised through `test_config.c`'s
-json-manifest test, and `plugins_remote.c`, exercised through `test_plugins.c`.
+Most modules have a dedicated test file; the rest are covered through the tests of the module that
+drives them, such as `plugins_remote.c` through `test_plugins.c`, `source_path.c` through
+`test_resolve.c`, and `config_json.c` through `test_config.c`'s json-manifest test.
 
 ## 4. State
 
