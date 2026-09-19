@@ -22,6 +22,10 @@ int fr_lua_runtime_begin(const char *base_dir, fr_registry *registry, fr_error *
 
 lua_State *fr_lua_runtime_state(void);
 
+/* The registry the runtime is currently loading plugins into, or NULL when no
+   load phase is open. */
+fr_registry *fr_lua_registering_registry(void);
+
 /* Sets language, source and plugin on the table on top of the stack, for
    lua_verbs.c to build a plugin environment around; the underlying functions
    are file statics here, so this is their only way out. */

@@ -4,12 +4,17 @@
 #include "config_lua.h"
 #include "error.h"
 #include "http.h"
+#include "jsonedit.h"
+#include "lang_region.h"
 #include "lua_sandbox.h"
 #include "luax.h"
 #include "region.h"
+#include "registry.h"
 
+#include "cJSON.h"
 #include "lauxlib.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -134,9 +139,95 @@ static int verb_cache(lua_State *state) {
     return 1;
 }
 
-/* Task 7 adds a case per newly implemented verb; a name that is known
-   (fr_lua_verbs_is_known) but neither handled here nor reserved is simply
-   left unset until its task lands. */
+static const char *pending_region_body;
+
+static int render_pending_body(const fr_consumer *consumer, const fr_resolved *resolved,
+                               size_t count, char **out_text, fr_error *err) {
+    (void) consumer; (void) resolved; (void) count;
+    *out_text = malloc(strlen(pending_region_body) + 1);
+    if (*out_text == NULL) {
+        fr_error_set(err, "out of memory rendering a region");
+        return FR_ERR;
+    }
+    strcpy(*out_text, pending_region_body);
+    return FR_OK;
+}
+
+static int verb_region(lua_State *state) {
+    const char *text = luaL_checkstring(state, 1);
+    const char *begin = luaL_checkstring(state, 2);
+    const char *end = luaL_checkstring(state, 3);
+    pending_region_body = luaL_checkstring(state, 4);
+
+    char *out = NULL;
+    fr_error err;
+    int status = fr_lang_region_apply(begin, end, render_pending_body, NULL, NULL, 0,
+                                      text, &out, &err);
+    pending_region_body = NULL;
+    if (status != FR_OK) return luaL_error(state, "%s", err.message);
+
+    lua_pushstring(state, out);
+    free(out);
+    return 1;
+}
+
+static int verb_json_set(lua_State *state) {
+    const char *text = luaL_checkstring(state, 1);
+    const char *pointer = luaL_checkstring(state, 2);
+    const char *value = luaL_checkstring(state, 3);
+
+    const char *last_dot = strrchr(pointer, '.');
+    char container[256];
+    const char *key = pointer;
+    container[0] = '\0';
+    if (last_dot != NULL) {
+        size_t length = (size_t) (last_dot - pointer);
+        if (length >= sizeof container) return luaL_error(state, "\"%s\" is too long", pointer);
+        memcpy(container, pointer, length);
+        container[length] = '\0';
+        key = last_dot + 1;
+    }
+
+    char *out = NULL;
+    fr_error err;
+    if (fr_json_edit_set_string(text, container, key, value, &out, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    lua_pushstring(state, out);
+    free(out);
+    return 1;
+}
+
+static int verb_parse(lua_State *state) {
+    const char *text = luaL_checkstring(state, 1);
+    const char *file_name = luaL_checkstring(state, 2);
+
+    fr_registry *registry = fr_lua_registering_registry();
+    if (registry == NULL) return luaL_error(state, "no registry is loading");
+
+    char capability[128];
+    const char *extension = strrchr(file_name, '.');
+    if (extension == NULL) return luaL_error(state, "\"%s\" has no extension", file_name);
+    snprintf(capability, sizeof capability, "daukle.config/%s", extension + 1);
+
+    const fr_config_plugin *plugin = fr_registry_config(registry, capability);
+    if (plugin == NULL) return luaL_error(state, "no plugin reads \"%s\"", extension + 1);
+
+    cJSON *document = NULL;
+    fr_error err;
+    if (plugin->load(plugin->state, text, file_name, ".", registry, NULL, &document, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    int pushed = fr_lua_push_json(state, document, &err);
+    cJSON_Delete(document);
+    if (pushed != FR_OK) return luaL_error(state, "%s", err.message);
+    return 1;
+}
+
+/* install_one handles all seven declared verbs plus the reserved exec; a name
+   that is known (fr_lua_verbs_is_known) but neither handled here nor reserved
+   would be left unset, which cannot currently happen. */
 static void install_one(lua_State *state, const char *name) {
     if (strcmp(name, "env") == 0) {
         lua_pushcfunction(state, verb_env);
@@ -146,6 +237,12 @@ static void install_one(lua_State *state, const char *name) {
         lua_pushcfunction(state, verb_fetch);
     } else if (strcmp(name, "cache") == 0) {
         lua_pushcfunction(state, verb_cache);
+    } else if (strcmp(name, "region") == 0) {
+        lua_pushcfunction(state, verb_region);
+    } else if (strcmp(name, "json_set") == 0) {
+        lua_pushcfunction(state, verb_json_set);
+    } else if (strcmp(name, "parse") == 0) {
+        lua_pushcfunction(state, verb_parse);
     } else if (fr_lua_verbs_is_reserved(name)) {
         lua_pushcfunction(state, reserved_verb);
     } else {

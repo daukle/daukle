@@ -474,6 +474,10 @@ lua_State *fr_lua_runtime_state(void) {
     return runtime_state;
 }
 
+fr_registry *fr_lua_registering_registry(void) {
+    return registering_into;
+}
+
 static int config_lua_load(void *state_unused, const char *text, const char *origin,
                            const char *base_dir, fr_registry *registry, const cJSON *document,
                            cJSON **out, fr_error *err) {

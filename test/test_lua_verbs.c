@@ -7,6 +7,7 @@
 #include "luax.h"
 #include "registry.h"
 #include "support.h"
+#include "sync.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -267,6 +268,86 @@ TEST cache_calls_the_producer_once(void) {
     PASS();
 }
 
+TEST region_replaces_only_between_the_markers(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "region" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "out = daukle.region('keep\\n# b\\nold\\n# e\\ntail\\n', '# b', '# e', 'new\\n')",
+        "=t", env, &err));
+
+    lua_getfield(state, env, "out");
+    const char *out = lua_tostring(state, -1);
+    ASSERT(strstr(out, "keep") != NULL);
+    ASSERT(strstr(out, "tail") != NULL);
+    ASSERT(strstr(out, "new") != NULL);
+    ASSERT(strstr(out, "old") == NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST json_set_preserves_the_rest_of_the_document(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "json_set" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "out = daukle.json_set('{\"name\":\"app\",\"dependencies\":{\"a\":\"1.0.0\"}}',"
+        " 'dependencies.a', '2.0.0')",
+        "=t", env, &err));
+
+    lua_getfield(state, env, "out");
+    const char *out = lua_tostring(state, -1);
+    ASSERT(strstr(out, "\"name\":\"app\"") != NULL);
+    ASSERT(strstr(out, "2.0.0") != NULL);
+    ASSERT(strstr(out, "1.0.0") == NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST parse_reads_toml_through_the_config_table(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "parse" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "local t = daukle.parse('schema = 1\\nproject = \"p/q\"\\nversion = \"1.0.0\"\\n',"
+        " 'daukle.toml')\n"
+        "name = t.project",
+        "=t", env, &err));
+
+    lua_getfield(state, env, "name");
+    ASSERT_STR_EQ("p/q", lua_tostring(state, -1));
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -280,5 +361,8 @@ int main(int argc, char **argv) {
     RUN_TEST(read_returns_the_text_of_a_file_inside_the_base_directory);
     RUN_TEST(fetch_returns_the_body_and_passes_headers);
     RUN_TEST(cache_calls_the_producer_once);
+    RUN_TEST(region_replaces_only_between_the_markers);
+    RUN_TEST(json_set_preserves_the_rest_of_the_document);
+    RUN_TEST(parse_reads_toml_through_the_config_table);
     GREATEST_MAIN_END();
 }
