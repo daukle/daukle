@@ -14,13 +14,11 @@
 
 #include "lauxlib.h"
 
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
-#include <direct.h>
 #include <windows.h>
 #else
 #include <dirent.h>
@@ -423,26 +421,11 @@ static int find_cached_version(const char *owner, const char *name, const fr_ran
     return FR_OK;
 }
 
-static void make_directory(const char *path) {
-#ifdef _WIN32
-    if (_mkdir(path) == 0 || errno == EEXIST) return;
-#else
-    if (mkdir(path, 0777) == 0 || errno == EEXIST) return;
-#endif
-}
-
-/* Mirrors cache.c's make_parent_directories: walks every '/' in the full file
-   path, creating each ancestor in turn, the immediate parent included. */
-static void make_parent_directories(char *path) {
-    for (char *slash = strchr(path, '/'); slash != NULL; slash = strchr(slash + 1, '/')) {
-        *slash = '\0';
-        make_directory(path);
-        *slash = '/';
-    }
-}
-
 /* Best effort, like fr_cache_write: a plugin that fetched fine but failed to
-   cache must still load, not fail the whole resolve. */
+   cache must still load, not fail the whole resolve. Written code, not a
+   manifest, so a torn write matters more here than for a cached daukle.json:
+   fr_cache_write_atomic's tmp-then-rename means a reader never sees a partial
+   plugin.lua that still happens to parse as valid, truncated Lua. */
 static void write_plugin_cache(const char *owner, const char *name, const char *version,
                                const char *text, size_t length) {
     fr_error ignored;
@@ -453,13 +436,7 @@ static void write_plugin_cache(const char *owner, const char *name, const char *
     free(dir);
     if (file_path == NULL) return;
 
-    make_parent_directories(file_path);
-
-    FILE *file = fopen(file_path, "wb");
-    if (file != NULL) {
-        fwrite(text, 1, length, file);
-        fclose(file);
-    }
+    fr_cache_write_atomic(file_path, text, length);
     free(file_path);
 }
 

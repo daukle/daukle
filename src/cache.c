@@ -177,8 +177,39 @@ static int rename_into_place(const char *temp_path, const char *final_path) {
 
 /* Writes to a sibling "<path>.tmp" first and only renames it over the final
    path once the full text is confirmed on disk, so a short write (full disk,
-   killed process) never leaves a truncated file where fr_cache_read looks.
-   Every step fails silently: a cache write must never fail the caller. */
+   killed process) never leaves a truncated file where a reader looks. Shared
+   by fr_cache_write's own project/version/artifact layout and by any other
+   cache shape that needs the same guarantee (see fr_cache_root); every step
+   fails without touching the destination, so a caller that ignores the
+   result is left with either the old file or no file, never a partial one. */
+int fr_cache_write_atomic(char *path, const char *text, size_t length) {
+    make_parent_directories(path);
+
+    size_t temp_path_size = strlen(path) + strlen(".tmp") + 1;
+    char *temp_path = malloc(temp_path_size);
+    if (temp_path == NULL) return FR_ERR;
+    snprintf(temp_path, temp_path_size, "%s.tmp", path);
+
+    FILE *file = fopen(temp_path, "wb");
+    if (file == NULL) { free(temp_path); return FR_ERR; }
+
+    size_t written = fwrite(text, 1, length, file);
+    int close_result = fclose(file);
+
+    int result = FR_OK;
+    if (written != length || close_result != 0) {
+        remove(temp_path);
+        result = FR_ERR;
+    } else if (rename_into_place(temp_path, path) != FR_OK) {
+        remove(temp_path);
+        result = FR_ERR;
+    }
+
+    free(temp_path);
+    return result;
+}
+
+/* Every step fails silently: a cache write must never fail the caller. */
 void fr_cache_write(const char *project, const char *version, const char *artifact,
                     const char *text, size_t length) {
     if (!CACHE_ENABLED) return;
@@ -187,25 +218,6 @@ void fr_cache_write(const char *project, const char *version, const char *artifa
     char *path = NULL;
     if (fr_cache_path(project, version, artifact, &path, &err) != FR_OK) return;
 
-    make_parent_directories(path);
-
-    size_t temp_path_size = strlen(path) + strlen(".tmp") + 1;
-    char *temp_path = malloc(temp_path_size);
-    if (temp_path == NULL) { free(path); return; }
-    snprintf(temp_path, temp_path_size, "%s.tmp", path);
-
-    FILE *file = fopen(temp_path, "wb");
-    if (file == NULL) { free(temp_path); free(path); return; }
-
-    size_t written = fwrite(text, 1, length, file);
-    int close_result = fclose(file);
-
-    if (written != length || close_result != 0) {
-        remove(temp_path);
-    } else if (rename_into_place(temp_path, path) != FR_OK) {
-        remove(temp_path);
-    }
-
-    free(temp_path);
+    fr_cache_write_atomic(path, text, length);
     free(path);
 }

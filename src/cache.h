@@ -3,17 +3,17 @@
 
 #include "types.h"
 
+/* The directory every cache entry lives under, for a caller that lays out its
+   own cache shape beneath it rather than the project/version/artifact one
+   fr_cache_path builds, so there remains exactly one place that computes it. */
+int fr_cache_root(char *out, size_t out_size, fr_error *err);
+
 /* artifact identifies WHICH artifact the entry holds, beyond the project and
    version naming it: two manifests can name one project id and version and
    resolve them from different repositories, and serving one for the other
    renders silently wrong coordinates. Any string that distinguishes them will
    do, so a source plugin passes whatever it resolved (for github-releases,
    the release asset url). */
-/* The directory every cache entry lives under, for a caller that lays out its
-   own cache shape beneath it rather than the project/version/artifact one
-   fr_cache_path builds, so there remains exactly one place that computes it. */
-int fr_cache_root(char *out, size_t out_size, fr_error *err);
-
 int fr_cache_path(const char *project, const char *version, const char *artifact,
                   char **out_path, fr_error *err);
 int fr_cache_read(const char *project, const char *version, const char *artifact,
@@ -23,6 +23,14 @@ int fr_cache_read(const char *project, const char *version, const char *artifact
    by strlen instead would silently truncate a body containing a NUL. */
 void fr_cache_write(const char *project, const char *version, const char *artifact,
                     const char *text, size_t length);
+
+/* The atomic tmp-then-rename write fr_cache_write uses internally, exposed for
+   any other cache shape needing the same guarantee (see fr_cache_root), so
+   there is exactly one atomic-replace implementation rather than two that
+   could drift. path is mutated and restored while creating ancestor
+   directories, so it must be a writable buffer, not a string literal. */
+int fr_cache_write_atomic(char *path, const char *text, size_t length);
+
 void fr_cache_set_enabled(int enabled);
 
 #endif
