@@ -9,6 +9,7 @@
 #include "luax.h"
 #include "plugins_remote.h"
 #include "region.h"
+#include "sha256.h"
 
 #include "lauxlib.h"
 
@@ -63,15 +64,28 @@ static int parse_string_form(const char *label, const char *value, fr_plugin_ent
 
 static int parse_table_form(const char *label, const cJSON *member, fr_plugin_entry *out,
                             fr_error *err) {
-    const char *repo = NULL;
-    const char *version = NULL;
-    if (fr_json_string(member, "repo", label, &repo, err) != FR_OK) return FR_ERR;
-    if (fr_json_string(member, "version", label, &version, err) != FR_OK) return FR_ERR;
-
     const char *sha256 = NULL;
     if (cJSON_GetObjectItemCaseSensitive(member, "sha256") != NULL) {
         if (fr_json_string(member, "sha256", label, &sha256, err) != FR_OK) return FR_ERR;
     }
+
+    /* "path" marks a local entry in table form, the same discrimination the
+       string form makes on a leading "." or "/", so a local plugin can also
+       carry a pin. */
+    if (cJSON_GetObjectItemCaseSensitive(member, "path") != NULL) {
+        const char *path = NULL;
+        if (fr_json_string(member, "path", label, &path, err) != FR_OK) return FR_ERR;
+
+        out->kind = FR_PLUGIN_LOCAL;
+        out->path = dup_string(path);
+        out->sha256 = sha256 != NULL ? dup_string(sha256) : NULL;
+        return (out->path != NULL && (sha256 == NULL || out->sha256 != NULL)) ? FR_OK : FR_ERR;
+    }
+
+    const char *repo = NULL;
+    const char *version = NULL;
+    if (fr_json_string(member, "repo", label, &repo, err) != FR_OK) return FR_ERR;
+    if (fr_json_string(member, "version", label, &version, err) != FR_OK) return FR_ERR;
 
     out->kind = FR_PLUGIN_REMOTE;
     out->repo = dup_string(repo);
@@ -294,6 +308,20 @@ static int load_one(const fr_plugin_entry *entry, fr_error *err) {
         }
     } else {
         if (fr_plugins_resolve_remote(entry, &text, &path, err) != FR_OK) return FR_ERR;
+    }
+
+    /* Checked before read_declaration, which already runs the chunk: verifying
+       after would mean the mismatched code had already executed. */
+    if (entry->sha256 != NULL) {
+        char actual[65];
+        fr_sha256_hex(text, strlen(text), actual);
+        if (strcmp(actual, entry->sha256) != 0) {
+            fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
+                        entry->label, entry->sha256, actual);
+            free(text);
+            free(path);
+            return FR_ERR;
+        }
     }
 
     fr_plugin_declaration declaration = { entry->label, { NULL }, 0 };
