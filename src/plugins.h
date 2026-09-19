@@ -30,6 +30,10 @@ char *dup_prefix(const char *text, size_t length);
 int fr_plugins_parse(const struct cJSON *document, fr_plugin_entry **out, size_t *out_count,
                      fr_error *err);
 
+/* A fetched dependency's manifest may not declare plugins: otherwise adding a
+   dependency would be enough to make daukle execute its author's code. */
+int fr_plugins_reject_in_fetched(const struct cJSON *document, const char *project, fr_error *err);
+
 /* Frees every string an entry owns, then the array itself.
    Tolerates a NULL array paired with a zero count. */
 void fr_plugins_free(fr_plugin_entry *entries, size_t count);

@@ -2,6 +2,7 @@
 
 #include "error.h"
 #include "jsonx.h"
+#include "plugins.h"
 #include "region.h"
 #include "semver.h"
 
@@ -286,6 +287,17 @@ int fr_project_parse(const char *text, const char *origin, fr_project *out, fr_e
         fr_error_set(err, "\"%s\" is not valid json", origin);
         return FR_ERR;
     }
+
+    const char *project_name = NULL;
+    if (fr_json_string(root, "project", origin, &project_name, err) != FR_OK) {
+        cJSON_Delete(root);
+        return FR_ERR;
+    }
+    if (fr_plugins_reject_in_fetched(root, project_name, err) != FR_OK) {
+        cJSON_Delete(root);
+        return FR_ERR;
+    }
+
     if (project_from_json(root, origin, out, err) != FR_OK) {
         fr_project_free(out);
         cJSON_Delete(root);

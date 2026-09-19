@@ -145,6 +145,44 @@ TEST rejects_a_coordinate_with_an_empty_half(void) {
     PASS();
 }
 
+TEST a_fetched_manifest_may_not_declare_plugins(void) {
+    cJSON *document = document_from(
+        "{\"schema\":1,\"project\":\"forebay/evil\",\"version\":\"1.0.0\","
+        "\"plugins\":{\"x\":\"someone/x@^1.0.0\"}}");
+    fr_error err;
+
+    ASSERT_EQ(FR_ERR, fr_plugins_reject_in_fetched(document, "forebay/evil", &err));
+    ASSERT(strstr(err.message, "forebay/evil") != NULL);
+    ASSERT(strstr(err.message, "plugins") != NULL);
+
+    cJSON_Delete(document);
+    PASS();
+}
+
+TEST a_fetched_manifest_without_plugins_is_accepted(void) {
+    cJSON *document = document_from("{\"schema\":1,\"project\":\"forebay/ok\",\"version\":\"1.0.0\"}");
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_plugins_reject_in_fetched(document, "forebay/ok", &err));
+    cJSON_Delete(document);
+    PASS();
+}
+
+/* Proves the check is wired into fr_project_parse itself, not only reachable
+   by calling fr_plugins_reject_in_fetched directly: deleting the call site
+   would still leave the two tests above passing. */
+TEST fr_project_parse_refuses_a_fetched_manifest_declaring_plugins(void) {
+    fr_project project;
+    fr_error err;
+    const char *text = "{\"schema\":1,\"project\":\"forebay/evil\",\"version\":\"1.0.0\","
+                       "\"plugins\":{\"x\":\"someone/x@^1.0.0\"}}";
+
+    ASSERT_EQ(FR_ERR, fr_project_parse(text, "forebay/evil", &project, &err));
+    ASSERT(strstr(err.message, "forebay/evil") != NULL);
+    ASSERT(strstr(err.message, "plugins") != NULL);
+
+    PASS();
+}
+
 TEST a_local_plugin_registers_its_language(void) {
     fr_error err;
     fr_registry *registry = NULL;
@@ -539,6 +577,9 @@ int main(int argc, char **argv) {
     RUN_TEST(rejects_a_coordinate_with_no_version);
     RUN_TEST(rejects_a_plugins_member_that_is_not_a_table);
     RUN_TEST(rejects_a_coordinate_with_an_empty_half);
+    RUN_TEST(a_fetched_manifest_may_not_declare_plugins);
+    RUN_TEST(a_fetched_manifest_without_plugins_is_accepted);
+    RUN_TEST(fr_project_parse_refuses_a_fetched_manifest_declaring_plugins);
     RUN_TEST(a_local_plugin_registers_its_language);
     RUN_TEST(a_verb_a_plugin_declared_is_there_when_it_runs);
     RUN_TEST(a_manifest_declaring_no_plugins_opens_no_lua_state);

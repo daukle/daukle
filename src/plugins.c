@@ -172,6 +172,13 @@ int fr_plugins_parse(const struct cJSON *document, fr_plugin_entry **out, size_t
     return FR_OK;
 }
 
+int fr_plugins_reject_in_fetched(const struct cJSON *document, const char *project, fr_error *err) {
+    if (cJSON_GetObjectItemCaseSensitive(document, "plugins") == NULL) return FR_OK;
+    fr_error_set(err, "project \"%s\" declares plugins, which only the root manifest may do",
+                 project);
+    return FR_ERR;
+}
+
 void fr_plugins_free(fr_plugin_entry *entries, size_t count) {
     if (entries == NULL) return;
     for (size_t index = 0; index < count; index++) {
