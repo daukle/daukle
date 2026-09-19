@@ -4,6 +4,7 @@
 #include "cache.h"
 #include "config.h"
 #include "config_lua.h"
+#include "error.h"
 #include "http.h"
 #include "manifest.h"
 #include "plugins.h"
@@ -646,6 +647,72 @@ TEST the_report_names_the_resolved_version_for_a_remote_plugin(void) {
     PASS();
 }
 
+static int stub_refuses_every_request(const char *url, const fr_http_header *headers,
+                                      size_t header_count, char **out_body, size_t *out_length,
+                                      fr_error *err) {
+    (void) url; (void) headers; (void) header_count; (void) out_body; (void) out_length;
+    fr_error_set(err, "the test backend made no request");
+    return FR_ERR;
+}
+
+/* "a/../x" satisfies a check that only looks for one interior slash, so the
+   refusal must come from the containment rule and must come before any path
+   is built: the stub backend proves no request was made, and the message
+   naming the repo proves nothing downstream produced the failure. */
+TEST a_remote_repo_that_escapes_the_cache_root_is_refused(void) {
+    fr_error err;
+    fr_http_fn previous = fr_http_set_backend(stub_refuses_every_request);
+
+    char label[] = "escape";
+    char repo[] = "a/../../../../daukle-test-escape";
+    char version[] = "^1.0.0";
+    fr_plugin_entry entry;
+    memset(&entry, 0, sizeof entry);
+    entry.label = label;
+    entry.kind = FR_PLUGIN_REMOTE;
+    entry.repo = repo;
+    entry.version = version;
+
+    char *text = NULL;
+    char *origin = NULL;
+    ASSERT_EQ(FR_ERR, fr_plugins_resolve_remote(&entry, &text, &origin, &err));
+    ASSERT(strstr(err.message, repo) != NULL);
+    ASSERT(text == NULL);
+
+    fr_http_set_backend(previous);
+    PASS();
+}
+
+/* Windows collapses the ".." lexically before touching disk, so the directory
+   the traversal passes through need never exist for the victim beside the
+   plugin cache to be deleted. It is written inside the cache root so the
+   traversal has a real target, and it must still be there afterwards. */
+TEST fr_plugins_remove_cache_refuses_a_repo_that_escapes_the_plugin_cache(void) {
+    fr_error err;
+    char root[1024];
+    ASSERT_EQ(FR_OK, fr_cache_root(root, sizeof root, &err));
+
+    char victim_file[1200];
+    snprintf(victim_file, sizeof victim_file, "%s/plugins/daukle-test-%d-victim/keep.txt",
+             root, fr_test_process_id());
+    ASSERT_EQ(FR_OK, fr_cache_write_atomic(victim_file, "keep", 4));
+
+    char repo[256];
+    snprintf(repo, sizeof repo, "a/../daukle-test-%d-victim", fr_test_process_id());
+    ASSERT_EQ(FR_ERR, fr_plugins_remove_cache(repo, &err));
+    ASSERT(strstr(err.message, repo) != NULL);
+
+    char *kept = NULL;
+    ASSERT_EQ(FR_OK, fr_file_read_text(victim_file, &kept, &err));
+    free(kept);
+
+    char victim_dir[1200];
+    snprintf(victim_dir, sizeof victim_dir, "%s/plugins/daukle-test-%d-victim", root,
+             fr_test_process_id());
+    fr_test_remove_tree(victim_dir);
+    PASS();
+}
+
 TEST fr_plugins_remove_cache_of_an_uncached_repo_is_not_an_error(void) {
     fr_error err;
     ASSERT_EQ(FR_OK, fr_plugins_remove_cache("daukle-test-nobody/nothing-here-ever", &err));
@@ -944,6 +1011,8 @@ int main(int argc, char **argv) {
     RUN_TEST(the_report_survives_the_entries_it_describes_being_freed);
     RUN_TEST(fr_plugins_report_clear_empties_the_report);
     RUN_TEST(the_report_names_the_resolved_version_for_a_remote_plugin);
+    RUN_TEST(a_remote_repo_that_escapes_the_cache_root_is_refused);
+    RUN_TEST(fr_plugins_remove_cache_refuses_a_repo_that_escapes_the_plugin_cache);
     RUN_TEST(fr_plugins_remove_cache_of_an_uncached_repo_is_not_an_error);
     RUN_TEST(fr_plugins_remove_cache_forces_the_next_resolve_to_refetch);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);

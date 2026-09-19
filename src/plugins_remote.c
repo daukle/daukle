@@ -20,12 +20,25 @@
 #include <sys/types.h>
 #endif
 
-static int split_repo(const char *repo, char **out_owner, char **out_name, fr_error *err) {
+/* Refuses before any caller builds a path from repo, since every path this
+   module lays out under the cache root splices it in whole. */
+static int check_repo_shape(const char *repo, fr_error *err) {
     const char *slash = strchr(repo, '/');
     if (slash == NULL || slash == repo || slash[1] == '\0') {
         fr_error_set(err, "repo \"%s\" must be \"owner/name\"", repo);
         return FR_ERR;
     }
+    if (!fr_cache_component_is_safe(repo, 1)) {
+        fr_error_set(err, "repo \"%s\" is not a safe cache path component", repo);
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
+static int split_repo(const char *repo, char **out_owner, char **out_name, fr_error *err) {
+    if (check_repo_shape(repo, err) != FR_OK) return FR_ERR;
+
+    const char *slash = strchr(repo, '/');
     *out_owner = dup_prefix(repo, (size_t) (slash - repo));
     *out_name = dup_string(slash + 1);
     if (*out_owner == NULL || *out_name == NULL) {
@@ -431,11 +444,7 @@ static void remove_cache_tree(const char *path) {
 }
 
 int fr_plugins_remove_cache(const char *repo, fr_error *err) {
-    const char *slash = strchr(repo, '/');
-    if (slash == NULL || slash == repo || slash[1] == '\0') {
-        fr_error_set(err, "repo \"%s\" must be \"owner/name\"", repo);
-        return FR_ERR;
-    }
+    if (check_repo_shape(repo, err) != FR_OK) return FR_ERR;
 
     char root[1024];
     if (fr_cache_root(root, sizeof root, err) != FR_OK) return FR_ERR;

@@ -35,7 +35,7 @@ static int has_trailing_dot_component(const char *text) {
     return slash != NULL && slash != text && slash[-1] == '.';
 }
 
-static int is_safe_component(const char *text, int allow_one_slash) {
+int fr_cache_component_is_safe(const char *text, int allow_one_slash) {
     if (text == NULL || text[0] == '\0') return 0;
     if (text[0] == '/' || text[0] == '\\') return 0;
     if (strstr(text, "..") != NULL) return 0;
@@ -102,11 +102,11 @@ int fr_cache_root(char *out, size_t out_size, fr_error *err) {
 int fr_cache_path(const char *project, const char *version, const char *artifact,
                   char **out_path, fr_error *err) {
     *out_path = NULL;
-    if (!is_safe_component(project, 1)) {
+    if (!fr_cache_component_is_safe(project, 1)) {
         fr_error_set(err, "project \"%s\" is not a safe cache path component", project);
         return FR_ERR;
     }
-    if (!is_safe_component(version, 0)) {
+    if (!fr_cache_component_is_safe(version, 0)) {
         fr_error_set(err, "version \"%s\" is not a safe cache path component", version);
         return FR_ERR;
     }
