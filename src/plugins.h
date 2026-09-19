@@ -19,6 +19,12 @@ typedef struct {
     char *sha256;   /* optional, NULL when unpinned */
 } fr_plugin_entry;
 
+/* strdup is not C11 and strndup is absent on MSVC, so plugins.c and
+   plugins_remote.c share these rather than each keeping a copy. Defined in
+   plugins.c, the original owner of both. */
+char *dup_string(const char *text);
+char *dup_prefix(const char *text, size_t length);
+
 /* Reads the manifest's `[plugins]` table into a freshly allocated array.
    An absent table yields *out_count == 0 and FR_OK, not an error. */
 int fr_plugins_parse(const struct cJSON *document, fr_plugin_entry **out, size_t *out_count,
