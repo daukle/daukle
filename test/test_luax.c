@@ -253,6 +253,8 @@ TEST reports_an_error_from_a_chunk_run_under_an_environment(void) {
     ASSERT(state != NULL);
 
     lua_newtable(state);
+    lua_getglobal(state, "error");
+    lua_setfield(state, -2, "error");
     int env = lua_gettop(state);
 
     ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, "error('boom')", "=test", env, &err));
