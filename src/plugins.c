@@ -40,7 +40,11 @@ static int parse_string_form(const char *label, const char *value, fr_plugin_ent
     if (value[0] == '.' || value[0] == '/') {
         out->kind = FR_PLUGIN_LOCAL;
         out->path = dup_string(value);
-        return out->path != NULL ? FR_OK : FR_ERR;
+        if (out->path == NULL) {
+            fr_error_set(err, "out of memory reading plugin \"%s\"", label);
+            return FR_ERR;
+        }
+        return FR_OK;
     }
 
     const char *at = strchr(value, '@');
@@ -60,7 +64,11 @@ static int parse_string_form(const char *label, const char *value, fr_plugin_ent
     out->kind = FR_PLUGIN_REMOTE;
     out->repo = dup_prefix(value, repo_length);
     out->version = dup_string(at + 1);
-    return (out->repo != NULL && out->version != NULL) ? FR_OK : FR_ERR;
+    if (out->repo == NULL || out->version == NULL) {
+        fr_error_set(err, "out of memory reading plugin \"%s\"", label);
+        return FR_ERR;
+    }
+    return FR_OK;
 }
 
 /* A table entry names exactly one of "path" (local) or "repo" (remote), the
