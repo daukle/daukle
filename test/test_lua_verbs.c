@@ -348,6 +348,28 @@ TEST parse_reads_toml_through_the_config_table(void) {
     PASS();
 }
 
+TEST parse_refuses_an_executable_config_format(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "parse" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.parse('error(\"executed\")', 'daukle.lua')", "=t", env, &err));
+    ASSERT(strstr(err.message, "executable") != NULL);
+    ASSERT(strstr(err.message, "executed") == NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -364,5 +386,6 @@ int main(int argc, char **argv) {
     RUN_TEST(region_replaces_only_between_the_markers);
     RUN_TEST(json_set_preserves_the_rest_of_the_document);
     RUN_TEST(parse_reads_toml_through_the_config_table);
+    RUN_TEST(parse_refuses_an_executable_config_format);
     GREATEST_MAIN_END();
 }

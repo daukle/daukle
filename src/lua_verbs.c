@@ -212,6 +212,10 @@ static int verb_parse(lua_State *state) {
 
     const fr_config_plugin *plugin = fr_registry_config(registry, capability);
     if (plugin == NULL) return luaL_error(state, "no plugin reads \"%s\"", extension + 1);
+    if (plugin->overlay) {
+        return luaL_error(state, "daukle.parse will not run \"%s\", which is an executable format",
+                          extension + 1);
+    }
 
     cJSON *document = NULL;
     fr_error err;
