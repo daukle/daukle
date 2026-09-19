@@ -5,6 +5,7 @@
 #include "http.h"
 #include "jsonx.h"
 #include "manifest.h"
+#include "plugins_remote.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,17 +63,6 @@ static char *build_release_url(const char *repo, const char *tag, const char *as
     return url;
 }
 
-static char *build_auth_header_value(void) {
-    const char *token = getenv("DAUKLE_TOKEN");
-    if (token == NULL || token[0] == '\0') token = getenv("GITHUB_TOKEN");
-    if (token == NULL || token[0] == '\0') return NULL;
-
-    size_t length = strlen("Bearer ") + strlen(token) + 1;
-    char *value = malloc(length);
-    if (value != NULL) snprintf(value, length, "Bearer %s", token);
-    return value;
-}
-
 /* out_from_network tells the caller whether *out_text came from the network
    (so it is only worth caching once it parses) rather than from an existing
    cache hit (already validated when it was written). */
@@ -87,7 +77,7 @@ static int fetch_manifest_text(const char *project, const char *version, const c
         return FR_OK;
     }
 
-    char *auth_value = build_auth_header_value();
+    char *auth_value = fr_github_auth_header();
     fr_http_header header;
     const fr_http_header *headers = NULL;
     size_t header_count = 0;

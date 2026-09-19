@@ -192,10 +192,9 @@ static void write_plugin_cache(const char *owner, const char *name, const char *
     free(file_path);
 }
 
-/* Same header shape source_github.c uses for GITHUB_TOKEN: an Authorization
-   bearer header, so daukle speaks to GitHub one way. */
-static char *build_github_auth_header(void) {
-    const char *token = getenv("GITHUB_TOKEN");
+char *fr_github_auth_header(void) {
+    const char *token = getenv("DAUKLE_TOKEN");
+    if (token == NULL || token[0] == '\0') token = getenv("GITHUB_TOKEN");
     if (token == NULL || token[0] == '\0') return NULL;
 
     size_t length = strlen("Bearer ") + strlen(token) + 1;
@@ -215,7 +214,7 @@ static int fetch_from_github(const fr_plugin_entry *entry, const char *owner, co
         return FR_ERR;
     }
 
-    char *auth_value = build_github_auth_header();
+    char *auth_value = fr_github_auth_header();
     fr_http_header header;
     const fr_http_header *headers = NULL;
     size_t header_count = 0;
