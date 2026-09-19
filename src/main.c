@@ -394,7 +394,12 @@ static int plugin_update(const char *label, int verbose) {
     }
 
     if (label == NULL) {
-        printf("daukle: cleared the plugin cache\n");
+        if (removed_count == 0) {
+            printf("daukle: no plugin here has a cache to clear\n");
+        } else {
+            printf("daukle: cleared the cache for %zu plugin%s\n", removed_count,
+                   removed_count == 1 ? "" : "s");
+        }
     } else if (removed_count == 0) {
         printf("daukle: plugin \"%s\" loads from a local file; it has no cache to clear\n", label);
     } else {

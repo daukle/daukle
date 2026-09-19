@@ -844,7 +844,10 @@ TEST fr_plugins_update_cache_with_an_unknown_label_errors_naming_it(void) {
 /* A local match has nothing cached, so the removal is a no-op: *out_removed_count
    must come back 0, which is what lets main.c's plugin_update tell this case
    apart from a real removal and report honestly rather than claiming to have
-   cleared a cache that never existed. */
+   cleared a cache that never existed. The same entries, all local, also pin the
+   no-label case: a manifest with nothing but local plugins must report 0
+   removed there too, not the unconditional "cleared" main.c used to print
+   regardless of what fr_plugins_update_cache actually did. */
 TEST fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error(void) {
     fr_error err;
     cJSON *document = cJSON_Parse("{\"plugins\":{\"hello\":\"./plugins/hello.lua\"}}");
@@ -854,6 +857,10 @@ TEST fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error
 
     size_t removed_count = 1;
     ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, "hello", &removed_count, &err));
+    ASSERT_EQ(0, (int) removed_count);
+
+    removed_count = 1;
+    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, NULL, &removed_count, &err));
     ASSERT_EQ(0, (int) removed_count);
 
     fr_plugins_free(entries, count);
