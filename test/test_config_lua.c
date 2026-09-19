@@ -346,6 +346,38 @@ TEST an_unconvertible_env_read_record_does_not_fail_the_load(void) {
     PASS();
 }
 
+/* lua-env declares no plugin, so two loads into the same registry both succeed
+   and fr_lua_runtime_begin takes its idempotent same-registry path for the
+   second. The recorded reads must reflect the second load, not the first, or
+   the document from the first load was never replaced. */
+TEST a_second_load_replaces_the_recorded_environment_reads(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_test_set_env("DAUKLE_TEST_CHANNEL", "first");
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-env/daukle.toml",
+                                         registry, &manifest, &err));
+    fr_manifest_free(&manifest);
+
+    fr_test_set_env("DAUKLE_TEST_CHANNEL", "second");
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-env/daukle.toml",
+                                         registry, &manifest, &err));
+
+    const cJSON *reads = fr_lua_env_reads();
+    ASSERT(reads != NULL);
+    const cJSON *channel = cJSON_GetObjectItemCaseSensitive(reads, "DAUKLE_TEST_CHANNEL");
+    ASSERT(channel != NULL);
+    ASSERT_STR_EQ("second", channel->valuestring);
+
+    fr_test_set_env("DAUKLE_TEST_CHANNEL", NULL);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 TEST two_plugin_loads_share_one_state(void) {
     fr_error err;
     fr_registry *registry = fr_registry_create();
@@ -401,6 +433,7 @@ int main(int argc, char **argv) {
     RUN_TEST(refuses_a_second_load_that_redeclares_a_plugin_capability);
     RUN_TEST(records_every_environment_variable_a_script_read);
     RUN_TEST(an_unconvertible_env_read_record_does_not_fail_the_load);
+    RUN_TEST(a_second_load_replaces_the_recorded_environment_reads);
     RUN_TEST(two_plugin_loads_share_one_state);
     RUN_TEST(a_second_registry_is_refused_while_the_first_holds_plugins);
     GREATEST_MAIN_END();

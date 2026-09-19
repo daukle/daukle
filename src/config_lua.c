@@ -418,7 +418,9 @@ static int protected_extract_config(lua_State *state) {
        raising here would report a diagnostic's failure as the config's, and
        would leak the document already converted into *extract_config_out. */
     lua_getfield(state, -2, "_env_reads");
-    if (lua_type(state, -1) != LUA_TTABLE ||
+    cJSON_Delete(env_reads_document);
+    env_reads_document = NULL;
+    if (lua_type(state, -1) == LUA_TTABLE &&
         fr_lua_to_json(state, -1, &env_reads_document, &to_json_err) != FR_OK) {
         cJSON_Delete(env_reads_document);
         env_reads_document = NULL;
