@@ -279,12 +279,10 @@ TEST a_script_raising_a_table_produces_a_clean_failure(void) {
     PASS();
 }
 
-/* A second load into the same still-live registry now shares the runtime that
-   the first opened, rather than being refused outright: that sharing is the
-   point of fr_lua_runtime_begin. It still fails here, but because the same
-   plugin capability is declared twice, not because the runtime would free
-   strings the registry still compares. */
-TEST refuses_a_second_load_while_a_registry_still_holds_the_plugins(void) {
+/* Loading the same configuration twice into one registry now shares the state
+   the first opened, which is the point of fr_lua_runtime_begin. It still
+   fails, but on the duplicate capability rather than on the lifetime guard. */
+TEST refuses_a_second_load_that_redeclares_a_plugin_capability(void) {
     fr_error err;
     fr_registry *registry = NULL;
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
@@ -400,7 +398,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_low_instruction_limit_stops_a_script_that_would_otherwise_finish);
     RUN_TEST(a_low_memory_limit_fails_a_script_that_would_otherwise_finish);
     RUN_TEST(a_script_raising_a_table_produces_a_clean_failure);
-    RUN_TEST(refuses_a_second_load_while_a_registry_still_holds_the_plugins);
+    RUN_TEST(refuses_a_second_load_that_redeclares_a_plugin_capability);
     RUN_TEST(records_every_environment_variable_a_script_read);
     RUN_TEST(an_unconvertible_env_read_record_does_not_fail_the_load);
     RUN_TEST(two_plugin_loads_share_one_state);
