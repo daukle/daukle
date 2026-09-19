@@ -67,6 +67,29 @@ TEST registration_functions_are_always_present(void) {
     PASS();
 }
 
+TEST exec_is_accepted_in_uses_but_not_implemented(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    ASSERT_EQ(1, fr_lua_verbs_is_known("exec"));
+    ASSERT_EQ(1, fr_lua_verbs_is_reserved("exec"));
+
+    const char *verbs[] = { "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, "daukle.exec('git')", "=t", env, &err));
+    ASSERT(strstr(err.message, "not implemented") != NULL);
+    ASSERT(strstr(err.message, "was not declared") == NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -74,5 +97,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_declared_verb_is_present);
     RUN_TEST(an_undeclared_verb_raises_naming_itself);
     RUN_TEST(registration_functions_are_always_present);
+    RUN_TEST(exec_is_accepted_in_uses_but_not_implemented);
     GREATEST_MAIN_END();
 }
