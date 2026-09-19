@@ -127,6 +127,23 @@ TEST a_local_plugin_registers_its_language(void) {
     PASS();
 }
 
+TEST a_verb_a_plugin_declared_is_there_when_it_runs(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-declared-verb/daukle.toml",
+                                         registry, &manifest, &err));
+
+    ASSERT(fr_registry_language(registry, "daukle.language/brewfile") != NULL);
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
     fr_error err;
     fr_registry *registry = NULL;
@@ -175,6 +192,7 @@ TEST a_uses_entry_that_is_not_a_string_is_refused(void) {
     fr_error err;
     ASSERT_EQ(FR_ERR, load_manifest("test/fixtures/plugin-bad-uses/daukle.toml", &err));
     ASSERT(strstr(err.message, "cargo") != NULL);
+    ASSERT(strstr(err.message, "every name in uses must be a string") != NULL);
     PASS();
 }
 
@@ -198,6 +216,7 @@ int main(int argc, char **argv) {
     RUN_TEST(rejects_a_plugins_member_that_is_not_a_table);
     RUN_TEST(rejects_a_coordinate_with_an_empty_half);
     RUN_TEST(a_local_plugin_registers_its_language);
+    RUN_TEST(a_verb_a_plugin_declared_is_there_when_it_runs);
     RUN_TEST(a_manifest_declaring_no_plugins_opens_no_lua_state);
     RUN_TEST(a_verb_uses_does_not_know_is_refused);
     RUN_TEST(a_plugin_written_against_a_later_api_says_which);

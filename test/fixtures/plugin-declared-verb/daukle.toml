@@ -1,0 +1,9 @@
+schema = 1
+project = "forebay/plugin-declared-verb"
+version = "1.0.0"
+
+[modules]
+[sources]
+
+[plugins]
+brew = "./plugin.lua"

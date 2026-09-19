@@ -29,9 +29,9 @@ int fr_plugins_parse(const struct cJSON *document, fr_plugin_entry **out, size_t
 void fr_plugins_free(fr_plugin_entry *entries, size_t count);
 
 /* Runs every plugin the manifest declares, so that what each one registers is in
-   registry by the time the manifest is read. base_dir is both where a local path
-   resolves from and the bound it may not escape. A manifest declaring no plugins
-   opens no lua state at all. */
+   registry by the time the manifest is read. A local path resolves inside the lua
+   runtime's sandbox, which this opens on base_dir when no runtime is open yet. A
+   manifest declaring no plugins opens no lua state at all. */
 int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const char *base_dir,
                     fr_error *err);
 

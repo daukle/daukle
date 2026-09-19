@@ -154,7 +154,7 @@ void fr_plugins_free(fr_plugin_entry *entries, size_t count) {
 #define FR_PLUGIN_MAX_USES 16
 
 /* Raised to stop the chunk the moment daukle.plugin has been read, so catching it
-   is what tells a declaration that was read from a plugin that really failed. */
+   distinguishes a declaration that was read from a plugin that really failed. */
 #define FR_PLUGIN_DECLARATION_READ "daukle: plugin declaration read"
 
 typedef struct {
@@ -275,7 +275,9 @@ static int read_declaration(lua_State *state, const char *text, const char *orig
     lua_settop(state, top);
 
     if (status == FR_OK) return FR_OK;
-    return strstr(err->message, FR_PLUGIN_DECLARATION_READ) != NULL ? FR_OK : FR_ERR;
+    /* Anchored at offset 0: lua's error() prefixes the position, so a forged one is not. */
+    return strncmp(err->message, FR_PLUGIN_DECLARATION_READ,
+                   sizeof FR_PLUGIN_DECLARATION_READ - 1) == 0 ? FR_OK : FR_ERR;
 }
 
 static int load_one(const fr_plugin_entry *entry, fr_error *err) {
