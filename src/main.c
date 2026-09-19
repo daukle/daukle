@@ -1,3 +1,4 @@
+#include "cache.h"
 #include "cli.h"
 #include "config.h"
 #include "config_json.h"
@@ -134,8 +135,10 @@ static void print_plugin_report(void) {
     }
 }
 
-static int print_config(const char *manifest_path, int verbose) {
+static int print_config(const char *manifest_path, int use_cache, int verbose) {
     fr_error err;
+    fr_cache_set_enabled(use_cache);
+
     char *resolved = NULL;
     if (resolve_manifest_path(manifest_path, &resolved, &err) != FR_OK) {
         report_error(&err, verbose);
@@ -423,7 +426,7 @@ int main(int argc, char **argv) {
         case FR_CLI_CHECK:
             return run_with_resolved_manifest(options.manifest_path, 0, options.use_cache, options.verbose);
         case FR_CLI_CONFIG_PRINT:
-            return print_config(options.manifest_path, options.verbose);
+            return print_config(options.manifest_path, options.use_cache, options.verbose);
         case FR_CLI_ADD:
             return add_dependency(&options);
         case FR_CLI_PLUGIN_UPDATE:
