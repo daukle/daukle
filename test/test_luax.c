@@ -222,6 +222,47 @@ TEST reports_an_error_object_that_is_not_a_string(void) {
     PASS();
 }
 
+TEST runs_a_chunk_under_a_supplied_environment(void) {
+    fr_error err;
+    lua_State *state = fr_lua_open(8u * 1024u * 1024u, &err);
+    ASSERT(state != NULL);
+
+    lua_newtable(state);
+    lua_pushinteger(state, 7);
+    lua_setfield(state, -2, "seed");
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state, "result = seed * 3", "=test", env, &err));
+
+    lua_getfield(state, env, "result");
+    ASSERT_EQ(21, (int) lua_tointeger(state, -1));
+    lua_pop(state, 1);
+
+    lua_getglobal(state, "result");
+    ASSERT(lua_isnil(state, -1));
+    lua_pop(state, 1);
+
+    ASSERT_EQ(env, lua_gettop(state));
+    fr_lua_close(state);
+    PASS();
+}
+
+TEST reports_an_error_from_a_chunk_run_under_an_environment(void) {
+    fr_error err;
+    lua_State *state = fr_lua_open(8u * 1024u * 1024u, &err);
+    ASSERT(state != NULL);
+
+    lua_newtable(state);
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, "error('boom')", "=test", env, &err));
+    ASSERT(strstr(err.message, "boom") != NULL);
+    ASSERT_EQ(env, lua_gettop(state));
+
+    fr_lua_close(state);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -239,5 +280,7 @@ int main(int argc, char **argv) {
     RUN_TEST(refuses_a_table_that_refers_to_itself);
     RUN_TEST(refuses_a_json_document_nested_past_the_depth_cap);
     RUN_TEST(reports_an_error_object_that_is_not_a_string);
+    RUN_TEST(runs_a_chunk_under_a_supplied_environment);
+    RUN_TEST(reports_an_error_from_a_chunk_run_under_an_environment);
     GREATEST_MAIN_END();
 }

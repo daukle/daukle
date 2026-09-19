@@ -157,6 +157,38 @@ int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_er
     return FR_OK;
 }
 
+int fr_lua_run_in_env(lua_State *state, const char *text, const char *chunk_name,
+                      int env_index, fr_error *err) {
+    int top = lua_gettop(state);
+    if (fr_lua_load_named(state, text, strlen(text), chunk_name) != LUA_OK) {
+        fr_error_set(err, "%s", fr_lua_error_text(state));
+        has_traceback = 0;
+        lua_settop(state, top);
+        return FR_ERR;
+    }
+
+    lua_pushvalue(state, env_index);
+    if (lua_setupvalue(state, -2, 1) == NULL) {
+        fr_error_set(err, "%s has no environment to replace", chunk_name);
+        lua_settop(state, top);
+        return FR_ERR;
+    }
+
+    lua_pushcfunction(state, add_traceback);
+    lua_insert(state, -2);
+    if (lua_pcall(state, 0, 0, -2) != LUA_OK) {
+        const char *traceback = fr_lua_error_text(state);
+        fr_error_set(err, "%s", traceback);
+        snprintf(last_traceback, sizeof last_traceback, "%s", traceback);
+        has_traceback = 1;
+        lua_settop(state, top);
+        return FR_ERR;
+    }
+    lua_settop(state, top);
+    has_traceback = 0;
+    return FR_OK;
+}
+
 /* A manifest reaches depth 7 (root, consumers, an entry, dependencies, a
    project, modules, an entry), so 64 leaves ample room while keeping both
    conversions clear of the C stack and of a table that refers to itself. */
