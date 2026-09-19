@@ -13,6 +13,7 @@
 #include "support.h"
 #include "sync.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -439,6 +440,48 @@ TEST a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests(void) {
     PASS();
 }
 
+/* PowerShell's Get-FileHash emits uppercase hex by default, and this project's
+   primary toolchain is Windows, so an uppercase pin over the same bytes must
+   still match the lowercase digest fr_sha256_hex computes. */
+TEST an_uppercase_pin_still_matches_the_lowercase_digest(void) {
+    fr_error err;
+    fr_http_fn previous = fr_http_set_backend(stub_pin_release);
+
+    const char *body = "daukle.plugin{ api = 1, uses = {} }\n"
+                       "daukle.language{ name = 'remote', apply = function() return '' end }\n";
+    char expected[65];
+    fr_sha256_hex(body, strlen(body), expected);
+
+    char uppercase[65];
+    for (size_t index = 0; index < 64; index++) {
+        uppercase[index] = (char) toupper((unsigned char) expected[index]);
+    }
+    uppercase[64] = '\0';
+
+    char owner[64];
+    snprintf(owner, sizeof owner, "daukle-test-%d-pin-upper", fr_test_process_id());
+    remove_plugin_cache(owner);
+
+    char good[320];
+    snprintf(good, sizeof good,
+             "{\"plugins\":{\"r\":{\"repo\":\"%s/remote\",\"version\":\"^1.0.0\","
+             "\"sha256\":\"%s\"}}}", owner, uppercase);
+
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    cJSON *document = cJSON_Parse(good);
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
+    ASSERT(fr_registry_language(registry, "daukle.language/remote") != NULL);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    remove_plugin_cache(owner);
+    fr_http_set_backend(previous);
+    PASS();
+}
+
 TEST a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_digests(void) {
     fr_error err;
     char *fixture_text = NULL;
@@ -506,6 +549,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_remote_coordinate_picks_the_highest_release_in_range);
     RUN_TEST(a_cached_plugin_is_used_without_touching_the_network);
     RUN_TEST(a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests);
+    RUN_TEST(an_uppercase_pin_still_matches_the_lowercase_digest);
     RUN_TEST(a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_digests);
     GREATEST_MAIN_END();
 }

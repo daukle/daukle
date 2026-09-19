@@ -13,6 +13,7 @@
 
 #include "lauxlib.h"
 
+#include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -62,6 +63,9 @@ static int parse_string_form(const char *label, const char *value, fr_plugin_ent
     return (out->repo != NULL && out->version != NULL) ? FR_OK : FR_ERR;
 }
 
+/* A table entry names exactly one of "path" (local) or "repo" (remote), the
+   same discrimination the string form makes on a leading "." or "/", and
+   either kind may also carry a "sha256" pin. */
 static int parse_table_form(const char *label, const cJSON *member, fr_plugin_entry *out,
                             fr_error *err) {
     const char *sha256 = NULL;
@@ -69,11 +73,6 @@ static int parse_table_form(const char *label, const cJSON *member, fr_plugin_en
         if (fr_json_string(member, "sha256", label, &sha256, err) != FR_OK) return FR_ERR;
     }
 
-    /* "path" marks a local entry in table form, the same discrimination the
-       string form makes on a leading "." or "/", so a local plugin can also
-       carry a pin. Exactly one of path/repo is required: both together would
-       silently ignore repo, neither would fall through to repo's generic
-       missing-key message and never mention path at all. */
     int has_path = cJSON_GetObjectItemCaseSensitive(member, "path") != NULL;
     int has_repo = cJSON_GetObjectItemCaseSensitive(member, "repo") != NULL;
     if (has_path && has_repo) {
@@ -314,6 +313,19 @@ static int read_declaration(lua_State *state, const char *text, const char *orig
                    sizeof FR_PLUGIN_DECLARATION_READ - 1) == 0 ? FR_OK : FR_ERR;
 }
 
+/* stricmp/strcasecmp are not portable C11; a sha256 hex digest is a bounded
+   64 characters, so comparing lowercased copies in fixed buffers is safe. */
+static int digest_matches(const char *actual, const char *pinned) {
+    size_t length = strlen(actual);
+    if (length != strlen(pinned) || length >= 65) return 0;
+    for (size_t index = 0; index < length; index++) {
+        if (tolower((unsigned char) actual[index]) != tolower((unsigned char) pinned[index])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static int load_one(const fr_plugin_entry *entry, fr_error *err) {
     lua_State *state = fr_lua_runtime_state();
 
@@ -334,7 +346,7 @@ static int load_one(const fr_plugin_entry *entry, fr_error *err) {
     if (entry->sha256 != NULL) {
         char actual[65];
         fr_sha256_hex(text, strlen(text), actual);
-        if (strcmp(actual, entry->sha256) != 0) {
+        if (!digest_matches(actual, entry->sha256)) {
             fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
                         entry->label, entry->sha256, actual);
             free(text);
