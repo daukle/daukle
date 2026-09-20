@@ -133,6 +133,18 @@ TEST parses_plugin_update_without_a_label(void) {
     PASS();
 }
 
+TEST rejects_a_second_word_after_a_plugin_label(void) {
+    const char *argv[] = { "daukle", "plugin", "update", "npm", "gradle" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(5, argv).command);
+    PASS();
+}
+
+TEST rejects_a_second_word_after_a_config_print_path(void) {
+    const char *argv[] = { "daukle", "config", "print", "a.toml", "b.toml" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(5, argv).command);
+    PASS();
+}
+
 TEST rejects_plugin_with_an_unknown_subcommand_naming_it(void) {
     const char *argv[] = { "daukle", "plugin", "delete" };
     fr_cli_options options = parse(3, argv);
@@ -194,6 +206,8 @@ int main(int argc, char **argv) {
     RUN_TEST(parses_plugin_update_with_a_label);
     RUN_TEST(parses_plugin_update_without_a_label);
     RUN_TEST(rejects_plugin_with_an_unknown_subcommand_naming_it);
+    RUN_TEST(rejects_a_second_word_after_a_plugin_label);
+    RUN_TEST(rejects_a_second_word_after_a_config_print_path);
     RUN_TEST(leaves_the_manifest_path_unset_so_the_directory_is_searched);
     RUN_TEST(reads_both_lua_limits);
     RUN_TEST(rejects_a_limit_that_is_not_a_number);

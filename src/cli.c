@@ -90,7 +90,7 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
         out->add_spec = words[1];
         out->command = FR_CLI_ADD;
     } else if (strcmp(command, "config") == 0) {
-        if (word_count < 2 || strcmp(words[1], "print") != 0) return;
+        if (word_count < 2 || word_count > 3 || strcmp(words[1], "print") != 0) return;
         out->command = FR_CLI_CONFIG_PRINT;
         if (word_count == 3) out->manifest_path = words[2];
     } else if (strcmp(command, "plugin") == 0) {
@@ -99,6 +99,7 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
             out->plugin_unknown_subcommand = words[1];
             return;
         }
+        if (word_count > 3) return;
         out->command = FR_CLI_PLUGIN_UPDATE;
         if (word_count == 3) out->plugin_label = words[2];
     }
