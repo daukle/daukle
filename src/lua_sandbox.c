@@ -89,7 +89,7 @@ static int canonical_file_path(const char *path, char **out, fr_error *err) {
 
 /* fopen cannot open a directory; a directory handle needs the Win32 backup-
    semantics flag instead, which is why base_dir gets its own opener. */
-static int canonical_directory_path(const char *path, char **out, fr_error *err) {
+int fr_lua_sandbox_canonical_dir(const char *path, char **out, fr_error *err) {
     HANDLE handle = CreateFileA(path, GENERIC_READ,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                 NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
@@ -114,7 +114,7 @@ static int canonical_file_path(const char *path, char **out, fr_error *err) {
     return FR_OK;
 }
 
-static int canonical_directory_path(const char *path, char **out, fr_error *err) {
+int fr_lua_sandbox_canonical_dir(const char *path, char **out, fr_error *err) {
     return canonical_file_path(path, out, err);
 }
 
@@ -237,7 +237,7 @@ static int protected_install(lua_State *state) {
 
 int fr_lua_sandbox_install(lua_State *state, const char *base_dir, fr_error *err) {
     char *canonical_base = NULL;
-    if (canonical_directory_path(base_dir, &canonical_base, err) != FR_OK) return FR_ERR;
+    if (fr_lua_sandbox_canonical_dir(base_dir, &canonical_base, err) != FR_OK) return FR_ERR;
 
     pending_base_dir = canonical_base;
     lua_pushcfunction(state, protected_install);

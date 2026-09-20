@@ -12,6 +12,12 @@
    outside it. */
 int fr_lua_sandbox_install(lua_State *state, const char *base_dir, fr_error *err);
 
+/* The canonical form fr_lua_sandbox_install would bound a state to, exposed so
+   a caller owning the runtime's lifetime compares two base directories the way
+   the sandbox does rather than comparing the two strings it was handed. The
+   caller owns *out. */
+int fr_lua_sandbox_canonical_dir(const char *path, char **out, fr_error *err);
+
 /* Resolves relative against the base directory recorded at install time and
    fails if the result escapes it. The caller owns *out_path. */
 int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_path, fr_error *err);

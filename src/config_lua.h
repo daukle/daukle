@@ -15,9 +15,12 @@ extern const fr_config_plugin FR_CONFIG_LUA;
 const struct cJSON *fr_lua_env_reads(void);
 
 /* Opens the one state this load phase shares, or confirms the open one belongs
-   to registry. Every plugin and the daukle.lua overlay run in it, so their
-   capability strings share one lifetime and fr_lua_runtime_shutdown frees them
-   together, after the registry holding them is destroyed. */
+   to registry and is already bounded to base_dir. Every plugin and the
+   daukle.lua overlay run in it, so their capability strings share one lifetime
+   and fr_lua_runtime_shutdown frees them together, after the registry holding
+   them is destroyed. A second base_dir is refused rather than ignored: the
+   sandbox is installed once, so reusing the state would silently bound
+   daukle.read to the first caller's directory. */
 int fr_lua_runtime_begin(const char *base_dir, fr_registry *registry, fr_error *err);
 
 lua_State *fr_lua_runtime_state(void);
