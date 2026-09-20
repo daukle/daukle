@@ -175,13 +175,17 @@ static int verb_json_set(lua_State *state) {
     const char *text = luaL_checkstring(state, 1);
     const char *path = luaL_checkstring(state, 2);
     const char *key = luaL_checkstring(state, 3);
-    const char *value = luaL_checkstring(state, 4);
 
     char *out = NULL;
     fr_error err;
-    if (fr_json_edit_set_string(text, path, key, value, &out, &err) != FR_OK) {
-        return luaL_error(state, "%s", err.message);
+    int status;
+    if (lua_isnoneornil(state, 4)) {
+        status = fr_json_edit_remove(text, path, key, &out, &err);
+    } else {
+        status = fr_json_edit_set_string(text, path, key, luaL_checkstring(state, 4), &out, &err);
     }
+    if (status != FR_OK) return luaL_error(state, "%s", err.message);
+
     lua_pushstring(state, out);
     free(out);
     return 1;
