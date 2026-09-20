@@ -133,6 +133,10 @@ TEST parses_plugin_update_without_a_label(void) {
     PASS();
 }
 
+/* FR_CLI_MAX_WORDS is 3, so a fourth positional word is refused by the word
+   loop and never reaches a subcommand. These pin that, because raising the
+   limit would silently turn both invocations into a label-less update and a
+   path-less print. */
 TEST rejects_a_second_word_after_a_plugin_label(void) {
     const char *argv[] = { "daukle", "plugin", "update", "npm", "gradle" };
     ASSERT_EQ(FR_CLI_USAGE, parse(5, argv).command);
