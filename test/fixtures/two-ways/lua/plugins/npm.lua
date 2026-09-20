@@ -1,9 +1,9 @@
-daukle.plugin{ api = 1, uses = { "json_set", "parse" } }
+daukle.plugin{ api = 1, uses = { "json_set", "json_parse" } }
 
 local LEDGER_PATH = "daukle.managed"
 
 local function read_ledger(text, configuration)
-  local document = daukle.parse(text, "package.json")
+  local document = daukle.json_parse(text)
   local managed = document.daukle and document.daukle.managed
   local owned = managed and managed[configuration]
   if type(owned) ~= "table" then return {} end

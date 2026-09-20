@@ -422,6 +422,88 @@ TEST json_set_refuses_a_non_string_in_an_array_naming_its_position(void) {
     PASS();
 }
 
+TEST json_parse_reads_a_plugins_own_data_file(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "json_parse" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "local ledger = daukle.json_parse('{\"name\":\"app\",\"daukle\":{\"managed\":"
+        "{\"dependencies\":[\"left-pad\",\"lodash\"]}}}')\n"
+        "name = ledger.name\n"
+        "owned = ledger.daukle.managed.dependencies\n"
+        "first = owned[1]\n"
+        "count = #owned",
+        "=t", env, &err));
+
+    lua_getfield(state, env, "name");
+    ASSERT_STR_EQ("app", lua_tostring(state, -1));
+    lua_getfield(state, env, "first");
+    ASSERT_STR_EQ("left-pad", lua_tostring(state, -1));
+    lua_getfield(state, env, "count");
+    ASSERT_EQ(2, (int) lua_tointeger(state, -1));
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST json_parse_names_where_the_json_stops(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "json_parse" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.json_parse('{\"dependencies\": }')", "=t", env, &err));
+    ASSERT(strstr(err.message, "json_parse") != NULL);
+    ASSERT(strstr(err.message, "byte") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* json_parse exists because a plugin's own data file is not a daukle manifest:
+   no config format reads json any more, so daukle.parse must refuse the very
+   text json_parse accepts. */
+TEST json_parse_reads_what_parse_now_refuses(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "parse", "json_parse" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.parse('{\"name\":\"app\"}', 'package.json')", "=t", env, &err));
+    ASSERT(strstr(err.message, "json") != NULL);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "name = daukle.json_parse('{\"name\":\"app\"}').name", "=t", env, &err));
+    lua_getfield(state, env, "name");
+    ASSERT_STR_EQ("app", lua_tostring(state, -1));
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 TEST parse_reads_toml_through_the_config_table(void) {
     fr_error err;
     fr_registry *registry = NULL;
@@ -489,6 +571,9 @@ int main(int argc, char **argv) {
     RUN_TEST(json_set_removes_a_key_when_the_value_is_nil);
     RUN_TEST(json_set_writes_a_string_array_when_the_value_is_a_table);
     RUN_TEST(json_set_refuses_a_non_string_in_an_array_naming_its_position);
+    RUN_TEST(json_parse_reads_a_plugins_own_data_file);
+    RUN_TEST(json_parse_names_where_the_json_stops);
+    RUN_TEST(json_parse_reads_what_parse_now_refuses);
     RUN_TEST(parse_reads_toml_through_the_config_table);
     RUN_TEST(parse_refuses_an_executable_config_format);
     GREATEST_MAIN_END();

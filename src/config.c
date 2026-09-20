@@ -55,14 +55,28 @@ static int file_exists(const char *path) {
     return 1;
 }
 
+static void describe_formats(const fr_registry *registry, char *out, size_t out_size) {
+    size_t written = 0;
+    out[0] = '\0';
+    for (size_t index = 0; index < fr_registry_config_count(registry); index++) {
+        const fr_config_plugin *plugin = fr_registry_config_at(registry, index);
+        int added = snprintf(out + written, out_size - written,
+                             written == 0 ? "%s" : ", %s", plugin->file_name);
+        if (added < 0 || (size_t) added >= out_size - written) break;
+        written += (size_t) added;
+    }
+}
+
 const fr_config_plugin *fr_config_plugin_for(const fr_registry *registry, const char *file_path,
                                              fr_error *err) {
     char capability[128];
     snprintf(capability, sizeof capability, "daukle.config/%s", extension_of(file_path));
     const fr_config_plugin *plugin = fr_registry_config(registry, capability);
     if (plugin == NULL) {
-        fr_error_set(err, "\"%s\": no config format registered for \"%s\"",
-                     file_path, extension_of(file_path));
+        char expected[256];
+        describe_formats(registry, expected, sizeof expected);
+        fr_error_set(err, "\"%s\": no config format reads \"%s\": daukle reads %s",
+                     file_path, extension_of(file_path), expected);
     }
     return plugin;
 }
@@ -190,15 +204,7 @@ int fr_config_find(const char *directory, const fr_registry *registry, char **ou
         return FR_OK;
     }
     char expected[256];
-    size_t written = 0;
-    expected[0] = '\0';
-    for (size_t index = 0; index < fr_registry_config_count(registry); index++) {
-        const fr_config_plugin *plugin = fr_registry_config_at(registry, index);
-        int added = snprintf(expected + written, sizeof expected - written,
-                             written == 0 ? "%s" : ", %s", plugin->file_name);
-        if (added < 0 || (size_t) added >= sizeof expected - written) break;
-        written += (size_t) added;
-    }
+    describe_formats(registry, expected, sizeof expected);
     fr_error_set(err, "\"%s\" holds no manifest: expected one of %s", directory, expected);
     return FR_ERR;
 }

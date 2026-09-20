@@ -1,6 +1,7 @@
 #include "lua_verbs.h"
 
 #include "cache.h"
+#include "config_json.h"
 #include "config_lua.h"
 #include "error.h"
 #include "http.h"
@@ -27,7 +28,7 @@ static const char *BASE[] = {
 };
 
 static const char *KNOWN_VERBS[] = {
-    "fetch", "read", "cache", "env", "region", "json_set", "parse", "exec"
+    "fetch", "read", "cache", "env", "region", "json_set", "json_parse", "parse", "exec"
 };
 
 static const char *RESERVED_VERBS[] = { "exec" };
@@ -224,6 +225,21 @@ static int verb_json_set(lua_State *state) {
     return 1;
 }
 
+static int verb_json_parse(lua_State *state) {
+    const char *text = luaL_checkstring(state, 1);
+
+    cJSON *document = NULL;
+    fr_error err;
+    if (fr_config_json_parse(text, &document, &err) != FR_OK) {
+        return luaL_error(state, "daukle.json_parse: %s", err.message);
+    }
+
+    int pushed = fr_lua_push_json(state, document, &err);
+    cJSON_Delete(document);
+    if (pushed != FR_OK) return luaL_error(state, "daukle.json_parse: %s", err.message);
+    return 1;
+}
+
 static int verb_parse(lua_State *state) {
     const char *text = luaL_checkstring(state, 1);
     const char *file_name = luaL_checkstring(state, 2);
@@ -255,7 +271,7 @@ static int verb_parse(lua_State *state) {
     return 1;
 }
 
-/* install_one handles all seven declared verbs plus the reserved exec; a name
+/* install_one handles every declared verb plus the reserved exec; a name
    that is known (fr_lua_verbs_is_known) but neither handled here nor reserved
    would be left unset, which cannot currently happen. */
 static void install_one(lua_State *state, const char *name) {
@@ -271,6 +287,8 @@ static void install_one(lua_State *state, const char *name) {
         lua_pushcfunction(state, verb_region);
     } else if (strcmp(name, "json_set") == 0) {
         lua_pushcfunction(state, verb_json_set);
+    } else if (strcmp(name, "json_parse") == 0) {
+        lua_pushcfunction(state, verb_json_parse);
     } else if (strcmp(name, "parse") == 0) {
         lua_pushcfunction(state, verb_parse);
     } else if (fr_lua_verbs_is_reserved(name)) {

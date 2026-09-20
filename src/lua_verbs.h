@@ -16,7 +16,12 @@
    daukle.json_set(text, path, key, value) takes three forms by the type of
    value: a string writes it, nil removes key from path, and a table of
    strings writes a json array in the order given, refusing a non-string
-   element by naming its position. */
+   element by naming its position.
+
+   daukle.json_parse(text) reads a plugin's own json data file, such as a
+   package.json, and is the only way into json: daukle.parse(text, file_name)
+   dispatches on the extension through the config table, which holds toml and
+   lua alone, so it refuses json rather than treating it as a manifest. */
 int fr_lua_verbs_push_env(lua_State *state, const char *const *verbs, size_t verb_count,
                           fr_error *err);
 
