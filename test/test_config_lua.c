@@ -160,6 +160,22 @@ TEST a_script_registered_source_plugin_resolves_through_sync(void) {
     PASS();
 }
 
+/* The fixture holds no toml beside its daukle.lua, so fr_config_find reaches the
+   overlay format as the root manifest and its plugins table is the only way it can
+   name a language at all: the sandbox offers no file reading to write one inline. */
+TEST a_lua_root_manifest_loads_the_plugins_it_declares(void) {
+    fr_error err;
+    fr_sync_report report;
+    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/lua-root-plugin/daukle.lua", 1, 0, &report, &err));
+    fr_sync_report_free(&report);
+
+    char *greeting = NULL;
+    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/lua-root-plugin/greet.txt", &greeting, &err));
+    ASSERT_STR_EQ("greet forebay/basekit/ir\n", greeting);
+    free(greeting);
+    PASS();
+}
+
 /* A truncated capability string could make two distinct long names collide on
    the same 128-byte buffer and spuriously trip the "declared twice" check
    instead of registering both; take_slot must detect the truncation itself
@@ -455,6 +471,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_script_registers_a_language_plugin);
     RUN_TEST(a_script_may_not_take_over_a_built_in_capability);
     RUN_TEST(a_script_registered_source_plugin_resolves_through_sync);
+    RUN_TEST(a_lua_root_manifest_loads_the_plugins_it_declares);
     RUN_TEST(a_plugin_name_too_long_for_the_capability_buffer_is_rejected);
     RUN_TEST(a_language_plugin_that_raises_an_error_produces_a_clean_failure);
     RUN_TEST(a_source_plugin_that_raises_an_error_produces_a_clean_failure);

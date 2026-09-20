@@ -129,7 +129,8 @@ int fr_config_load_file(const char *file_path, fr_registry *registry, fr_manifes
         return FR_ERR;
     }
 
-    if (!plugin->overlay && fr_plugins_load(registry, document, directory, err) != FR_OK) {
+    /* Unconditional: the plugins table belongs to the root manifest, not to its format. */
+    if (fr_plugins_load(registry, document, directory, err) != FR_OK) {
         cJSON_Delete(document);
         free(directory);
         return FR_ERR;
