@@ -39,8 +39,8 @@ static int split_repo(const char *repo, char **out_owner, char **out_name, fr_er
     if (check_repo_shape(repo, err) != FR_OK) return FR_ERR;
 
     const char *slash = strchr(repo, '/');
-    *out_owner = dup_prefix(repo, (size_t) (slash - repo));
-    *out_name = dup_string(slash + 1);
+    *out_owner = fr_dup_prefix(repo, (size_t) (slash - repo));
+    *out_name = fr_dup_string(slash + 1);
     if (*out_owner == NULL || *out_name == NULL) {
         free(*out_owner);
         free(*out_name);

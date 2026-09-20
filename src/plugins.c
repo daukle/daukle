@@ -17,7 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-char *dup_string(const char *text) {
+char *fr_dup_string(const char *text) {
     if (text == NULL) return NULL;
     size_t length = strlen(text) + 1;
     char *copy = malloc(length);
@@ -25,7 +25,7 @@ char *dup_string(const char *text) {
     return copy;
 }
 
-char *dup_prefix(const char *text, size_t length) {
+char *fr_dup_prefix(const char *text, size_t length) {
     char *copy = malloc(length + 1);
     if (copy == NULL) return NULL;
     memcpy(copy, text, length);
@@ -39,7 +39,7 @@ static int parse_string_form(const char *label, const char *value, fr_plugin_ent
                              fr_error *err) {
     if (value[0] == '.' || value[0] == '/') {
         out->kind = FR_PLUGIN_LOCAL;
-        out->path = dup_string(value);
+        out->path = fr_dup_string(value);
         if (out->path == NULL) {
             fr_error_set(err, "out of memory reading plugin \"%s\"", label);
             return FR_ERR;
@@ -62,8 +62,8 @@ static int parse_string_form(const char *label, const char *value, fr_plugin_ent
     }
 
     out->kind = FR_PLUGIN_REMOTE;
-    out->repo = dup_prefix(value, repo_length);
-    out->version = dup_string(at + 1);
+    out->repo = fr_dup_prefix(value, repo_length);
+    out->version = fr_dup_string(at + 1);
     if (out->repo == NULL || out->version == NULL) {
         fr_error_set(err, "out of memory reading plugin \"%s\"", label);
         return FR_ERR;
@@ -98,8 +98,8 @@ static int parse_table_form(const char *label, const cJSON *member, fr_plugin_en
         if (fr_json_string(member, "path", label, &path, err) != FR_OK) return FR_ERR;
 
         out->kind = FR_PLUGIN_LOCAL;
-        out->path = dup_string(path);
-        out->sha256 = sha256 != NULL ? dup_string(sha256) : NULL;
+        out->path = fr_dup_string(path);
+        out->sha256 = sha256 != NULL ? fr_dup_string(sha256) : NULL;
         if (out->path == NULL || (sha256 != NULL && out->sha256 == NULL)) {
             fr_error_set(err, "out of memory reading plugin \"%s\"", label);
             return FR_ERR;
@@ -113,9 +113,9 @@ static int parse_table_form(const char *label, const cJSON *member, fr_plugin_en
     if (fr_json_string(member, "version", label, &version, err) != FR_OK) return FR_ERR;
 
     out->kind = FR_PLUGIN_REMOTE;
-    out->repo = dup_string(repo);
-    out->version = dup_string(version);
-    out->sha256 = sha256 != NULL ? dup_string(sha256) : NULL;
+    out->repo = fr_dup_string(repo);
+    out->version = fr_dup_string(version);
+    out->sha256 = sha256 != NULL ? fr_dup_string(sha256) : NULL;
     if (out->repo == NULL || out->version == NULL || (sha256 != NULL && out->sha256 == NULL)) {
         fr_error_set(err, "out of memory reading plugin \"%s\"", label);
         return FR_ERR;
@@ -152,7 +152,7 @@ int fr_plugins_parse(const struct cJSON *document, fr_plugin_entry **out, size_t
         count = count + 1;
 
         fr_plugin_entry *slot = &entries[count - 1];
-        slot->label = dup_string(label);
+        slot->label = fr_dup_string(label);
         if (slot->label == NULL) {
             fr_error_set(err, "out of memory reading plugin \"%s\"", label);
             fr_plugins_free(entries, count);
@@ -243,7 +243,7 @@ static int record_uses(lua_State *state, fr_plugin_declaration *declaration) {
             return luaL_error(state, "plugin \"%s\": uses names more than %d verbs",
                               declaration->label, FR_PLUGIN_MAX_USES);
         }
-        char *copy = dup_string(name);
+        char *copy = fr_dup_string(name);
         if (copy == NULL) {
             return luaL_error(state, "plugin \"%s\": out of memory reading uses",
                               declaration->label);
@@ -347,13 +347,13 @@ static int digest_matches(const char *actual, const char *pinned) {
    the whole origin if it is ever shaped otherwise, rather than reporting nothing. */
 static char *remote_resolved_from_origin(const char *origin) {
     const char *file_slash = strrchr(origin, '/');
-    if (file_slash == NULL || file_slash == origin) return dup_string(origin);
+    if (file_slash == NULL || file_slash == origin) return fr_dup_string(origin);
 
     const char *version_start = file_slash;
     while (version_start > origin && version_start[-1] != '/') version_start--;
-    if (version_start == file_slash) return dup_string(origin);
+    if (version_start == file_slash) return fr_dup_string(origin);
 
-    return dup_prefix(version_start, (size_t) (file_slash - version_start));
+    return fr_dup_prefix(version_start, (size_t) (file_slash - version_start));
 }
 
 static fr_plugin_report_entry *report_entries;
@@ -398,8 +398,8 @@ static int append_report_entry(const fr_plugin_entry *entry, const char *resolve
     slot->kind = entry->kind;
     memcpy(slot->sha256, digest, sizeof slot->sha256);
 
-    slot->label = dup_string(entry->label);
-    slot->resolved = dup_string(resolved);
+    slot->label = fr_dup_string(entry->label);
+    slot->resolved = fr_dup_string(resolved);
     slot->uses = declaration->uses_count > 0
                      ? malloc(declaration->uses_count * sizeof *slot->uses)
                      : NULL;
@@ -411,7 +411,7 @@ static int append_report_entry(const fr_plugin_entry *entry, const char *resolve
     }
 
     for (size_t index = 0; index < declaration->uses_count; index++) {
-        slot->uses[index] = dup_string(declaration->uses[index]);
+        slot->uses[index] = fr_dup_string(declaration->uses[index]);
         if (slot->uses[index] == NULL) {
             slot->uses_count = index;
             free_report_entry(slot);
@@ -463,7 +463,7 @@ static int load_one(const fr_plugin_entry *entry, fr_error *err) {
     }
 
     if (status == FR_OK) {
-        char *resolved = entry->kind == FR_PLUGIN_LOCAL ? dup_string(path)
+        char *resolved = entry->kind == FR_PLUGIN_LOCAL ? fr_dup_string(path)
                                                          : remote_resolved_from_origin(path);
         if (resolved == NULL) {
             fr_error_set(err, "out of memory recording plugin \"%s\" in the report", entry->label);
