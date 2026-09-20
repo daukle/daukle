@@ -55,8 +55,8 @@ static int file_exists(const char *path) {
     return 1;
 }
 
-static const fr_config_plugin *plugin_for(const fr_registry *registry, const char *file_path,
-                                          fr_error *err) {
+const fr_config_plugin *fr_config_plugin_for(const fr_registry *registry, const char *file_path,
+                                             fr_error *err) {
     char capability[128];
     snprintf(capability, sizeof capability, "daukle.config/%s", extension_of(file_path));
     const fr_config_plugin *plugin = fr_registry_config(registry, capability);
@@ -106,7 +106,7 @@ static int apply_overlays(const char *directory, fr_registry *registry,
 int fr_config_load_file(const char *file_path, fr_registry *registry, fr_manifest *out, fr_error *err) {
     memset(out, 0, sizeof *out);
 
-    const fr_config_plugin *plugin = plugin_for(registry, file_path, err);
+    const fr_config_plugin *plugin = fr_config_plugin_for(registry, file_path, err);
     if (plugin == NULL) return FR_ERR;
 
     char *directory = directory_of(file_path);

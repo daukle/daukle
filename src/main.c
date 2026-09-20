@@ -1,9 +1,7 @@
 #include "cache.h"
 #include "cli.h"
 #include "config.h"
-#include "config_json.h"
 #include "config_lua.h"
-#include "config_toml.h"
 #include "error.h"
 #include "luax.h"
 #include "manifest.h"
@@ -338,23 +336,36 @@ static int add_dependency(const fr_cli_options *options) {
 /* Reads only the manifest's own document, never fr_config_load_file: that also
    runs fr_plugins_load, which resolves and executes every declared plugin, the
    opposite of what "plugin update" wants when a plugin's current cache is what
-   it is trying to discard. */
+   it is trying to discard. The load call therefore passes no registry, and an
+   overlay format is refused outright, since executing one is precisely what
+   dispatching on its extension would do. */
 static int read_manifest_plugins(const char *manifest_path, fr_plugin_entry **out_entries,
                                  size_t *out_count, fr_error *err) {
-    const fr_config_plugin *plugin = NULL;
-    if (ends_with(manifest_path, ".toml")) plugin = &FR_CONFIG_TOML;
-    else if (ends_with(manifest_path, ".json")) plugin = &FR_CONFIG_JSON;
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, err) != FR_OK) return FR_ERR;
+
+    const fr_config_plugin *plugin = fr_config_plugin_for(registry, manifest_path, err);
     if (plugin == NULL) {
-        fr_error_set(err, "daukle does not recognise the format of \"%s\"", manifest_path);
+        fr_registry_destroy(registry);
+        return FR_ERR;
+    }
+    if (plugin->overlay) {
+        fr_error_set(err, "\"%s\" is an overlay format; it cannot be read on its own",
+                     manifest_path);
+        fr_registry_destroy(registry);
         return FR_ERR;
     }
 
     char *text = NULL;
-    if (fr_file_read_text(manifest_path, &text, err) != FR_OK) return FR_ERR;
+    if (fr_file_read_text(manifest_path, &text, err) != FR_OK) {
+        fr_registry_destroy(registry);
+        return FR_ERR;
+    }
 
     cJSON *document = NULL;
     int status = plugin->load(plugin->state, text, manifest_path, ".", NULL, NULL, &document, err);
     free(text);
+    fr_registry_destroy(registry);
     if (status != FR_OK) return FR_ERR;
 
     status = fr_plugins_parse(document, out_entries, out_count, err);
