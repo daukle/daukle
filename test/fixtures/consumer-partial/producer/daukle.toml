@@ -1,0 +1,16 @@
+schema = 1
+project = "forebay/basekit"
+version = "5.0.0"
+
+[modules.contracts]
+
+  [modules.contracts.gradle]
+  coordinate = "forebay:basekit:5.0.0:contracts"
+
+[modules.ir]
+requires = ["contracts"]
+
+  [modules.ir.gradle]
+  coordinate = "forebay:basekit:5.0.0:ir"
+
+[modules.loader]

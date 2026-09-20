@@ -4,7 +4,10 @@
   "version": "1.2.0",
   "modules": {},
   "sources": {
-    "forebay/basekit": { "kind": "path", "path": "../basekit" }
+    "forebay/basekit": { "kind": "path", "path": "./basekit" }
+  },
+  "plugins": {
+    "path": "./plugins/path.lua"
   },
   "consumers": [
     {

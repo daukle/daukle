@@ -3,7 +3,8 @@ daukle.config = {
   project = "forebay/three-ways",
   version = "1.0.0",
   modules = {},
-  sources = { ["forebay/basekit"] = { kind = "path", path = "../../producer-languages" } },
+  sources = { ["forebay/basekit"] = { kind = "path", path = "./producer-languages" } },
+  plugins = { path = "./plugins/path.lua" },
   consumers = {
     {
       id = "stub",

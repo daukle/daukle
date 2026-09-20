@@ -56,7 +56,7 @@ TEST reads_a_consumer(void) {
     ASSERT_STR_EQ("path", manifest.sources[0].kind);
     const cJSON *path_field = cJSON_GetObjectItemCaseSensitive(manifest.sources[0].block, "path");
     ASSERT(cJSON_IsString(path_field));
-    ASSERT_STR_EQ("../producer", path_field->valuestring);
+    ASSERT_STR_EQ("./producer", path_field->valuestring);
     ASSERT_EQ(1, (int) manifest.consumer_count);
     ASSERT_STR_EQ("stub", manifest.consumers[0].id);
     ASSERT_STR_EQ("gradle", manifest.consumers[0].language);

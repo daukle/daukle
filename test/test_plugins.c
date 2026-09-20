@@ -242,7 +242,7 @@ TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
 
     fr_manifest manifest;
-    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle.json",
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle-github.json",
                                          registry, &manifest, &err));
 
     ASSERT(fr_lua_runtime_state() == NULL);
@@ -562,9 +562,11 @@ TEST config_print_reports_each_plugin_with_its_verbs_and_digest(void) {
 
     const fr_plugin_report *report = fr_plugins_report();
     ASSERT(report != NULL);
-    ASSERT_EQ(1, (int) report->count);
+    ASSERT_EQ(2, (int) report->count);
     ASSERT_STR_EQ("hello", report->entries[0].label);
     ASSERT_EQ(64, (int) strlen(report->entries[0].sha256));
+    ASSERT_STR_EQ("path", report->entries[1].label);
+    ASSERT_EQ(64, (int) strlen(report->entries[1].sha256));
 
     fr_manifest_free(&manifest);
     fr_registry_destroy(registry);
@@ -614,7 +616,7 @@ TEST the_report_survives_the_entries_it_describes_being_freed(void) {
     fr_lua_runtime_shutdown();
 
     const fr_plugin_report *report = fr_plugins_report();
-    ASSERT_EQ(1, (int) report->count);
+    ASSERT_EQ(2, (int) report->count);
     ASSERT_STR_EQ("hello", report->entries[0].label);
     ASSERT(report->entries[0].resolved != NULL);
     ASSERT_EQ(64, (int) strlen(report->entries[0].sha256));

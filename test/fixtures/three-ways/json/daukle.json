@@ -4,7 +4,10 @@
   "version": "1.0.0",
   "modules": {},
   "sources": {
-    "forebay/basekit": { "kind": "path", "path": "../../producer-languages" }
+    "forebay/basekit": { "kind": "path", "path": "./producer-languages" }
+  },
+  "plugins": {
+    "path": "./plugins/path.lua"
   },
   "consumers": [
     {

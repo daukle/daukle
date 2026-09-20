@@ -10,6 +10,7 @@ path = "./producer"
 
 [plugins]
 hello = "./plugins/hello.lua"
+path = "./plugins/path.lua"
 
 [[consumers]]
 id = "text"

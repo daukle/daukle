@@ -6,7 +6,10 @@ version = "1.0.0"
 
 [sources."forebay/basekit"]
 kind = "path"
-path = "../../producer-languages"
+path = "./producer-languages"
+
+[plugins]
+path = "./plugins/path.lua"
 
 [[consumers]]
 id = "stub"

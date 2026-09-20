@@ -104,7 +104,8 @@ static void remove_e2e_tree(void) {
 /* Two isolated copies of the same consumer, one resolved through a "path"
    source and one through "github-releases", each writing its own copy of
    the build file so neither run can be tainted by, or mutate, the other's
-   state or the checked-in fixtures. */
+   state or the checked-in fixtures. The producer and the path plugin sit
+   inside the consumer directory: daukle.read refuses to climb out of it. */
 static void setup_e2e_tree(void) {
     const char *root = e2e_temp_root();
     char path[700];
@@ -113,7 +114,8 @@ static void setup_e2e_tree(void) {
     fr_test_make_directory(root);
     snprintf(path, sizeof path, "%s/path", root); fr_test_make_directory(path);
     snprintf(path, sizeof path, "%s/path/consumer", root); fr_test_make_directory(path);
-    snprintf(path, sizeof path, "%s/path/producer", root); fr_test_make_directory(path);
+    snprintf(path, sizeof path, "%s/path/consumer/producer", root); fr_test_make_directory(path);
+    snprintf(path, sizeof path, "%s/path/consumer/plugins", root); fr_test_make_directory(path);
     snprintf(path, sizeof path, "%s/github", root); fr_test_make_directory(path);
 
     snprintf(path, sizeof path, "%s/path/consumer/daukle.json", root);
@@ -122,8 +124,11 @@ static void setup_e2e_tree(void) {
     snprintf(path, sizeof path, "%s/path/consumer/build.gradle", root);
     fr_file_write_text(path, BUILD_TEMPLATE, &err);
 
-    snprintf(path, sizeof path, "%s/path/producer/daukle.json", root);
-    copy_text_file("test/fixtures/producer/daukle.json", path);
+    snprintf(path, sizeof path, "%s/path/consumer/producer/daukle.toml", root);
+    copy_text_file("test/fixtures/consumer/producer/daukle.toml", path);
+
+    snprintf(path, sizeof path, "%s/path/consumer/plugins/path.lua", root);
+    copy_text_file("test/fixtures/consumer/plugins/path.lua", path);
 
     snprintf(path, sizeof path, "%s/github/daukle-github.json", root);
     copy_text_file("test/fixtures/consumer/daukle-github.json", path);
@@ -150,9 +155,9 @@ static char *extract_generated_region(const char *text) {
 
 static int GITHUB_STUB_CALLS = 0;
 
-/* Serves the real producer fixture's text, read fresh from disk on every
-   call, so this stays byte-identical to what the "path" source reads
-   directly and cannot drift into a hand-duplicated copy. */
+/* Serves the checked-in json producer as the release body. The path source
+   reads a toml producer now, so the two are separate encodings of one
+   project and this test's equality assertion is what keeps them in step. */
 static int github_stub_get(const char *url, const fr_http_header *headers, size_t header_count,
                            char **out_body, size_t *out_length, fr_error *err) {
     (void) url; (void) headers; (void) header_count;

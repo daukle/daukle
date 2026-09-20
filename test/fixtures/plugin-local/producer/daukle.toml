@@ -1,0 +1,12 @@
+schema = 1
+project = "forebay/basekit"
+version = "5.0.0"
+
+[modules.contracts]
+
+  [modules.contracts.hello]
+
+[modules.ir]
+requires = ["contracts"]
+
+  [modules.ir.hello]
