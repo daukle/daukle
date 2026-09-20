@@ -11,7 +11,12 @@
    names, plus a daukle table holding the registration functions and exactly the
    verbs named in verbs. Reading any other daukle.* name raises an error naming
    it, so a plugin that forgot to declare a verb fails where it asked rather
-   than where the nil was finally called. */
+   than where the nil was finally called.
+
+   daukle.json_set(text, path, key, value) takes three forms by the type of
+   value: a string writes it, nil removes key from path, and a table of
+   strings writes a json array in the order given, refusing a non-string
+   element by naming its position. */
 int fr_lua_verbs_push_env(lua_State *state, const char *const *verbs, size_t verb_count,
                           fr_error *err);
 

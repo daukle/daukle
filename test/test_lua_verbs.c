@@ -375,6 +375,53 @@ TEST json_set_removes_a_key_when_the_value_is_nil(void) {
     PASS();
 }
 
+TEST json_set_writes_a_string_array_when_the_value_is_a_table(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "json_set" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "out = daukle.json_set('{}', 'daukle.managed', 'dependencies', { 'a', 'b' })",
+        "=t", env, &err));
+
+    lua_getfield(state, env, "out");
+    const char *out = lua_tostring(state, -1);
+    ASSERT(out != NULL);
+    ASSERT(strstr(out, "\"a\"") != NULL);
+    ASSERT(strstr(out, "\"b\"") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST json_set_refuses_a_non_string_in_an_array_naming_its_position(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "json_set" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.json_set('{}', '', 'k', { 'a', 7 })",
+        "=t", env, &err));
+    ASSERT(strstr(err.message, "2") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 TEST parse_reads_toml_through_the_config_table(void) {
     fr_error err;
     fr_registry *registry = NULL;
@@ -440,6 +487,8 @@ int main(int argc, char **argv) {
     RUN_TEST(json_set_preserves_the_rest_of_the_document);
     RUN_TEST(json_set_writes_a_key_containing_a_dot);
     RUN_TEST(json_set_removes_a_key_when_the_value_is_nil);
+    RUN_TEST(json_set_writes_a_string_array_when_the_value_is_a_table);
+    RUN_TEST(json_set_refuses_a_non_string_in_an_array_naming_its_position);
     RUN_TEST(parse_reads_toml_through_the_config_table);
     RUN_TEST(parse_refuses_an_executable_config_format);
     GREATEST_MAIN_END();

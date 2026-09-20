@@ -19,6 +19,7 @@
 #include <string.h>
 
 #define FR_VERB_MAX_HEADERS 16
+#define FR_VERB_MAX_ARRAY 256
 
 static const char *BASE[] = {
     "assert", "error", "ipairs", "pairs", "next", "select", "tonumber", "tostring",
@@ -171,6 +172,36 @@ static int verb_region(lua_State *state) {
     return 1;
 }
 
+static int json_set_array(lua_State *state, const char *text, const char *path, const char *key) {
+    lua_Integer count = luaL_len(state, 4);
+    if (count < 0 || count > FR_VERB_MAX_ARRAY) {
+        return luaL_error(state, "at most %d array values", FR_VERB_MAX_ARRAY);
+    }
+    if (!lua_checkstack(state, (int) count + 4)) {
+        return luaL_error(state, "cannot grow the lua stack for %d array values", (int) count);
+    }
+
+    const char *values[FR_VERB_MAX_ARRAY];
+    for (lua_Integer index = 1; index <= count; index++) {
+        lua_geti(state, 4, index);
+        if (lua_type(state, -1) != LUA_TSTRING) {
+            return luaL_error(state, "array value %d is not a string", (int) index);
+        }
+        /* The value stays on the stack: values[] points into it, and popping
+           before fr_json_edit_set_string_array runs would free it. */
+        values[index - 1] = lua_tostring(state, -1);
+    }
+
+    char *out = NULL;
+    fr_error err;
+    if (fr_json_edit_set_string_array(text, path, key, values, (size_t) count, &out, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    lua_pushstring(state, out);
+    free(out);
+    return 1;
+}
+
 static int verb_json_set(lua_State *state) {
     const char *text = luaL_checkstring(state, 1);
     const char *path = luaL_checkstring(state, 2);
@@ -181,6 +212,8 @@ static int verb_json_set(lua_State *state) {
     int status;
     if (lua_isnoneornil(state, 4)) {
         status = fr_json_edit_remove(text, path, key, &out, &err);
+    } else if (lua_type(state, 4) == LUA_TTABLE) {
+        return json_set_array(state, text, path, key);
     } else {
         status = fr_json_edit_set_string(text, path, key, luaL_checkstring(state, 4), &out, &err);
     }
