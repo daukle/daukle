@@ -148,8 +148,10 @@ returned text reaches the consumer file, that a source plugin's returned table b
 `test_e2e_languages.c` is the broadest test of real language output end to end: it is the only test
 exercising c's output at all, and the only one exercising npm's formatting depth, through
 multi-entry ordering, the optional-`sha256` mix, one space before each package, the absent trailing
-newline, idempotence, and the npm untouched-text and ledger-sort cases. `test_sync.c` and
-`test_e2e.c` also assert real gradle output, but neither touches c or npm's formatting rules.
+newline, idempotence, the npm untouched-text and ledger-sort cases, and the one case the ledger
+exists for: a package the ledger owns and the resolver dropped leaves the target, while a package the
+user added by hand and no ledger claims stays. `test_sync.c` and `test_e2e.c` also assert real gradle
+output, but neither touches c or npm's formatting rules.
 It does its work through byte-identical copies of `plugins/` inside its own fixture directories
 rather than through `plugins/` itself, and Task 14 must replace those copies with minimal fixtures
 rather than delete the test.

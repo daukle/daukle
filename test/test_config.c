@@ -34,7 +34,7 @@ TEST rejects_a_file_no_format_claims(void) {
     fr_build_registry(&registry, &err);
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/consumer/daukle.xyz", registry, &manifest, &err));
-    ASSERT(strstr(err.message, "xyz") != NULL);
+    ASSERT(strstr(err.message, "reads \"xyz\"") != NULL);
     ASSERT(strstr(err.message, "daukle.toml") != NULL);
     fr_registry_destroy(registry);
     PASS();

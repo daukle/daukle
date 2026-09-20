@@ -36,6 +36,33 @@ static const char *PACKAGE_TEMPLATE =
     "  }\n"
     "}\n";
 
+/* A ledger entry the resolver no longer returns, beside a package the user added
+   by hand and daukle never owned: the ledger is the only thing that tells the
+   two apart, so the first must go and the second must stay. */
+static const char *STALE_LEDGER_PACKAGE =
+    "{\n"
+    "  \"name\": \"example\",\n"
+    "  \"version\": \"1.0.0\",\n"
+    "  \"dependencies\": {\n"
+    "    \"@openauthjs/openauth\": \"^0.4.3\",\n"
+    "    \"@intisy/bayonet\": \"^1.0.0\",\n"
+    "    \"@intisy-ai/basekit-contracts\": \"^4.0.0\",\n"
+    "    \"@intisy-ai/basekit-retired\": \"^1.0.0\"\n"
+    "  },\n"
+    "  \"devDependencies\": {\n"
+    "    \"typescript\": \"^5.4.0\"\n"
+    "  },\n"
+    "  \"daukle\": {\n"
+    "    \"managed\": {\n"
+    "      \"dependencies\": [\n"
+    "        \"@intisy-ai/basekit-contracts\",\n"
+    "        \"@intisy-ai/basekit-retired\",\n"
+    "        \"@intisy/bayonet\"\n"
+    "      ]\n"
+    "    }\n"
+    "  }\n"
+    "}\n";
+
 static const char *LANGUAGES_MANIFEST = "test/fixtures/languages/daukle.toml";
 static const char *GRADLE_TARGET = "test/fixtures/languages/build.gradle";
 static const char *CMAKE_TARGET = "test/fixtures/languages/CMakeLists.txt";
@@ -284,6 +311,49 @@ TEST a_package_json_it_owns_nothing_in_is_left_byte_for_byte(void) {
     PASS();
 }
 
+TEST a_package_the_ledger_owns_and_the_resolver_dropped_is_removed(void) {
+    write_file(LEDGER_ORDER_TARGET, STALE_LEDGER_PACKAGE);
+    size_t written = 0;
+    int write_status = sync_manifest(LEDGER_ORDER_MANIFEST, 1, &written);
+    char *package = read_file(LEDGER_ORDER_TARGET);
+    size_t rechecked = 0;
+    int recheck_status = sync_manifest(LEDGER_ORDER_MANIFEST, 0, &rechecked);
+
+    write_file(LEDGER_ORDER_TARGET, PACKAGE_TEMPLATE);
+
+    ASSERT_EQ(FR_OK, write_status);
+    ASSERT_EQ(1, (int) written);
+    ASSERT(package != NULL);
+    ASSERT(strstr(package, "basekit-retired") == NULL);
+    ASSERT(strstr(package, "\"@openauthjs/openauth\": \"^0.4.3\"") != NULL);
+    ASSERT_STR_EQ(
+        "{\n"
+        "  \"name\": \"example\",\n"
+        "  \"version\": \"1.0.0\",\n"
+        "  \"dependencies\": {\n"
+        "    \"@openauthjs/openauth\": \"^0.4.3\",\n"
+        "    \"@intisy/bayonet\": \"^1.8.0\",\n"
+        "    \"@intisy-ai/basekit-contracts\": \"^5.0.0\"\n"
+        "  },\n"
+        "  \"devDependencies\": {\n"
+        "    \"typescript\": \"^5.4.0\"\n"
+        "  },\n"
+        "  \"daukle\": {\n"
+        "    \"managed\": {\n"
+        "      \"dependencies\": [\n"
+        "        \"@intisy-ai/basekit-contracts\",\n"
+        "        \"@intisy/bayonet\"\n"
+        "      ]\n"
+        "    }\n"
+        "  }\n"
+        "}\n", package);
+    ASSERT_EQ(FR_OK, recheck_status);
+    ASSERT_EQ(0, (int) rechecked);
+
+    free(package);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -297,5 +367,6 @@ int main(int argc, char **argv) {
     RUN_TEST(reversing_the_two_consumers_reaches_a_fixed_point_too);
     RUN_TEST(the_ledger_is_sorted_when_the_resolved_order_is_not);
     RUN_TEST(a_package_json_it_owns_nothing_in_is_left_byte_for_byte);
+    RUN_TEST(a_package_the_ledger_owns_and_the_resolver_dropped_is_removed);
     GREATEST_MAIN_END();
 }
