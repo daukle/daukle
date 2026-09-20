@@ -1,24 +1,43 @@
 #include "greatest.h"
+#include "config_toml.h"
 #include "manifest.h"
+#include "region.h"
 
 #include "cJSON.h"
 
+#include <stdlib.h>
 #include <string.h>
 
+/* The two seams fr_config_load_file composes, without its registry: the toml
+   plugin turns a file into a document and the manifest layer validates it.
+   A registry would also load the fixture's [plugins] table, which these tests
+   are not about. */
+static int read_fixture(const char *file_path, fr_manifest *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+    char *text = NULL;
+    if (fr_file_read_text(file_path, &text, err) != FR_OK) return FR_ERR;
+    cJSON *document = NULL;
+    int parsed = FR_CONFIG_TOML.load(FR_CONFIG_TOML.state, text, file_path, ".", NULL, NULL,
+                                     &document, err);
+    free(text);
+    if (parsed != FR_OK) return FR_ERR;
+    return fr_manifest_from_document(document, file_path, out, err);
+}
+
 TEST reads_a_producer(void) {
-    fr_project project; fr_error err;
-    ASSERT_EQ(FR_OK, fr_project_read("test/fixtures/producer/daukle.json", &project, &err));
-    ASSERT_STR_EQ("forebay/basekit", project.project);
-    ASSERT_EQ(5, project.version.major);
-    ASSERT_EQ(3, (int) project.module_count);
-    fr_project_free(&project);
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/producer/daukle.toml", &manifest, &err));
+    ASSERT_STR_EQ("forebay/basekit", manifest.self.project);
+    ASSERT_EQ(5, manifest.self.version.major);
+    ASSERT_EQ(3, (int) manifest.self.module_count);
+    fr_manifest_free(&manifest);
     PASS();
 }
 
 TEST finds_a_module_and_its_requires(void) {
-    fr_project project; fr_error err;
-    fr_project_read("test/fixtures/producer/daukle.json", &project, &err);
-    const fr_module *ir = fr_project_module(&project, "ir");
+    fr_manifest manifest; fr_error err;
+    read_fixture("test/fixtures/producer/daukle.toml", &manifest, &err);
+    const fr_module *ir = fr_project_module(&manifest.self, "ir");
     ASSERT(ir != NULL);
     ASSERT_EQ(1, (int) ir->requires_count);
     ASSERT_STR_EQ("contracts", ir->requires[0]);
@@ -26,31 +45,31 @@ TEST finds_a_module_and_its_requires(void) {
     ASSERT(cJSON_IsObject(gradle));
     const cJSON *coordinate = cJSON_GetObjectItemCaseSensitive(gradle, "coordinate");
     ASSERT_STR_EQ("forebay:basekit:5.0.0:ir", coordinate->valuestring);
-    fr_project_free(&project);
+    fr_manifest_free(&manifest);
     PASS();
 }
 
 TEST leaves_an_absent_language_block_null(void) {
-    fr_project project; fr_error err;
-    fr_project_read("test/fixtures/producer/daukle.json", &project, &err);
-    const fr_module *loader = fr_project_module(&project, "loader");
+    fr_manifest manifest; fr_error err;
+    read_fixture("test/fixtures/producer/daukle.toml", &manifest, &err);
+    const fr_module *loader = fr_project_module(&manifest.self, "loader");
     ASSERT(loader != NULL);
     ASSERT(cJSON_GetObjectItemCaseSensitive(loader->blocks, "gradle") == NULL);
-    fr_project_free(&project);
+    fr_manifest_free(&manifest);
     PASS();
 }
 
 TEST returns_null_for_an_unknown_module(void) {
-    fr_project project; fr_error err;
-    fr_project_read("test/fixtures/producer/daukle.json", &project, &err);
-    ASSERT(fr_project_module(&project, "nope") == NULL);
-    fr_project_free(&project);
+    fr_manifest manifest; fr_error err;
+    read_fixture("test/fixtures/producer/daukle.toml", &manifest, &err);
+    ASSERT(fr_project_module(&manifest.self, "nope") == NULL);
+    fr_manifest_free(&manifest);
     PASS();
 }
 
 TEST reads_a_consumer(void) {
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/daukle.json", &manifest, &err));
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer/daukle.toml", &manifest, &err));
     ASSERT_EQ(1, (int) manifest.source_count);
     ASSERT_STR_EQ("forebay/basekit", manifest.sources[0].project);
     ASSERT_STR_EQ("path", manifest.sources[0].kind);
@@ -71,7 +90,7 @@ TEST reads_a_consumer(void) {
 TEST keeps_a_source_block_of_any_kind(void) {
     fr_manifest manifest;
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/daukle-unknown-source.json", &manifest, &err));
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer/daukle-unknown-source.toml", &manifest, &err));
 
     const fr_source *source = fr_manifest_source(&manifest, "forebay/basekit");
     ASSERT(source != NULL);
@@ -91,16 +110,16 @@ TEST keeps_a_source_block_of_any_kind(void) {
    would otherwise resolve to the core's own value. */
 TEST rejects_a_consumer_language_that_names_a_reserved_module_key(void) {
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_ERR, fr_manifest_read("test/fixtures/consumer-reserved-language/daukle.json",
-                                       &manifest, &err));
+    ASSERT_EQ(FR_ERR, read_fixture("test/fixtures/consumer-reserved-language/daukle.toml",
+                                   &manifest, &err));
     ASSERT(strstr(err.message, "reserved") != NULL);
     ASSERT(strstr(err.message, "requires") != NULL);
     PASS();
 }
 
 TEST rejects_an_unknown_schema(void) {
-    fr_project project; fr_error err;
-    ASSERT_EQ(FR_ERR, fr_project_read("test/fixtures/bad-schema/daukle.json", &project, &err));
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_ERR, read_fixture("test/fixtures/bad-schema/daukle.toml", &manifest, &err));
     ASSERT(strstr(err.message, "schema") != NULL);
     PASS();
 }

@@ -1,0 +1,45 @@
+schema = 1
+project = "forebay/example"
+version = "1.0.0"
+
+[modules]
+
+[sources."forebay/basekit"]
+kind = "path"
+path = "./producer-languages"
+
+[plugins]
+path = "./plugins/path.lua"
+gradle = "./plugins/gradle.lua"
+c = "./plugins/c.lua"
+npm = "./plugins/npm.lua"
+
+[[consumers]]
+id = "jvm"
+language = "gradle"
+file = "build.gradle"
+configuration = "githubImplementation"
+
+  [consumers.dependencies."forebay/basekit"]
+  version = "^5.0.0"
+  modules = ["ir"]
+
+[[consumers]]
+id = "node"
+language = "npm"
+file = "package.json"
+configuration = "dependencies"
+
+  [consumers.dependencies."forebay/basekit"]
+  version = "^5.0.0"
+  modules = ["ir"]
+
+[[consumers]]
+id = "native"
+language = "c"
+file = "CMakeLists.txt"
+configuration = "demo"
+
+  [consumers.dependencies."forebay/basekit"]
+  version = "^5.0.0"
+  modules = ["ir"]

@@ -243,7 +243,7 @@ TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
 
     fr_manifest manifest;
-    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle-unknown-source.json",
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle-unknown-source.toml",
                                          registry, &manifest, &err));
 
     ASSERT(fr_lua_runtime_state() == NULL);

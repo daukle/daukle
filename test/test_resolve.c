@@ -4,12 +4,31 @@
 #include "error.h"
 #include "manifest.h"
 #include "plugins.h"
+#include "region.h"
 #include "registry.h"
 #include "resolve.h"
 
 #include "cJSON.h"
 
+#include <stdlib.h>
 #include <string.h>
+
+/* The two seams fr_config_load_file composes, without its registry: the toml
+   plugin turns a file into a document and the manifest layer validates it.
+   The registry these tests build carries the source plugin under test, so
+   letting fr_config_load_file load the fixture's [plugins] table as well would
+   register a second one for the same capability. */
+static int read_fixture(const char *file_path, fr_manifest *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+    char *text = NULL;
+    if (fr_file_read_text(file_path, &text, err) != FR_OK) return FR_ERR;
+    cJSON *document = NULL;
+    int parsed = FR_CONFIG_TOML.load(FR_CONFIG_TOML.state, text, file_path, ".", NULL, NULL,
+                                     &document, err);
+    free(text);
+    if (parsed != FR_OK) return FR_ERR;
+    return fr_manifest_from_document(document, file_path, out, err);
+}
 
 /* The path source is a lua plugin, and the plugin's daukle.read is bounded by
    the directory the runtime opens on, so the fixture directory is both where
@@ -49,7 +68,7 @@ static int recording_load(void *state, const char *project, const cJSON *block,
 
 TEST hands_the_source_plugin_its_own_state(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer/daukle.json", &manifest, &err);
+    read_fixture("test/fixtures/consumer/daukle.toml", &manifest, &err);
     fr_registry *registry = fr_registry_create();
     int own_state = 0;
     fr_source_plugin recorder = { "daukle.source/path", recording_load, &own_state };
@@ -68,7 +87,7 @@ TEST hands_the_source_plugin_its_own_state(void) {
 
 TEST pulls_in_transitive_requires(void) {
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/daukle.json", &manifest, &err));
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer/daukle.toml", &manifest, &err));
     fr_registry *registry = with_path_source("test/fixtures/consumer");
     ASSERT(registry != NULL);
 
@@ -90,7 +109,7 @@ TEST pulls_in_transitive_requires(void) {
 TEST reports_a_module_that_has_no_block_for_the_language(void) {
     fr_manifest manifest;
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_manifest_read("test/fixtures/consumer/daukle-no-language-block.json", &manifest, &err));
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer/daukle-no-language-block.toml", &manifest, &err));
 
     fr_registry *registry = with_path_source("test/fixtures/consumer");
     ASSERT(registry != NULL);
@@ -109,7 +128,7 @@ TEST reports_a_module_that_has_no_block_for_the_language(void) {
 
 TEST deduplicates_a_module_reached_twice(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-dup/daukle.json", &manifest, &err);
+    read_fixture("test/fixtures/consumer-dup/daukle.toml", &manifest, &err);
     fr_registry *registry = with_path_source("test/fixtures/consumer-dup");
     ASSERT(registry != NULL);
 
@@ -126,7 +145,7 @@ TEST deduplicates_a_module_reached_twice(void) {
 
 TEST rejects_a_version_outside_the_range(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-badrange/daukle.json", &manifest, &err);
+    read_fixture("test/fixtures/consumer-badrange/daukle.toml", &manifest, &err);
     fr_registry *registry = with_path_source("test/fixtures/consumer-badrange");
     ASSERT(registry != NULL);
 
@@ -143,7 +162,7 @@ TEST rejects_a_version_outside_the_range(void) {
 
 TEST reports_a_module_absent_from_the_language(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-noloader/daukle.json", &manifest, &err);
+    read_fixture("test/fixtures/consumer-noloader/daukle.toml", &manifest, &err);
     fr_registry *registry = with_path_source("test/fixtures/consumer-noloader");
     ASSERT(registry != NULL);
 
@@ -160,7 +179,7 @@ TEST reports_a_module_absent_from_the_language(void) {
 
 TEST reports_an_unknown_module_by_name(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-unknown/daukle.json", &manifest, &err);
+    read_fixture("test/fixtures/consumer-unknown/daukle.toml", &manifest, &err);
     fr_registry *registry = with_path_source("test/fixtures/consumer-unknown");
     ASSERT(registry != NULL);
 
@@ -176,7 +195,7 @@ TEST reports_an_unknown_module_by_name(void) {
 
 TEST rejects_a_project_that_does_not_match_its_source(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-mismatch/daukle.json", &manifest, &err);
+    read_fixture("test/fixtures/consumer-mismatch/daukle.toml", &manifest, &err);
     fr_registry *registry = with_path_source("test/fixtures/consumer-mismatch");
     ASSERT(registry != NULL);
 
@@ -193,7 +212,7 @@ TEST rejects_a_project_that_does_not_match_its_source(void) {
 
 TEST resolves_no_modules_for_any_language_without_looking_up_a_block(void) {
     fr_manifest manifest; fr_error err;
-    fr_manifest_read("test/fixtures/consumer-badlanguage/daukle.json", &manifest, &err);
+    read_fixture("test/fixtures/consumer-badlanguage/daukle.toml", &manifest, &err);
     fr_registry *registry = with_path_source("test/fixtures/consumer-badlanguage");
     ASSERT(registry != NULL);
 

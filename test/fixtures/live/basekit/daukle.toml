@@ -1,0 +1,42 @@
+schema = 1
+project = "forebay/basekit"
+version = "5.0.0"
+
+[modules.contracts]
+
+  [modules.contracts.gradle]
+  coordinate = "forebay:basekit:5.0.0:contracts"
+
+[modules.ir]
+
+  [modules.ir.gradle]
+  coordinate = "forebay:basekit:5.0.0:ir"
+
+[modules.js-base]
+requires = ["ir"]
+
+  [modules.js-base.gradle]
+  coordinate = "forebay:basekit:5.0.0:js-base"
+
+[modules.accounts]
+
+  [modules.accounts.gradle]
+  coordinate = "forebay:basekit:5.0.0:accounts"
+
+[modules.auth-contracts]
+requires = ["ir"]
+
+  [modules.auth-contracts.gradle]
+  coordinate = "forebay:basekit:5.0.0:auth-contracts"
+
+[modules.routing]
+requires = ["proxy-contracts", "ir"]
+
+  [modules.routing.gradle]
+  coordinate = "forebay:basekit:5.0.0:routing"
+
+[modules.proxy-contracts]
+requires = ["ir"]
+
+  [modules.proxy-contracts.gradle]
+  coordinate = "forebay:basekit:5.0.0:proxy-contracts"

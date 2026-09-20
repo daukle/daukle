@@ -7,9 +7,9 @@
 #include <string.h>
 
 static const char *ARTIFACT =
-    "https://github.com/forebay/basekit/releases/download/5.0.0/daukle.json";
+    "https://github.com/forebay/basekit/releases/download/5.0.0/daukle.toml";
 static const char *FORK_ARTIFACT =
-    "https://github.com/someone-else/basekit/releases/download/5.0.0/daukle.json";
+    "https://github.com/someone-else/basekit/releases/download/5.0.0/daukle.toml";
 
 /* Unique per process (not just per test) so a crash mid-test or a second CI job
    running this binary concurrently on the same machine can never share, and thus

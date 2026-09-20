@@ -17,10 +17,10 @@ TEST defaults_the_manifest_path_and_the_cache(void) {
 }
 
 TEST takes_the_manifest_path_after_the_command(void) {
-    const char *argv[] = { "daukle", "check", "other/daukle.json" };
+    const char *argv[] = { "daukle", "check", "other/daukle.toml" };
     fr_cli_options options = parse(3, argv);
     ASSERT_EQ(FR_CLI_CHECK, options.command);
-    ASSERT_STR_EQ("other/daukle.json", options.manifest_path);
+    ASSERT_STR_EQ("other/daukle.toml", options.manifest_path);
     PASS();
 }
 

@@ -36,16 +36,16 @@ static const char *PACKAGE_TEMPLATE =
     "  }\n"
     "}\n";
 
-static const char *LANGUAGES_MANIFEST = "test/fixtures/languages/daukle.json";
+static const char *LANGUAGES_MANIFEST = "test/fixtures/languages/daukle.toml";
 static const char *GRADLE_TARGET = "test/fixtures/languages/build.gradle";
 static const char *CMAKE_TARGET = "test/fixtures/languages/CMakeLists.txt";
 static const char *PACKAGE_TARGET = "test/fixtures/languages/package.json";
-static const char *TWO_NPM_MANIFEST = "test/fixtures/two-npm/daukle.json";
-static const char *TWO_NPM_REVERSED = "test/fixtures/two-npm/daukle-reversed.json";
+static const char *TWO_NPM_MANIFEST = "test/fixtures/two-npm/daukle.toml";
+static const char *TWO_NPM_REVERSED = "test/fixtures/two-npm/daukle-reversed.toml";
 static const char *TWO_NPM_TARGET = "test/fixtures/two-npm/package.json";
-static const char *LEDGER_ORDER_MANIFEST = "test/fixtures/npm-ledger-order/daukle.json";
+static const char *LEDGER_ORDER_MANIFEST = "test/fixtures/npm-ledger-order/daukle.toml";
 static const char *LEDGER_ORDER_TARGET = "test/fixtures/npm-ledger-order/package.json";
-static const char *NOTHING_OWNED_MANIFEST = "test/fixtures/npm-nothing-owned/daukle.json";
+static const char *NOTHING_OWNED_MANIFEST = "test/fixtures/npm-nothing-owned/daukle.toml";
 static const char *NOTHING_OWNED_TARGET = "test/fixtures/npm-nothing-owned/package.json";
 
 static void write_file(const char *path, const char *text) {

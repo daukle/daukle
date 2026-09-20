@@ -16,12 +16,12 @@ static int never_loads(void *state, const char *text, const char *origin, const 
     return FR_ERR;
 }
 
-TEST loads_a_json_manifest_through_the_seam(void) {
+TEST loads_a_toml_manifest_through_the_seam(void) {
     fr_error err;
     fr_registry *registry = NULL;
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
     fr_manifest manifest;
-    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle.json", registry, &manifest, &err));
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle.toml", registry, &manifest, &err));
     ASSERT_STR_EQ("forebay/stub-translator", manifest.self.project);
     fr_manifest_free(&manifest);
     fr_registry_destroy(registry);
@@ -84,15 +84,15 @@ TEST reports_a_directory_with_no_manifest(void) {
     PASS();
 }
 
-TEST names_where_a_json_manifest_stops_parsing(void) {
+TEST names_where_a_toml_manifest_stops_parsing(void) {
     fr_error err;
     fr_registry *registry = NULL;
     fr_build_registry(&registry, &err);
     fr_manifest manifest;
-    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/json-broken/daukle.json",
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/toml-broken/daukle.toml",
                                           registry, &manifest, &err));
-    ASSERT(strstr(err.message, "byte") != NULL);
-    ASSERT(strstr(err.message, "version") != NULL);
+    ASSERT(strstr(err.message, "toml-broken/daukle.toml") != NULL);
+    ASSERT(strstr(err.message, "line 3") != NULL);
     fr_registry_destroy(registry);
     PASS();
 }
@@ -101,11 +101,11 @@ GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
-    RUN_TEST(loads_a_json_manifest_through_the_seam);
+    RUN_TEST(loads_a_toml_manifest_through_the_seam);
     RUN_TEST(rejects_a_file_no_format_claims);
     RUN_TEST(finds_the_only_manifest_in_a_directory);
     RUN_TEST(refuses_two_manifests_in_one_directory);
     RUN_TEST(reports_a_directory_with_no_manifest);
-    RUN_TEST(names_where_a_json_manifest_stops_parsing);
+    RUN_TEST(names_where_a_toml_manifest_stops_parsing);
     GREATEST_MAIN_END();
 }

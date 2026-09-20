@@ -27,7 +27,7 @@ static void reset_fixtures(void) {
 TEST reproduces_both_real_consumers(void) {
     reset_fixtures();
     fr_sync_report report; fr_error err;
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.json", 1, 1, &report, &err));
+    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.toml", 1, 1, &report, &err));
     ASSERT_EQ(2, (int) report.count);
     fr_sync_report_free(&report);
 
@@ -47,9 +47,9 @@ TEST reproduces_both_real_consumers(void) {
 TEST the_second_run_changes_nothing(void) {
     reset_fixtures();
     fr_sync_report report; fr_error err;
-    fr_sync("test/fixtures/live/stub-translator/daukle.json", 1, 1, &report, &err);
+    fr_sync("test/fixtures/live/stub-translator/daukle.toml", 1, 1, &report, &err);
     fr_sync_report_free(&report);
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.json", 0, 1, &report, &err));
+    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.toml", 0, 1, &report, &err));
     ASSERT_EQ(0, (int) report.count);
     fr_sync_report_free(&report);
     reset_fixtures();
@@ -59,7 +59,7 @@ TEST the_second_run_changes_nothing(void) {
 TEST check_names_every_drifted_consumer(void) {
     reset_fixtures();
     fr_sync_report report; fr_error err;
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.json", 0, 1, &report, &err));
+    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.toml", 0, 1, &report, &err));
     ASSERT_EQ(2, (int) report.count);
     ASSERT(strstr(report.files[0], "/stub/build.gradle") != NULL);
     ASSERT(strstr(report.files[1], "teavm-stub/build.gradle") != NULL);
@@ -121,8 +121,8 @@ static void setup_e2e_tree(void) {
     snprintf(path, sizeof path, "%s/github", root); fr_test_make_directory(path);
     snprintf(path, sizeof path, "%s/github/plugins", root); fr_test_make_directory(path);
 
-    snprintf(path, sizeof path, "%s/path/consumer/daukle.json", root);
-    copy_text_file("test/fixtures/consumer/daukle.json", path);
+    snprintf(path, sizeof path, "%s/path/consumer/daukle.toml", root);
+    copy_text_file("test/fixtures/consumer/daukle.toml", path);
 
     snprintf(path, sizeof path, "%s/path/consumer/build.gradle", root);
     fr_file_write_text(path, BUILD_TEMPLATE, &err);
@@ -136,8 +136,8 @@ static void setup_e2e_tree(void) {
     snprintf(path, sizeof path, "%s/path/consumer/plugins/gradle.lua", root);
     copy_text_file("test/fixtures/consumer/plugins/gradle.lua", path);
 
-    snprintf(path, sizeof path, "%s/github/daukle-github.json", root);
-    copy_text_file("test/fixtures/consumer/daukle-github.json", path);
+    snprintf(path, sizeof path, "%s/github/daukle-github.toml", root);
+    copy_text_file("test/fixtures/consumer/daukle-github.toml", path);
 
     snprintf(path, sizeof path, "%s/github/plugins/github.lua", root);
     copy_text_file("test/fixtures/consumer/plugins/github.lua", path);
@@ -204,9 +204,9 @@ TEST github_source_matches_path_source(void) {
     char path_build[700];
     char github_manifest[700];
     char github_build[700];
-    snprintf(path_manifest, sizeof path_manifest, "%s/path/consumer/daukle.json", root);
+    snprintf(path_manifest, sizeof path_manifest, "%s/path/consumer/daukle.toml", root);
     snprintf(path_build, sizeof path_build, "%s/path/consumer/build.gradle", root);
-    snprintf(github_manifest, sizeof github_manifest, "%s/github/daukle-github.json", root);
+    snprintf(github_manifest, sizeof github_manifest, "%s/github/daukle-github.toml", root);
     snprintf(github_build, sizeof github_build, "%s/github/build.gradle", root);
 
     fr_error err;
@@ -263,7 +263,7 @@ TEST check_reports_drift_through_the_github_source(void) {
     const char *root = e2e_temp_root();
     char github_manifest[700];
     char github_build[700];
-    snprintf(github_manifest, sizeof github_manifest, "%s/github/daukle-github.json", root);
+    snprintf(github_manifest, sizeof github_manifest, "%s/github/daukle-github.toml", root);
     snprintf(github_build, sizeof github_build, "%s/github/build.gradle", root);
 
     fr_test_set_env("DAUKLE_CACHE_DIR", e2e_cache_root());
@@ -317,7 +317,7 @@ TEST no_cache_bypasses_both_the_read_and_the_write(void) {
 
     const char *root = e2e_temp_root();
     char github_manifest[700];
-    snprintf(github_manifest, sizeof github_manifest, "%s/github/daukle-github.json", root);
+    snprintf(github_manifest, sizeof github_manifest, "%s/github/daukle-github.toml", root);
 
     fr_test_set_env("DAUKLE_CACHE_DIR", e2e_cache_root());
     fr_http_fn original_backend = fr_http_set_backend(github_stub_get);

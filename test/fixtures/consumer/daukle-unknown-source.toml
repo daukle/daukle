@@ -1,0 +1,6 @@
+schema = 1
+project = "forebay/example"
+version = "1.0.0"
+modules = {}
+sources = { "forebay/basekit" = { kind = "some-future-kind", whatever = "value" } }
+consumers = []
