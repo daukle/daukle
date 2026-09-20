@@ -6,7 +6,6 @@
 #include "config_lua.h"
 #include "config_toml.h"
 #include "error.h"
-#include "lang_c.h"
 #include "lang_npm.h"
 #include "manifest.h"
 #include "plugins.h"
@@ -75,10 +74,6 @@ int fr_build_registry(fr_registry **out, fr_error *err) {
         return FR_ERR;
     }
     if (fr_registry_add_language(registry, &FR_LANGUAGE_NPM, err) != FR_OK) {
-        fr_registry_destroy(registry);
-        return FR_ERR;
-    }
-    if (fr_registry_add_language(registry, &FR_LANGUAGE_C, err) != FR_OK) {
         fr_registry_destroy(registry);
         return FR_ERR;
     }

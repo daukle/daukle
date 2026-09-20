@@ -8,7 +8,8 @@
   },
   "plugins": {
     "path": "./plugins/path.lua",
-    "gradle": "./plugins/gradle.lua"
+    "gradle": "./plugins/gradle.lua",
+    "c": "./plugins/c.lua"
   },
   "consumers": [
     {
