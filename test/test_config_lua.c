@@ -129,7 +129,9 @@ TEST a_script_registers_a_language_plugin(void) {
     PASS();
 }
 
-TEST a_script_may_not_take_over_a_built_in_capability(void) {
+/* No language or source capability is built in any more, so the collision a
+   script can still provoke is with a capability another script already took. */
+TEST a_script_may_not_take_over_a_registered_capability(void) {
     fr_error err;
     fr_registry *registry = NULL;
     fr_build_registry(&registry, &err);
@@ -469,7 +471,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_script_clearing_an_array_to_an_empty_table_still_yields_an_array);
     RUN_TEST(a_script_clearing_an_object_to_an_empty_table_stays_an_object);
     RUN_TEST(a_script_registers_a_language_plugin);
-    RUN_TEST(a_script_may_not_take_over_a_built_in_capability);
+    RUN_TEST(a_script_may_not_take_over_a_registered_capability);
     RUN_TEST(a_script_registered_source_plugin_resolves_through_sync);
     RUN_TEST(a_lua_root_manifest_loads_the_plugins_it_declares);
     RUN_TEST(a_plugin_name_too_long_for_the_capability_buffer_is_rejected);

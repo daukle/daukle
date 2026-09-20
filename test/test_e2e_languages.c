@@ -43,6 +43,8 @@ static const char *PACKAGE_TARGET = "test/fixtures/languages/package.json";
 static const char *TWO_NPM_MANIFEST = "test/fixtures/two-npm/daukle.json";
 static const char *TWO_NPM_REVERSED = "test/fixtures/two-npm/daukle-reversed.json";
 static const char *TWO_NPM_TARGET = "test/fixtures/two-npm/package.json";
+static const char *LEDGER_ORDER_MANIFEST = "test/fixtures/npm-ledger-order/daukle.json";
+static const char *LEDGER_ORDER_TARGET = "test/fixtures/npm-ledger-order/package.json";
 
 static void write_file(const char *path, const char *text) {
     fr_error err;
@@ -226,6 +228,43 @@ TEST reversing_the_two_consumers_reaches_a_fixed_point_too(void) {
     PASS();
 }
 
+/* The resolver orders entries by module name, so a producer whose published
+   package names sort the other way round is what makes an unsorted ledger
+   visible: the members below keep resolved order and the ledger does not. */
+TEST the_ledger_is_sorted_when_the_resolved_order_is_not(void) {
+    write_file(LEDGER_ORDER_TARGET, PACKAGE_TEMPLATE);
+    size_t count = 0;
+    ASSERT_EQ(FR_OK, sync_manifest(LEDGER_ORDER_MANIFEST, 1, &count));
+    ASSERT_EQ(1, (int) count);
+
+    char *package = read_file(LEDGER_ORDER_TARGET);
+    ASSERT_STR_EQ(
+        "{\n"
+        "  \"name\": \"example\",\n"
+        "  \"version\": \"1.0.0\",\n"
+        "  \"dependencies\": {\n"
+        "    \"@openauthjs/openauth\": \"^0.4.3\",\n"
+        "    \"@intisy/bayonet\": \"^1.8.0\",\n"
+        "    \"@intisy-ai/basekit-contracts\": \"^5.0.0\"\n"
+        "  },\n"
+        "  \"devDependencies\": {\n"
+        "    \"typescript\": \"^5.4.0\"\n"
+        "  },\n"
+        "  \"daukle\": {\n"
+        "    \"managed\": {\n"
+        "      \"dependencies\": [\n"
+        "        \"@intisy-ai/basekit-contracts\",\n"
+        "        \"@intisy/bayonet\"\n"
+        "      ]\n"
+        "    }\n"
+        "  }\n"
+        "}\n", package);
+    free(package);
+
+    write_file(LEDGER_ORDER_TARGET, PACKAGE_TEMPLATE);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -237,5 +276,6 @@ int main(int argc, char **argv) {
     RUN_TEST(the_report_lists_only_the_target_that_drifted);
     RUN_TEST(two_npm_consumers_on_one_file_reach_a_fixed_point);
     RUN_TEST(reversing_the_two_consumers_reaches_a_fixed_point_too);
+    RUN_TEST(the_ledger_is_sorted_when_the_resolved_order_is_not);
     GREATEST_MAIN_END();
 }

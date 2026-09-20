@@ -10,6 +10,7 @@ path = "./producer-languages"
 
 [plugins]
 path = "./plugins/path.lua"
+npm = "./plugins/npm.lua"
 
 [[consumers]]
 id = "stub"

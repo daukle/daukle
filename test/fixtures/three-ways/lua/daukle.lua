@@ -4,7 +4,7 @@ daukle.config = {
   version = "1.0.0",
   modules = {},
   sources = { ["forebay/basekit"] = { kind = "path", path = "./producer-languages" } },
-  plugins = { path = "./plugins/path.lua" },
+  plugins = { path = "./plugins/path.lua", npm = "./plugins/npm.lua" },
   consumers = {
     {
       id = "stub",

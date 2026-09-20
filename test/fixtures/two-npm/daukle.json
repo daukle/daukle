@@ -7,7 +7,8 @@
     "forebay/basekit": { "kind": "path", "path": "./producer-languages" }
   },
   "plugins": {
-    "path": "./plugins/path.lua"
+    "path": "./plugins/path.lua",
+    "npm": "./plugins/npm.lua"
   },
   "consumers": [
     {

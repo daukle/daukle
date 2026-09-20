@@ -6,7 +6,6 @@
 #include "config_lua.h"
 #include "config_toml.h"
 #include "error.h"
-#include "lang_npm.h"
 #include "manifest.h"
 #include "plugins.h"
 #include "region.h"
@@ -71,10 +70,6 @@ int fr_build_registry(fr_registry **out, fr_error *err) {
     fr_registry *registry = fr_registry_create();
     if (registry == NULL) {
         fr_error_set(err, "out of memory creating the plugin registry");
-        return FR_ERR;
-    }
-    if (fr_registry_add_language(registry, &FR_LANGUAGE_NPM, err) != FR_OK) {
-        fr_registry_destroy(registry);
         return FR_ERR;
     }
     if (fr_registry_add_config(registry, &FR_CONFIG_JSON, err) != FR_OK) {

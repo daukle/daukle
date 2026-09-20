@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "project": "forebay/three-ways",
+  "project": "forebay/example",
   "version": "1.0.0",
   "modules": {},
   "sources": {
-    "forebay/basekit": { "kind": "path", "path": "./producer-languages" }
+    "forebay/basekit": { "kind": "path", "path": "./producer" }
   },
   "plugins": {
     "path": "./plugins/path.lua",
@@ -12,12 +12,12 @@
   },
   "consumers": [
     {
-      "id": "stub",
+      "id": "node",
       "language": "npm",
       "file": "package.json",
       "configuration": "dependencies",
       "dependencies": {
-        "forebay/basekit": { "version": "^5.0.0", "modules": ["ir"] }
+        "forebay/basekit": { "version": "^5.0.0", "modules": ["bayonet", "contracts"] }
       }
     }
   ]

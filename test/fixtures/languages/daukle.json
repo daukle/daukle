@@ -9,7 +9,8 @@
   "plugins": {
     "path": "./plugins/path.lua",
     "gradle": "./plugins/gradle.lua",
-    "c": "./plugins/c.lua"
+    "c": "./plugins/c.lua",
+    "npm": "./plugins/npm.lua"
   },
   "consumers": [
     {

@@ -1,0 +1,15 @@
+schema = 1
+project = "forebay/basekit"
+version = "5.0.0"
+
+[modules.bayonet]
+
+  [modules.bayonet.npm]
+  package = "@intisy/bayonet"
+  range = "^1.8.0"
+
+[modules.contracts]
+
+  [modules.contracts.npm]
+  package = "@intisy-ai/basekit-contracts"
+  range = "^5.0.0"
