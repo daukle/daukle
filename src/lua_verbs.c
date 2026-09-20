@@ -173,24 +173,13 @@ static int verb_region(lua_State *state) {
 
 static int verb_json_set(lua_State *state) {
     const char *text = luaL_checkstring(state, 1);
-    const char *pointer = luaL_checkstring(state, 2);
-    const char *value = luaL_checkstring(state, 3);
-
-    const char *last_dot = strrchr(pointer, '.');
-    char container[256];
-    const char *key = pointer;
-    container[0] = '\0';
-    if (last_dot != NULL) {
-        size_t length = (size_t) (last_dot - pointer);
-        if (length >= sizeof container) return luaL_error(state, "\"%s\" is too long", pointer);
-        memcpy(container, pointer, length);
-        container[length] = '\0';
-        key = last_dot + 1;
-    }
+    const char *path = luaL_checkstring(state, 2);
+    const char *key = luaL_checkstring(state, 3);
+    const char *value = luaL_checkstring(state, 4);
 
     char *out = NULL;
     fr_error err;
-    if (fr_json_edit_set_string(text, container, key, value, &out, &err) != FR_OK) {
+    if (fr_json_edit_set_string(text, path, key, value, &out, &err) != FR_OK) {
         return luaL_error(state, "%s", err.message);
     }
     lua_pushstring(state, out);

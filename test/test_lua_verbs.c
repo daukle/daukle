@@ -307,7 +307,7 @@ TEST json_set_preserves_the_rest_of_the_document(void) {
 
     ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
         "out = daukle.json_set('{\"name\":\"app\",\"dependencies\":{\"a\":\"1.0.0\"}}',"
-        " 'dependencies.a', '2.0.0')",
+        " 'dependencies', 'a', '2.0.0')",
         "=t", env, &err));
 
     lua_getfield(state, env, "out");
@@ -315,6 +315,33 @@ TEST json_set_preserves_the_rest_of_the_document(void) {
     ASSERT(strstr(out, "\"name\":\"app\"") != NULL);
     ASSERT(strstr(out, "2.0.0") != NULL);
     ASSERT(strstr(out, "1.0.0") == NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST json_set_writes_a_key_containing_a_dot(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "json_set" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "out = daukle.json_set('{\"dependencies\":{}}', 'dependencies',"
+        " 'lodash.merge', '^4.6.2')",
+        "=t", env, &err));
+
+    lua_getfield(state, env, "out");
+    const char *out = lua_tostring(state, -1);
+    ASSERT(out != NULL);
+    ASSERT(strstr(out, "lodash.merge") != NULL);
+    ASSERT(strstr(out, "^4.6.2") != NULL);
 
     lua_settop(state, 0);
     fr_registry_destroy(registry);
@@ -385,6 +412,7 @@ int main(int argc, char **argv) {
     RUN_TEST(cache_calls_the_producer_once);
     RUN_TEST(region_replaces_only_between_the_markers);
     RUN_TEST(json_set_preserves_the_rest_of_the_document);
+    RUN_TEST(json_set_writes_a_key_containing_a_dot);
     RUN_TEST(parse_reads_toml_through_the_config_table);
     RUN_TEST(parse_refuses_an_executable_config_format);
     GREATEST_MAIN_END();
