@@ -61,8 +61,8 @@ the client tier's rules.
 | the three plugin tables, source, language and config | `registry.c` | a plugin. It holds `fr_source_plugin`, `fr_language_plugin` and `fr_config_plugin` |
 | the five plugins that were built in | `plugins/*.lua` | staged here until the repositories in spec section 6 exist. Not fixtures: they are the content those repositories will carry |
 | finding the manifest and choosing its format | `config.c` | a parser. It dispatches to a registered `fr_config_plugin` |
-| reading a json manifest | `config_json.c` | the only possible format. It is one registered `fr_config_plugin` |
-| reading a toml manifest | `config_toml.c` | a json reader. It is a peer format, registered the same way |
+| reading json text into the document model | `config_json.c` | a manifest format, nor a registered `fr_config_plugin`. It is reachable only through the `daukle.json_parse` verb |
+| reading a toml manifest | `config_toml.c` | the whole config table. `config_lua.c` is the overlay beside it, registered the same way |
 | rewriting a marked region of a file in place | `region.c` | a JSON editor. `jsonedit.c` is, for files that are JSON |
 | rewriting a toml manifest in place | `tomledit.c` | a toml parser. It splices spans, as `jsonedit.c` does for json |
 | the whole write pass over a manifest | `sync.c` | per-language. It drives the language plugins |
@@ -104,9 +104,11 @@ than two that could disagree, and the refusal names both directories.
 **Adding a source or a language means writing a Lua plugin and declaring it in `[plugins]`.**
 `config_lua.c:334` and `config_lua.c:349` are the only places that fill in an `fr_language_plugin`
 or an `fr_source_plugin` and register it, turning a `daukle.language{}` or `daukle.source{}`
-declaration into a registry entry; no other file in the repository calls `fr_registry_add_source` or
-`fr_registry_add_language`. Neither touches `resolve.c`, and a change that does touch it for a new
-source or language is the signal that the seam was bypassed.
+declaration into a registry entry; no other file in `src/` calls `fr_registry_add_source` or
+`fr_registry_add_language`, whose only direct callers in `test/` are `test_registry.c`'s unit tests of
+the registry and the one stub source `test_resolve.c:75` injects to watch a plugin get its own state.
+Neither touches `resolve.c`, and a change that does touch it for a new source or language is the
+signal that the seam was bypassed.
 
 **The cache key includes the artifact, and that is load bearing.** Two manifests can name one project
 id and one version and resolve them from different repositories. Keyed by project and version alone,
@@ -125,7 +127,7 @@ tests themselves.
 
 Most modules have a dedicated test file; the rest are covered through the tests of the module that
 drives them, such as `plugins_remote.c` through `test_plugins.c`, and `config_json.c` through
-`test_config.c`'s json-manifest test.
+`test_lua_verbs.c`'s `json_parse` tests.
 
 **daukle no longer tests what npm, Gradle or C output looks like.** `test_lang_npm.c`,
 `test_lang_gradle.c`, `test_lang_c.c` and `test_source_github.c` were deleted with the modules they
@@ -148,8 +150,9 @@ exercising c's output at all, and the only one exercising npm's formatting depth
 multi-entry ordering, the optional-`sha256` mix, one space before each package, the absent trailing
 newline, idempotence, and the npm untouched-text and ledger-sort cases. `test_sync.c` and
 `test_e2e.c` also assert real gradle output, but neither touches c or npm's formatting rules.
-`test_e2e_languages.c` does its work through `plugins/`, and Task 14 must replace its plugins with
-minimal fixtures rather than delete the test.
+It does its work through byte-identical copies of `plugins/` inside its own fixture directories
+rather than through `plugins/` itself, and Task 14 must replace those copies with minimal fixtures
+rather than delete the test.
 
 **`fr_registry_add_source`'s and `fr_registry_add_language`'s duplicate-capability refusal is now
 unreachable from every production path.** Both callers sit behind `take_slot` in `src/config_lua.c`,
@@ -165,15 +168,17 @@ The resolver, the cache, the sync pass and the CLI are all implemented and teste
 every language now arrives through a plugin: `fr_build_registry` in `sync.c` registers only the
 config formats, and the registry's source and language tables start empty. The configuration surface
 is TOML with an optional Lua overlay: `config.c` finds the manifest and dispatches to a registered
-`fr_config_plugin` by a capability string built from the file's extension, and `config_json.c`,
-`config_toml.c` and `config_lua.c` are all registered formats, chosen the same way, with none named
-in `config.c` itself. TOML is the format a manifest is authored in going forward, and it is also the
-asset name the `daukle/github` plugin fetches by default from a release; JSON keeps working purely as
-a manifest format, since `config_json.c` remains a registered `fr_config_plugin`. Task **F-7** in
-`spisor/docs/TASKS.md` is unaffected by this work: it says both of the
-phase-2 manifest writers are proven against fixtures only, because nothing in the ecosystem
-publishes a manifest release asset yet. basekit's 5.0.0 release carries eight jars and no manifest.
-Until something publishes one, the writers have never met real input.
+`fr_config_plugin` by a capability string built from the file's extension, and `config_toml.c` and
+`config_lua.c` are the only two registered formats, chosen the same way, with neither named in
+`config.c` itself. TOML is the format a manifest is authored in going forward, and it is also the
+asset name the `daukle/github` plugin fetches by default from a release. JSON is no longer a manifest
+format at all: `config_json.c` registers nothing and survives only so a plugin can read its own data
+file through `daukle.json_parse`, such as npm recovering its ledger from a `package.json`.
+
+Task **F-7** in `spisor/docs/TASKS.md` is unaffected by this work: it says both of the phase-2
+manifest writers are proven against fixtures only, because nothing in the ecosystem publishes a
+manifest release asset yet. basekit's 5.0.0 release carries eight jars and no manifest. Until
+something publishes one, the writers have never met real input.
 
 `daukle add` edits TOML only, and `main.c` names that format on purpose: it checks the manifest path
 ends in `.toml` and calls `fr_toml_edit_set_dependency` directly, which is a deliberate, accepted
@@ -192,8 +197,8 @@ A manifest's `[plugins]` table registers a source or a language by running each 
 `plugins_remote.c`. It is now the only route into the registry's source and language tables:
 `fr_build_registry` registers only the config formats, and the five files that used to compile a
 source or a language directly into the binary, `source_path.c`, `source_github.c`, `lang_npm.c`,
-`lang_gradle.c` and `lang_c.c`, are gone. Adding `FR_SOURCE_[A-Z]` and `FR_LANGUAGE_[A-Z]` to the
-agnostic check so `config.c` cannot silently regain one is still a separate, later plan.
+`lang_gradle.c` and `lang_c.c`, are gone. `FR_SOURCE_[A-Z]` and `FR_LANGUAGE_[A-Z]` are in the
+agnostic check's `FORBIDDEN` list, so `config.c` cannot silently regain one.
 `daukle plugin update [label]` always reads the current manifest first and removes a
 remote plugin's cached copies scoped to what THAT manifest declares: one label's entry, or, with no
 label, every remote entry it declares, and nothing outside it, so the plugin cache root, which is
@@ -201,3 +206,12 @@ shared across every project on the machine, is never touched beyond this manifes
 next run re-resolves whatever was removed. `daukle config print` shows every loaded plugin's label,
 its resolved version or local path, its declared verbs and its sha-256 digest, pinned or not, so
 adopting a pin is a copy of that printed digest rather than a separate lookup.
+
+**Known limitation: `daukle plugin update` cannot read a lua-rooted manifest.** A `[plugins]` table
+loads whatever format the root manifest is written in, so a project authored in `daukle.lua` gets its
+only source and language from one; but `read_manifest_plugins` (`src/main.c:352`) refuses an overlay
+format outright, and `fr_config_find` hands it the `daukle.lua` when there is no `daukle.toml` beside
+it, so exactly those projects meet that refusal. The refusal stays: reading a lua manifest means
+executing it, which is the opposite of what a command whose whole job is discarding a plugin's cache
+wants. A project that needs the command keeps a `daukle.toml` as its root and the `daukle.lua` as an
+overlay.
