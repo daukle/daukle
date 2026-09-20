@@ -370,8 +370,9 @@ static int read_manifest_plugins(const char *manifest_path, fr_plugin_entry **ou
    project's cached plugins too. The scoping rule itself lives in
    fr_plugins_update_cache, shared with, and covered directly by, test_plugins.c,
    since main.c has no test binary of its own. */
-static int plugin_update(const char *label, int verbose) {
+static int plugin_update(const char *label, int use_cache, int verbose) {
     fr_error err;
+    fr_cache_set_enabled(use_cache);
 
     char *resolved = NULL;
     if (resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
@@ -430,7 +431,7 @@ int main(int argc, char **argv) {
         case FR_CLI_ADD:
             return add_dependency(&options);
         case FR_CLI_PLUGIN_UPDATE:
-            return plugin_update(options.plugin_label, options.verbose);
+            return plugin_update(options.plugin_label, options.use_cache, options.verbose);
         case FR_CLI_USAGE:
             break;
     }
