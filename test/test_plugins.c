@@ -249,6 +249,7 @@ TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
 
     fr_manifest_free(&manifest);
     fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
     PASS();
 }
 

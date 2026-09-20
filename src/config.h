@@ -12,7 +12,9 @@ int fr_config_find(const char *directory, const fr_registry *registry, char **ou
 /* The registered format that owns file_path's extension, or NULL with err set
    naming the extension. Exposed so a caller reading a manifest for itself,
    rather than through fr_config_load_file, dispatches through the registry
-   instead of keeping a second extension-to-format table of its own. */
+   instead of keeping a second extension-to-format table of its own. The
+   registry stores plugins by value, so the returned pointer is owned by
+   registry and is invalid after fr_registry_destroy. */
 const fr_config_plugin *fr_config_plugin_for(const fr_registry *registry, const char *file_path,
                                              fr_error *err);
 

@@ -39,8 +39,7 @@ typedef struct {
 
 /* strdup is not C11 and strndup is absent on MSVC, so plugins.c and
    plugins_remote.c share these rather than each keeping a copy. Defined in
-   plugins.c, the original owner of both. The fr_ prefix is what marks a symbol
-   with external linkage in this repo; a file-local helper carries none. */
+   plugins.c, the original owner of both. */
 char *fr_dup_string(const char *text);
 char *fr_dup_prefix(const char *text, size_t length);
 
