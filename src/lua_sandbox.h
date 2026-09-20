@@ -9,8 +9,12 @@
    base_dir bounds every include: its canonical form is resolved once here and
    kept in the state's registry, and every include target is re-resolved and
    checked against it, so a symlink or junction inside base_dir cannot reach
-   outside it. */
-int fr_lua_sandbox_install(lua_State *state, const char *base_dir, fr_error *err);
+   outside it. *out_canonical, when not NULL, receives that canonical form on
+   success and the caller owns it, so a caller recording what the state is
+   bounded to records what the sandbox actually used rather than resolving the
+   same directory a second time. */
+int fr_lua_sandbox_install(lua_State *state, const char *base_dir, char **out_canonical,
+                           fr_error *err);
 
 /* The canonical form fr_lua_sandbox_install would bound a state to, exposed so
    a caller owning the runtime's lifetime compares two base directories the way

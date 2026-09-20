@@ -395,14 +395,31 @@ TEST two_plugin_loads_share_one_state(void) {
     PASS();
 }
 
-TEST a_second_base_directory_is_refused_while_the_runtime_is_open(void) {
+TEST a_second_registry_is_refused_while_the_first_holds_plugins(void) {
+    fr_error err;
+    fr_registry *first = fr_registry_create();
+    fr_registry *second = fr_registry_create();
+    ASSERT(first != NULL && second != NULL);
+
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", first, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_runtime_begin(".", second, &err));
+    ASSERT(strstr(err.message, "registry") != NULL);
+
+    fr_registry_destroy(first);
+    fr_registry_destroy(second);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST a_second_base_directory_is_refused_naming_both(void) {
     fr_error err;
     fr_registry *registry = fr_registry_create();
     ASSERT(registry != NULL);
 
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
-    ASSERT_EQ(FR_ERR, fr_lua_runtime_begin("test/fixtures", registry, &err));
-    ASSERT(strstr(err.message, "fixtures") != NULL);
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin("test/fixtures/lua-plugin", registry, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_runtime_begin("test/fixtures/plugin-local", registry, &err));
+    ASSERT(strstr(err.message, "lua-plugin") != NULL);
+    ASSERT(strstr(err.message, "plugin-local") != NULL);
 
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
@@ -416,26 +433,11 @@ TEST the_same_base_directory_spelled_differently_still_reuses_the_runtime(void) 
 
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     lua_State *first = fr_lua_runtime_state();
+    ASSERT(first != NULL);
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin("./test/..", registry, &err));
     ASSERT_EQ(first, fr_lua_runtime_state());
 
     fr_registry_destroy(registry);
-    fr_lua_runtime_shutdown();
-    PASS();
-}
-
-TEST a_second_registry_is_refused_while_the_first_holds_plugins(void) {
-    fr_error err;
-    fr_registry *first = fr_registry_create();
-    fr_registry *second = fr_registry_create();
-    ASSERT(first != NULL && second != NULL);
-
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", first, &err));
-    ASSERT_EQ(FR_ERR, fr_lua_runtime_begin(".", second, &err));
-    ASSERT(strstr(err.message, "registry") != NULL);
-
-    fr_registry_destroy(first);
-    fr_registry_destroy(second);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -465,7 +467,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_second_load_replaces_the_recorded_environment_reads);
     RUN_TEST(two_plugin_loads_share_one_state);
     RUN_TEST(a_second_registry_is_refused_while_the_first_holds_plugins);
-    RUN_TEST(a_second_base_directory_is_refused_while_the_runtime_is_open);
+    RUN_TEST(a_second_base_directory_is_refused_naming_both);
     RUN_TEST(the_same_base_directory_spelled_differently_still_reuses_the_runtime);
     GREATEST_MAIN_END();
 }

@@ -235,7 +235,8 @@ static int protected_install(lua_State *state) {
     return 0;
 }
 
-int fr_lua_sandbox_install(lua_State *state, const char *base_dir, fr_error *err) {
+int fr_lua_sandbox_install(lua_State *state, const char *base_dir, char **out_canonical,
+                           fr_error *err) {
     char *canonical_base = NULL;
     if (fr_lua_sandbox_canonical_dir(base_dir, &canonical_base, err) != FR_OK) return FR_ERR;
 
@@ -243,12 +244,17 @@ int fr_lua_sandbox_install(lua_State *state, const char *base_dir, fr_error *err
     lua_pushcfunction(state, protected_install);
     int status = lua_pcall(state, 0, 0, 0);
     pending_base_dir = NULL;
-    free(canonical_base);
 
     if (status != LUA_OK) {
+        free(canonical_base);
         fr_error_set(err, "%s", fr_lua_error_text(state));
         lua_pop(state, 1);
         return FR_ERR;
+    }
+    if (out_canonical != NULL) {
+        *out_canonical = canonical_base;
+    } else {
+        free(canonical_base);
     }
     return FR_OK;
 }

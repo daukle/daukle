@@ -464,10 +464,9 @@ static int open_runtime_serves(const fr_registry *registry, const char *canonica
 }
 
 int fr_lua_runtime_begin(const char *base_dir, fr_registry *registry, fr_error *err) {
-    char *canonical = NULL;
-    if (fr_lua_sandbox_canonical_dir(base_dir, &canonical, err) != FR_OK) return FR_ERR;
-
     if (runtime_state != NULL) {
+        char *canonical = NULL;
+        if (fr_lua_sandbox_canonical_dir(base_dir, &canonical, err) != FR_OK) return FR_ERR;
         int serves = open_runtime_serves(registry, canonical, err);
         free(canonical);
         return serves ? FR_OK : FR_ERR;
@@ -475,19 +474,14 @@ int fr_lua_runtime_begin(const char *base_dir, fr_registry *registry, fr_error *
 
     size_t memory_limit = memory_limit_override != 0 ? memory_limit_override : FR_LUA_DEFAULT_MEMORY_LIMIT;
     runtime_state = fr_lua_open(memory_limit, err);
-    if (runtime_state == NULL) {
-        free(canonical);
-        return FR_ERR;
-    }
+    if (runtime_state == NULL) return FR_ERR;
     if (instruction_limit_override != 0) {
         fr_lua_set_instruction_limit(runtime_state, instruction_limit_override);
     }
-    if (fr_lua_sandbox_install(runtime_state, base_dir, err) != FR_OK) {
+    if (fr_lua_sandbox_install(runtime_state, base_dir, &runtime_base_dir, err) != FR_OK) {
         fr_lua_runtime_shutdown();
-        free(canonical);
         return FR_ERR;
     }
-    runtime_base_dir = canonical;
     registering_into = registry;
     return FR_OK;
 }

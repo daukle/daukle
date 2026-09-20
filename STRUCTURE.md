@@ -11,7 +11,7 @@ resolver.
 
 Living document. Update it in the same commit as the change it describes.
 
-Verified against disk on 2026-09-19.
+Verified against disk on 2026-09-20.
 
 ---
 
@@ -93,6 +93,12 @@ registry, then `fr_lua_runtime_shutdown()`. `fr_lua_runtime_begin`, which `confi
 delegates to, returns `FR_OK` for a load into the registry the open phase already belongs to, an
 idempotent no-op, and refuses a load into a different one while that registry still holds the
 first one's plugins rather than freeing what it would go on reading.
+
+It refuses a differing **base directory** on the same terms, and for a sharper reason. The sandbox
+is installed once, when the state is opened, so reusing the state for a second directory would leave
+`daukle.read` bounded by the first caller's directory with nothing saying so. The comparison is
+between canonical paths, which `fr_lua_sandbox_install` hands back so there is one resolution rather
+than two that could disagree, and the refusal names both directories.
 
 **Adding a source means adding an `fr_source_plugin` and registering it.** Adding a language means
 adding an `fr_language_plugin` and registering it. Neither touches `resolve.c`, and a change that

@@ -17,7 +17,7 @@
 
 static lua_State *sandboxed_at(const char *base_dir, fr_error *err) {
     lua_State *state = fr_lua_open(64u * 1024u * 1024u, err);
-    fr_lua_sandbox_install(state, base_dir, err);
+    fr_lua_sandbox_install(state, base_dir, NULL, err);
     return state;
 }
 
