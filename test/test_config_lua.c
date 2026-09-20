@@ -129,16 +129,17 @@ TEST a_script_registers_a_language_plugin(void) {
     PASS();
 }
 
-/* No language or source capability is built in any more, so the collision a
-   script can still provoke is with a capability another script already took. */
-TEST a_script_may_not_take_over_a_registered_capability(void) {
+/* take_slot refuses the second declaration before fr_registry_add_language sees
+   it, so this asserts the whole message: a laxer match cannot tell the two
+   refusals apart, and test_registry is what covers the registry's own. */
+TEST a_script_may_not_declare_one_capability_twice(void) {
     fr_error err;
     fr_registry *registry = NULL;
     fr_build_registry(&registry, &err);
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-collide/daukle.toml",
                                           registry, &manifest, &err));
-    ASSERT(strstr(err.message, "npm") != NULL);
+    ASSERT(strstr(err.message, "\"daukle.language/npm\" is declared twice") != NULL);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     PASS();
@@ -471,7 +472,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_script_clearing_an_array_to_an_empty_table_still_yields_an_array);
     RUN_TEST(a_script_clearing_an_object_to_an_empty_table_stays_an_object);
     RUN_TEST(a_script_registers_a_language_plugin);
-    RUN_TEST(a_script_may_not_take_over_a_registered_capability);
+    RUN_TEST(a_script_may_not_declare_one_capability_twice);
     RUN_TEST(a_script_registered_source_plugin_resolves_through_sync);
     RUN_TEST(a_lua_root_manifest_loads_the_plugins_it_declares);
     RUN_TEST(a_plugin_name_too_long_for_the_capability_buffer_is_rejected);

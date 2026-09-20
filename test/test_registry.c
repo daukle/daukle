@@ -20,6 +20,13 @@ static int never_loads(void *state, const char *text, const char *origin, const 
     return FR_ERR;
 }
 
+static int never_applies(void *state, const fr_consumer *consumer, const fr_resolved *resolved,
+                         size_t count, const char *original_text, char **out_text, fr_error *err) {
+    (void) state; (void) consumer; (void) resolved; (void) count;
+    (void) original_text; (void) out_text; (void) err;
+    return FR_ERR;
+}
+
 static const fr_config_plugin PRIMARY = { "daukle.config/aaa", "daukle.aaa", 0, never_loads, NULL };
 static const fr_config_plugin OVERLAY = { "daukle.config/bbb", "daukle.bbb", 1, never_loads, NULL };
 
@@ -54,6 +61,20 @@ TEST rejects_a_duplicate_capability(void) {
     fr_registry_add_source(registry, &plugin, &err);
     ASSERT_EQ(FR_ERR, fr_registry_add_source(registry, &plugin, &err));
     ASSERT(strstr(err.message, "daukle.source/test") != NULL);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+/* No language capability is compiled in any more, so every caller of
+   fr_registry_add_language sits behind config_lua's own "declared twice" guard
+   and nothing else asserts this branch. */
+TEST rejects_a_duplicate_language_capability(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_language_plugin plugin = { "daukle.language/test", never_applies, NULL };
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_registry_add_language(registry, &plugin, &err));
+    ASSERT_EQ(FR_ERR, fr_registry_add_language(registry, &plugin, &err));
+    ASSERT_STR_EQ("capability \"daukle.language/test\" is already registered", err.message);
     fr_registry_destroy(registry);
     PASS();
 }
@@ -109,6 +130,7 @@ int main(int argc, char **argv) {
     RUN_TEST(returns_a_plugin_registered_under_its_capability);
     RUN_TEST(returns_null_for_an_unregistered_capability);
     RUN_TEST(rejects_a_duplicate_capability);
+    RUN_TEST(rejects_a_duplicate_language_capability);
     RUN_TEST(keeps_source_and_language_spaces_separate);
     RUN_TEST(registers_and_finds_a_config_plugin);
     RUN_TEST(rejects_a_duplicate_config_capability);

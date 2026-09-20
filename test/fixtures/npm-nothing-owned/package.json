@@ -1,0 +1,10 @@
+{
+  "name": "example",
+  "version": "1.0.0",
+  "dependencies": {
+    "@openauthjs/openauth": "^0.4.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

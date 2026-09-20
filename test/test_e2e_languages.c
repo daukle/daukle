@@ -45,6 +45,8 @@ static const char *TWO_NPM_REVERSED = "test/fixtures/two-npm/daukle-reversed.jso
 static const char *TWO_NPM_TARGET = "test/fixtures/two-npm/package.json";
 static const char *LEDGER_ORDER_MANIFEST = "test/fixtures/npm-ledger-order/daukle.json";
 static const char *LEDGER_ORDER_TARGET = "test/fixtures/npm-ledger-order/package.json";
+static const char *NOTHING_OWNED_MANIFEST = "test/fixtures/npm-nothing-owned/daukle.json";
+static const char *NOTHING_OWNED_TARGET = "test/fixtures/npm-nothing-owned/package.json";
 
 static void write_file(const char *path, const char *text) {
     fr_error err;
@@ -265,6 +267,23 @@ TEST the_ledger_is_sorted_when_the_resolved_order_is_not(void) {
     PASS();
 }
 
+/* The consumer names no modules, so the plugin resolves nothing and finds no
+   ledger: the document must come back without even a "daukle" member, which is
+   the one case that never reaches daukle.json_set at all. */
+TEST a_package_json_it_owns_nothing_in_is_left_byte_for_byte(void) {
+    write_file(NOTHING_OWNED_TARGET, PACKAGE_TEMPLATE);
+    size_t count = 0;
+    ASSERT_EQ(FR_OK, sync_manifest(NOTHING_OWNED_MANIFEST, 1, &count));
+    ASSERT_EQ(0, (int) count);
+
+    char *package = read_file(NOTHING_OWNED_TARGET);
+    ASSERT_STR_EQ(PACKAGE_TEMPLATE, package);
+    free(package);
+
+    write_file(NOTHING_OWNED_TARGET, PACKAGE_TEMPLATE);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -277,5 +296,6 @@ int main(int argc, char **argv) {
     RUN_TEST(two_npm_consumers_on_one_file_reach_a_fixed_point);
     RUN_TEST(reversing_the_two_consumers_reaches_a_fixed_point_too);
     RUN_TEST(the_ledger_is_sorted_when_the_resolved_order_is_not);
+    RUN_TEST(a_package_json_it_owns_nothing_in_is_left_byte_for_byte);
     GREATEST_MAIN_END();
 }
