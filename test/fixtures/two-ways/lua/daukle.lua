@@ -1,6 +1,6 @@
 daukle.config = {
   schema = 1,
-  project = "forebay/three-ways",
+  project = "forebay/two-ways",
   version = "1.0.0",
   modules = {},
   sources = { ["forebay/basekit"] = { kind = "path", path = "./producer-languages" } },

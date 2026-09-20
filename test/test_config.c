@@ -1,11 +1,20 @@
 #include "greatest.h"
 #include "config.h"
+#include "config_toml.h"
 #include "manifest.h"
 #include "registry.h"
 #include "sync.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+static int never_loads(void *state, const char *text, const char *origin, const char *base_dir,
+                        fr_registry *registry, const struct cJSON *document,
+                        struct cJSON **out, fr_error *err) {
+    (void) state; (void) text; (void) origin; (void) base_dir;
+    (void) registry; (void) document; (void) out; (void) err;
+    return FR_ERR;
+}
 
 TEST loads_a_json_manifest_through_the_seam(void) {
     fr_error err;
@@ -35,20 +44,30 @@ TEST finds_the_only_manifest_in_a_directory(void) {
     fr_registry *registry = NULL;
     fr_build_registry(&registry, &err);
     char *found = NULL;
-    ASSERT_EQ(FR_OK, fr_config_find("test/fixtures/search/json-only", registry, &found, &err));
-    ASSERT(strstr(found, "daukle.json") != NULL);
+    ASSERT_EQ(FR_OK, fr_config_find("test/fixtures/search/toml-only", registry, &found, &err));
+    ASSERT(strstr(found, "daukle.toml") != NULL);
     free(found);
     fr_registry_destroy(registry);
     PASS();
 }
 
+/* Once json is gone the built registry holds exactly one primary format (toml)
+   and one overlay (lua), so two primaries can never collide there. The error
+   this proves still needs a live path, so this test builds its own registry
+   with a second, throwaway primary instead of relying on fr_build_registry. */
 TEST refuses_two_manifests_in_one_directory(void) {
     fr_error err;
-    fr_registry *registry = NULL;
-    fr_build_registry(&registry, &err);
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_registry_add_config(registry, &FR_CONFIG_TOML, &err));
+    static const fr_config_plugin second_primary = {
+        "test.config/second-primary", "daukle.second", 0, never_loads, NULL
+    };
+    ASSERT_EQ(FR_OK, fr_registry_add_config(registry, &second_primary, &err));
+
     char *found = NULL;
     ASSERT_EQ(FR_ERR, fr_config_find("test/fixtures/search/both", registry, &found, &err));
-    ASSERT(strstr(err.message, "daukle.json") != NULL);
+    ASSERT(strstr(err.message, "daukle.toml") != NULL);
+    ASSERT(strstr(err.message, "daukle.second") != NULL);
     fr_registry_destroy(registry);
     PASS();
 }

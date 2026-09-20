@@ -376,68 +376,54 @@ static const char *STALE_PACKAGE_JSON =
     "  }\n"
     "}\n";
 
-static void seed_three_ways_consumer(const char *path, const char *stale_range) {
+static void seed_two_ways_consumer(const char *path, const char *stale_range) {
     char text[800];
     snprintf(text, sizeof text, STALE_PACKAGE_JSON, stale_range, stale_range);
     fr_error err;
     fr_file_write_text(path, text, &err);
 }
 
-/* Each consumer starts from a different stale range, so three identical files
-   at the end cannot be what three syncs that all did nothing would leave, and
+/* Each consumer starts from a different stale range, so two identical files
+   at the end cannot be what two syncs that both did nothing would leave, and
    a format plugin that dropped "consumers" and reported success would show up
    here instead of passing unnoticed. Each file is put back before the first
    assertion, so a failure does not leave the tree dirty either way. */
-TEST the_same_manifest_in_three_formats_writes_the_same_file(void) {
-    const char *json_consumer = "test/fixtures/three-ways/json/package.json";
-    const char *toml_consumer = "test/fixtures/three-ways/toml/package.json";
-    const char *lua_consumer = "test/fixtures/three-ways/lua/package.json";
+TEST the_same_manifest_in_two_formats_writes_the_same_file(void) {
+    const char *toml_consumer = "test/fixtures/two-ways/toml/package.json";
+    const char *lua_consumer = "test/fixtures/two-ways/lua/package.json";
 
-    seed_three_ways_consumer(json_consumer, "^1.0.0");
-    seed_three_ways_consumer(toml_consumer, "^2.0.0");
-    seed_three_ways_consumer(lua_consumer, "^3.0.0");
+    seed_two_ways_consumer(toml_consumer, "^2.0.0");
+    seed_two_ways_consumer(lua_consumer, "^3.0.0");
 
     fr_error err;
     fr_sync_report report;
 
-    int json_status = fr_sync("test/fixtures/three-ways/json/daukle.json", 1, 0, &report, &err);
-    size_t json_writes = report.count;
-    fr_sync_report_free(&report);
-
-    int toml_status = fr_sync("test/fixtures/three-ways/toml/daukle.toml", 1, 0, &report, &err);
+    int toml_status = fr_sync("test/fixtures/two-ways/toml/daukle.toml", 1, 0, &report, &err);
     size_t toml_writes = report.count;
     fr_sync_report_free(&report);
 
-    int lua_status = fr_sync("test/fixtures/three-ways/lua/daukle.lua", 1, 0, &report, &err);
+    int lua_status = fr_sync("test/fixtures/two-ways/lua/daukle.lua", 1, 0, &report, &err);
     size_t lua_writes = report.count;
     fr_sync_report_free(&report);
 
-    char *from_json = NULL;
     char *from_toml = NULL;
     char *from_lua = NULL;
-    int json_read = fr_file_read_text(json_consumer, &from_json, &err);
     int toml_read = fr_file_read_text(toml_consumer, &from_toml, &err);
     int lua_read = fr_file_read_text(lua_consumer, &from_lua, &err);
 
-    seed_three_ways_consumer(json_consumer, "^1.0.0");
-    seed_three_ways_consumer(toml_consumer, "^2.0.0");
-    seed_three_ways_consumer(lua_consumer, "^3.0.0");
+    seed_two_ways_consumer(toml_consumer, "^2.0.0");
+    seed_two_ways_consumer(lua_consumer, "^3.0.0");
 
-    ASSERT_EQ(FR_OK, json_status);
     ASSERT_EQ(FR_OK, toml_status);
     ASSERT_EQ(FR_OK, lua_status);
-    ASSERT_EQ(1, (int) json_writes);
     ASSERT_EQ(1, (int) toml_writes);
     ASSERT_EQ(1, (int) lua_writes);
 
-    ASSERT_EQ(FR_OK, json_read);
     ASSERT_EQ(FR_OK, toml_read);
     ASSERT_EQ(FR_OK, lua_read);
-    ASSERT_STR_EQ(from_json, from_toml);
-    ASSERT_STR_EQ(from_json, from_lua);
-    ASSERT(strstr(from_json, "^5.0.0") != NULL);
+    ASSERT_STR_EQ(from_toml, from_lua);
+    ASSERT(strstr(from_toml, "^5.0.0") != NULL);
 
-    free(from_json);
     free(from_toml);
     free(from_lua);
     PASS();
@@ -453,6 +439,6 @@ int main(int argc, char **argv) {
     RUN_TEST(github_source_matches_path_source);
     RUN_TEST(check_reports_drift_through_the_github_source);
     RUN_TEST(no_cache_bypasses_both_the_read_and_the_write);
-    RUN_TEST(the_same_manifest_in_three_formats_writes_the_same_file);
+    RUN_TEST(the_same_manifest_in_two_formats_writes_the_same_file);
     GREATEST_MAIN_END();
 }
