@@ -235,6 +235,8 @@ TEST a_verb_a_plugin_declared_is_there_when_it_runs(void) {
 }
 
 TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
+    fr_lua_runtime_shutdown();
+
     fr_error err;
     fr_registry *registry = NULL;
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
