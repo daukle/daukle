@@ -59,7 +59,7 @@ the client tier's rules.
 | reading a project or manifest file into structs | `manifest.c` | parsing JSON, which is `jsonx` over vendored cJSON |
 | choosing which module of which project answers a coordinate | `resolve.c` | fetching anything. It resolves, the source fetches |
 | the three plugin tables, source, language and config | `registry.c` | a plugin. It holds `fr_source_plugin`, `fr_language_plugin` and `fr_config_plugin` |
-| the five plugins that were built in | `plugins/*.lua` | staged here until the repositories in spec section 6 exist. Not fixtures: they are the content those repositories will carry |
+| the five plugins that were built in | `plugins/*.lua` | staged here until the repositories in spec section 6 exist. Not fixtures: they are the content those repositories will carry, and `cmake/check_agnostic.cmake` holds every fixture copy byte identical to them |
 | finding the manifest and choosing its format | `config.c` | a parser. It dispatches to a registered `fr_config_plugin` |
 | reading json text into the document model | `config_json.c` | a manifest format, nor a registered `fr_config_plugin`. It is reachable only through the `daukle.json_parse` verb |
 | reading a toml manifest | `config_toml.c` | the whole config table. `config_lua.c` is the overlay beside it, registered the same way |
@@ -152,9 +152,12 @@ newline, idempotence, the npm untouched-text and ledger-sort cases, and the one 
 exists for: a package the ledger owns and the resolver dropped leaves the target, while a package the
 user added by hand and no ledger claims stays. `test_sync.c` and `test_e2e.c` also assert real gradle
 output, but neither touches c or npm's formatting rules.
-It does its work through byte-identical copies of `plugins/` inside its own fixture directories
-rather than through `plugins/` itself, and Task 14 must replace those copies with minimal fixtures
-rather than delete the test.
+`test_e2e_languages.c` does its work through byte-identical copies of `plugins/` inside its own
+fixture directories rather than through `plugins/` itself, and Task 14 must replace those copies with
+minimal fixtures rather than delete the test. No test loads a staged plugin directly, which is why the
+`agnostic_core` ctest entry also compares each `plugins/*.lua` against every same-named copy under
+`test/fixtures/`: an edit to the staged file, or to one copy and not the rest, would otherwise be
+invisible for as long as the staging directory exists.
 
 **`fr_registry_add_source`'s and `fr_registry_add_language`'s duplicate-capability refusal is now
 unreachable from every production path.** Both callers sit behind `take_slot` in `src/config_lua.c`,
