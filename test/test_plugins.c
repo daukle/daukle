@@ -4,6 +4,7 @@
 #include "cache.h"
 #include "config.h"
 #include "config_lua.h"
+#include "config_toml.h"
 #include "error.h"
 #include "http.h"
 #include "manifest.h"
@@ -242,7 +243,7 @@ TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
 
     fr_manifest manifest;
-    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle-github.json",
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle-unknown-source.json",
                                          registry, &manifest, &err));
 
     ASSERT(fr_lua_runtime_state() == NULL);
@@ -294,6 +295,117 @@ TEST a_verb_used_before_the_declaration_says_so(void) {
     ASSERT_EQ(FR_ERR, load_manifest("test/fixtures/plugin-verb-before-declaration/daukle.toml", &err));
     ASSERT(strstr(err.message, "early") != NULL);
     ASSERT(strstr(err.message, "daukle.plugin must be the first call") != NULL);
+    PASS();
+}
+
+static char AUTH_VALUE_SEEN[256];
+static int AUTH_HEADER_PRESENT = 0;
+
+static int stub_release_asset(const char *url, const fr_http_header *headers, size_t header_count,
+                              char **out_body, size_t *out_length, fr_error *err) {
+    (void) url;
+    AUTH_HEADER_PRESENT = 0;
+    AUTH_VALUE_SEEN[0] = '\0';
+    for (size_t index = 0; index < header_count; index++) {
+        if (strcmp(headers[index].name, "Authorization") != 0) continue;
+        AUTH_HEADER_PRESENT = 1;
+        snprintf(AUTH_VALUE_SEEN, sizeof AUTH_VALUE_SEEN, "%s", headers[index].value);
+    }
+
+    char *text = NULL;
+    if (fr_file_read_text("test/fixtures/consumer/producer/daukle.toml", &text, err) != FR_OK) {
+        return FR_ERR;
+    }
+    *out_length = strlen(text);
+    *out_body = text;
+    return FR_OK;
+}
+
+static const char *GITHUB_BLOCK =
+    "{\"kind\":\"github-releases\",\"repo\":\"forebay/basekit\",\"version\":\"5.0.0\"}";
+
+/* Loads the shipped github plugin from the consumer fixture's copy and resolves
+   one source block through it. The toml format is registered because the plugin
+   hands the body it fetched to daukle.parse, and the cache is off so every call
+   reaches the stub instead of the entry the previous call would have written. */
+static int github_source_load(const char *block_json, fr_error *err) {
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    fr_http_fn previous = fr_http_set_backend(stub_release_asset);
+
+    fr_registry *registry = fr_registry_create();
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"github\":\"./plugins/github.lua\"}}");
+    int status = FR_ERR;
+    if (fr_registry_add_config(registry, &FR_CONFIG_TOML, err) == FR_OK
+        && fr_lua_runtime_begin("test/fixtures/consumer", registry, err) == FR_OK
+        && fr_plugins_load(registry, document, "test/fixtures/consumer", err) == FR_OK) {
+        const fr_source_plugin *source =
+            fr_registry_source(registry, "daukle.source/github-releases");
+        cJSON *block = cJSON_Parse(block_json);
+        fr_project resolved;
+        if (source != NULL) {
+            status = source->load(source->state, "forebay/basekit", block, ".", &resolved, err);
+            if (status == FR_OK) fr_project_free(&resolved);
+        } else {
+            fr_error_set(err, "capability \"daukle.source/github-releases\" not found");
+        }
+        cJSON_Delete(block);
+    }
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+    return status;
+}
+
+static int github_release_fetch(const char *daukle_token, const char *github_token, fr_error *err) {
+    fr_test_set_env("DAUKLE_TOKEN", daukle_token);
+    fr_test_set_env("GITHUB_TOKEN", github_token);
+    int status = github_source_load(GITHUB_BLOCK, err);
+    fr_test_set_env("DAUKLE_TOKEN", NULL);
+    fr_test_set_env("GITHUB_TOKEN", NULL);
+    return status;
+}
+
+/* Both token variables are read in the plugin rather than in C now, so only
+   what reaches the request proves the precedence, and that neither being set
+   sends no header at all instead of an empty one. */
+TEST the_github_plugin_authenticates_from_either_token_variable(void) {
+    fr_error err;
+
+    ASSERT_EQm(err.message, FR_OK, github_release_fetch("daukle-token", "github-token", &err));
+    ASSERT_STR_EQ("Bearer daukle-token", AUTH_VALUE_SEEN);
+
+    ASSERT_EQm(err.message, FR_OK, github_release_fetch(NULL, "github-token", &err));
+    ASSERT_STR_EQ("Bearer github-token", AUTH_VALUE_SEEN);
+
+    ASSERT_EQm(err.message, FR_OK, github_release_fetch(NULL, NULL, &err));
+    ASSERT_FALSE(AUTH_HEADER_PRESENT);
+    PASS();
+}
+
+/* "asset" and "tag" are optional, so an absent key is not an error and a
+   non-string one is easy to leave unchecked. Left unchecked its only symptom is
+   a concatenation failure inside the plugin, naming neither the field nor the
+   manifest that wrote it, so the assertion is on the message and not merely on
+   the refusal. */
+TEST the_github_plugin_names_an_optional_field_that_is_not_a_string(void) {
+    fr_error err;
+
+    ASSERT_EQ(FR_ERR, github_source_load(
+        "{\"kind\":\"github-releases\",\"repo\":\"forebay/basekit\",\"version\":\"5.0.0\","
+        "\"asset\":3}", &err));
+    ASSERT(strstr(err.message, "sources.forebay/basekit.asset") != NULL);
+    ASSERT(strstr(err.message, "must be a string") != NULL);
+
+    ASSERT_EQ(FR_ERR, github_source_load(
+        "{\"kind\":\"github-releases\",\"repo\":\"forebay/basekit\",\"version\":\"5.0.0\","
+        "\"tag\":{}}", &err));
+    ASSERT(strstr(err.message, "sources.forebay/basekit.tag") != NULL);
+    ASSERT(strstr(err.message, "must be a string") != NULL);
     PASS();
 }
 
@@ -1034,6 +1146,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_written_against_a_later_api_says_which);
     RUN_TEST(a_uses_entry_that_is_not_a_string_is_refused);
     RUN_TEST(a_verb_used_before_the_declaration_says_so);
+    RUN_TEST(the_github_plugin_authenticates_from_either_token_variable);
+    RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
     RUN_TEST(a_remote_coordinate_picks_the_highest_release_in_range);
     RUN_TEST(a_cached_plugin_is_used_without_touching_the_network);
     RUN_TEST(a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests);

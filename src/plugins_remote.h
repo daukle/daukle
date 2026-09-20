@@ -4,14 +4,6 @@
 #include "plugins.h"
 #include "types.h"
 
-/* The Authorization value daukle presents to GitHub, "Bearer <token>" from
-   DAUKLE_TOKEN or, failing that, GITHUB_TOKEN, and NULL when neither is set.
-   The caller owns the string. One implementation rather than one per caller,
-   so authenticating daukle with the daukle-specific variable cannot leave one
-   of them fetching anonymously. It lives here because this is the module that
-   outlives source_github.c, which the plugin catalogue replaces. */
-char *fr_github_auth_header(void);
-
 /* Resolves a FR_PLUGIN_REMOTE entry's plugin.lua text: the cache under
    fr_cache_root is scanned first for a version satisfying entry->version, and
    only a miss reaches GitHub. Called from plugins.c's load_one, its only

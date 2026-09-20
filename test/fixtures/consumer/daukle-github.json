@@ -10,6 +10,9 @@
       "version": "5.0.0"
     }
   },
+  "plugins": {
+    "github": "./plugins/github.lua"
+  },
   "consumers": [
     {
       "id": "stub",

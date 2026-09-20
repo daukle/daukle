@@ -14,7 +14,6 @@
 #include "region.h"
 #include "registry.h"
 #include "resolve.h"
-#include "source_github.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,10 +73,6 @@ int fr_build_registry(fr_registry **out, fr_error *err) {
     fr_registry *registry = fr_registry_create();
     if (registry == NULL) {
         fr_error_set(err, "out of memory creating the plugin registry");
-        return FR_ERR;
-    }
-    if (fr_registry_add_source(registry, &FR_SOURCE_GITHUB, err) != FR_OK) {
-        fr_registry_destroy(registry);
         return FR_ERR;
     }
     if (fr_registry_add_language(registry, &FR_LANGUAGE_GRADLE, err) != FR_OK) {

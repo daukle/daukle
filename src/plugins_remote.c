@@ -192,7 +192,11 @@ static void write_plugin_cache(const char *owner, const char *name, const char *
     free(file_path);
 }
 
-char *fr_github_auth_header(void) {
+/* "Bearer <token>" from DAUKLE_TOKEN or, failing that, GITHUB_TOKEN, and NULL
+   when neither is set. The precedence matches what plugins/github.lua sends, so
+   one exported variable cannot authenticate the plugin fetch while leaving the
+   manifest fetch anonymous. The caller owns the string. */
+static char *github_auth_header(void) {
     const char *token = getenv("DAUKLE_TOKEN");
     if (token == NULL || token[0] == '\0') token = getenv("GITHUB_TOKEN");
     if (token == NULL || token[0] == '\0') return NULL;
@@ -214,7 +218,7 @@ static int fetch_from_github(const fr_plugin_entry *entry, const char *owner, co
         return FR_ERR;
     }
 
-    char *auth_value = fr_github_auth_header();
+    char *auth_value = github_auth_header();
     fr_http_header header;
     const fr_http_header *headers = NULL;
     size_t header_count = 0;

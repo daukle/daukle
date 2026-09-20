@@ -1,4 +1,5 @@
 #include "greatest.h"
+#include "error.h"
 #include "http.h"
 #include "region.h"
 #include "support.h"
@@ -104,8 +105,9 @@ static void remove_e2e_tree(void) {
 /* Two isolated copies of the same consumer, one resolved through a "path"
    source and one through "github-releases", each writing its own copy of
    the build file so neither run can be tainted by, or mutate, the other's
-   state or the checked-in fixtures. The producer and the path plugin sit
-   inside the consumer directory: daukle.read refuses to climb out of it. */
+   state or the checked-in fixtures. The producer and each side's plugin copy
+   sit inside the manifest's own directory, because neither daukle.read nor a
+   local plugin path may climb out of it. */
 static void setup_e2e_tree(void) {
     const char *root = e2e_temp_root();
     char path[700];
@@ -117,6 +119,7 @@ static void setup_e2e_tree(void) {
     snprintf(path, sizeof path, "%s/path/consumer/producer", root); fr_test_make_directory(path);
     snprintf(path, sizeof path, "%s/path/consumer/plugins", root); fr_test_make_directory(path);
     snprintf(path, sizeof path, "%s/github", root); fr_test_make_directory(path);
+    snprintf(path, sizeof path, "%s/github/plugins", root); fr_test_make_directory(path);
 
     snprintf(path, sizeof path, "%s/path/consumer/daukle.json", root);
     copy_text_file("test/fixtures/consumer/daukle.json", path);
@@ -132,6 +135,9 @@ static void setup_e2e_tree(void) {
 
     snprintf(path, sizeof path, "%s/github/daukle-github.json", root);
     copy_text_file("test/fixtures/consumer/daukle-github.json", path);
+
+    snprintf(path, sizeof path, "%s/github/plugins/github.lua", root);
+    copy_text_file("test/fixtures/consumer/plugins/github.lua", path);
 
     snprintf(path, sizeof path, "%s/github/build.gradle", root);
     fr_file_write_text(path, BUILD_TEMPLATE, &err);
@@ -155,15 +161,25 @@ static char *extract_generated_region(const char *text) {
 
 static int GITHUB_STUB_CALLS = 0;
 
-/* Serves the checked-in json producer as the release body. The path source
-   reads a toml producer now, so the two are separate encodings of one
-   project and this test's equality assertion is what keeps them in step. */
+static const char *RELEASE_URL =
+    "https://github.com/forebay/basekit/releases/download/5.0.0/daukle.toml";
+
+/* Serves the same toml producer the path source reads, so the equality
+   assertion below compares two sources rather than two encodings. Refusing
+   every other url is what stops a plugin that built the wrong one from being
+   served a manifest anyway and passing. */
 static int github_stub_get(const char *url, const fr_http_header *headers, size_t header_count,
                            char **out_body, size_t *out_length, fr_error *err) {
-    (void) url; (void) headers; (void) header_count;
+    (void) headers; (void) header_count;
     GITHUB_STUB_CALLS++;
+    if (strcmp(url, RELEASE_URL) != 0) {
+        fr_error_set(err, "the plugin requested \"%s\"", url);
+        return FR_ERR;
+    }
     char *text = NULL;
-    if (fr_file_read_text("test/fixtures/producer/daukle.json", &text, err) != FR_OK) return FR_ERR;
+    if (fr_file_read_text("test/fixtures/consumer/producer/daukle.toml", &text, err) != FR_OK) {
+        return FR_ERR;
+    }
     *out_length = strlen(text);
     *out_body = text;
     return FR_OK;
