@@ -11,7 +11,8 @@
     }
   },
   "plugins": {
-    "github": "./plugins/github.lua"
+    "github": "./plugins/github.lua",
+    "gradle": "./plugins/gradle.lua"
   },
   "consumers": [
     {

@@ -7,7 +7,8 @@
     "forebay/basekit": { "kind": "path", "path": "./producer" }
   },
   "plugins": {
-    "path": "./plugins/path.lua"
+    "path": "./plugins/path.lua",
+    "gradle": "./plugins/gradle.lua"
   },
   "consumers": [
     {

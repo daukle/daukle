@@ -133,11 +133,17 @@ static void setup_e2e_tree(void) {
     snprintf(path, sizeof path, "%s/path/consumer/plugins/path.lua", root);
     copy_text_file("test/fixtures/consumer/plugins/path.lua", path);
 
+    snprintf(path, sizeof path, "%s/path/consumer/plugins/gradle.lua", root);
+    copy_text_file("test/fixtures/consumer/plugins/gradle.lua", path);
+
     snprintf(path, sizeof path, "%s/github/daukle-github.json", root);
     copy_text_file("test/fixtures/consumer/daukle-github.json", path);
 
     snprintf(path, sizeof path, "%s/github/plugins/github.lua", root);
     copy_text_file("test/fixtures/consumer/plugins/github.lua", path);
+
+    snprintf(path, sizeof path, "%s/github/plugins/gradle.lua", root);
+    copy_text_file("test/fixtures/consumer/plugins/gradle.lua", path);
 
     snprintf(path, sizeof path, "%s/github/build.gradle", root);
     fr_file_write_text(path, BUILD_TEMPLATE, &err);
