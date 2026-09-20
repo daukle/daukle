@@ -117,7 +117,20 @@ TEST reports_an_unknown_source_kind_as_a_missing_plugin(void) {
     fr_error err;
     fr_sync_report report;
     ASSERT_EQ(FR_ERR, fr_sync("test/fixtures/consumer/daukle-unknown-source-consumer.json", 0, 1, &report, &err));
-    ASSERT(strstr(err.message, "daukle.source/some-future-kind") != NULL);
+    ASSERT(strstr(err.message, "forebay/basekit") != NULL);
+    ASSERT(strstr(err.message, "no plugin provides source \"some-future-kind\"") != NULL);
+    ASSERT(strstr(err.message, "add it to [plugins] in daukle.toml") != NULL);
+    fr_sync_report_free(&report);
+    PASS();
+}
+
+TEST reports_a_missing_language_as_a_missing_plugin(void) {
+    fr_error err;
+    fr_sync_report report;
+    ASSERT_EQ(FR_ERR, fr_sync("test/fixtures/consumer/daukle-no-language-plugin.json", 0, 1, &report, &err));
+    ASSERT(strstr(err.message, "consumer \"app\"") != NULL);
+    ASSERT(strstr(err.message, "no plugin provides language \"npm\"") != NULL);
+    ASSERT(strstr(err.message, "add it to [plugins] in daukle.toml") != NULL);
     fr_sync_report_free(&report);
     PASS();
 }
@@ -134,5 +147,6 @@ int main(int argc, char **argv) {
     RUN_TEST(names_the_manifest_when_resolution_fails);
     RUN_TEST(counts_the_files_written_before_a_failure);
     RUN_TEST(reports_an_unknown_source_kind_as_a_missing_plugin);
+    RUN_TEST(reports_a_missing_language_as_a_missing_plugin);
     GREATEST_MAIN_END();
 }

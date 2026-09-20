@@ -32,6 +32,7 @@ anything naming the first three means this repo.
 daukle/daukle
   CMakeLists.txt        C11, warnings are errors (/W4 /WX, -Wall -Wextra -Werror)
   src/                  the whole program, one concern per pair of .c/.h files
+  plugins/*.lua         the five plugins that were built in, staged until spec section 6's repos exist
   test/                 one test file per src module, plus a real HTTP server fixture
   vendor/cJSON          JSON parsing
   vendor/toml           TOML parsing
@@ -41,9 +42,11 @@ daukle/daukle
   plugin.json           id daukle, category tool, tech c
 ```
 
-`docs/` is gitignored except for `docs/superpowers/`, which `.gitignore` re-includes: the design
-spec and its plan are tracked and are part of the deliverable. This file still sits at the repo root
-rather than under `docs/`, because it is the map a contributor reads first.
+`docs/` is gitignored and holds nothing tracked in this repository, not even a `docs/superpowers/`:
+there is no re-include, and no `docs/` directory exists here at all. The design spec, its plan and
+the task queue live in the separate `daukle/docs` repository, cloned beside `daukle/daukle`, as
+section 1's opening paragraph says. This file still sits at the repo root rather than under `docs/`,
+because it is the map a contributor reads first.
 
 **It is a TOOL, which means it is outside every ecosystem and terminal.** Nothing may reference it.
 It is invoked, never linked. That is why it may carry whatever dependencies it likes and owes none of
@@ -56,9 +59,7 @@ the client tier's rules.
 | reading a project or manifest file into structs | `manifest.c` | parsing JSON, which is `jsonx` over vendored cJSON |
 | choosing which module of which project answers a coordinate | `resolve.c` | fetching anything. It resolves, the source fetches |
 | the three plugin tables, source, language and config | `registry.c` | a plugin. It holds `fr_source_plugin`, `fr_language_plugin` and `fr_config_plugin` |
-| fetching a project from GitHub releases | `source_github.c` | the only possible source. It is one registered `fr_source_plugin` |
-| taking a project from a local path | `source_path.c` | a fallback for GitHub. It is a peer source |
-| emitting npm, Gradle and C coordinates | `lang_npm.c`, `lang_gradle.c`, `lang_c.c` | resolvers. Each is one registered `fr_language_plugin` |
+| the five plugins that were built in | `plugins/*.lua` | staged here until the repositories in spec section 6 exist. Not fixtures: they are the content those repositories will carry |
 | finding the manifest and choosing its format | `config.c` | a parser. It dispatches to a registered `fr_config_plugin` |
 | reading a json manifest | `config_json.c` | the only possible format. It is one registered `fr_config_plugin` |
 | reading a toml manifest | `config_toml.c` | a json reader. It is a peer format, registered the same way |
@@ -100,9 +101,12 @@ is installed once, when the state is opened, so reusing the state for a second d
 between canonical paths, which `fr_lua_sandbox_install` hands back so there is one resolution rather
 than two that could disagree, and the refusal names both directories.
 
-**Adding a source means adding an `fr_source_plugin` and registering it.** Adding a language means
-adding an `fr_language_plugin` and registering it. Neither touches `resolve.c`, and a change that
-does touch it for a new source or language is the signal that the seam was bypassed.
+**Adding a source or a language means writing a Lua plugin and declaring it in `[plugins]`.**
+`config_lua.c:334` and `config_lua.c:349` are the only places that fill in an `fr_language_plugin`
+or an `fr_source_plugin` and register it, turning a `daukle.language{}` or `daukle.source{}`
+declaration into a registry entry; no other file in the repository calls `fr_registry_add_source` or
+`fr_registry_add_language`. Neither touches `resolve.c`, and a change that does touch it for a new
+source or language is the signal that the seam was bypassed.
 
 **The cache key includes the artifact, and that is load bearing.** Two manifests can name one project
 id and one version and resolve them from different repositories. Keyed by project and version alone,
@@ -120,19 +124,53 @@ than a mock, so redirect and transport behaviour is exercised as it will be in u
 tests themselves.
 
 Most modules have a dedicated test file; the rest are covered through the tests of the module that
-drives them, such as `plugins_remote.c` through `test_plugins.c`, `source_path.c` through
-`test_resolve.c`, and `config_json.c` through `test_config.c`'s json-manifest test.
+drives them, such as `plugins_remote.c` through `test_plugins.c`, and `config_json.c` through
+`test_config.c`'s json-manifest test.
+
+**daukle no longer tests what npm, Gradle or C output looks like.** `test_lang_npm.c`,
+`test_lang_gradle.c`, `test_lang_c.c` and `test_source_github.c` were deleted with the modules they
+covered, taking with them `empties_the_region_for_no_modules` and `fails_without_a_configuration`
+for both gradle and c, `names_the_module_whose_block_has_no_coordinate`,
+`names_the_module_whose_block_has_no_url`, the `carries_the_expected_capability` string assertions,
+and github's url and coordinate assertions, which the github swap's commit body lists by name for
+recovery from history. `fails_when_the_target_carries_no_region` is lost for c's case only; gradle's
+equivalent is still driven end to end by `reports_a_build_file_without_markers`
+(`test/test_sync.c:78-87`).
+After the extraction that output is not daukle's behaviour, so the coverage belongs to `daukle/npm`,
+`daukle/gradle`, `daukle/c` and `daukle/github`. daukle's suite will not catch a regression in Gradle
+coordinate formatting. Accepted in spec section 7.
+
+What daukle still covers, and must keep covering, is the **mechanism**: that a language plugin's
+returned text reaches the consumer file, that a source plugin's returned table becomes an
+`fr_project`, and that a missing capability names the plugin that would provide it.
+`test_e2e_languages.c` is the broadest test of real language output end to end: it is the only test
+exercising c's output at all, and the only one exercising npm's formatting depth, through
+multi-entry ordering, the optional-`sha256` mix, one space before each package, the absent trailing
+newline, idempotence, and the npm untouched-text and ledger-sort cases. `test_sync.c` and
+`test_e2e.c` also assert real gradle output, but neither touches c or npm's formatting rules.
+`test_e2e_languages.c` does its work through `plugins/`, and Task 14 must replace its plugins with
+minimal fixtures rather than delete the test.
+
+**`fr_registry_add_source`'s and `fr_registry_add_language`'s duplicate-capability refusal is now
+unreachable from every production path.** Both callers sit behind `take_slot` in `src/config_lua.c`,
+which refuses a duplicate first, and every production path destroys the registry and the Lua runtime
+together, so reaching the registry's own refusal needs a registry that outlives a runtime shutdown.
+It is asserted only by direct unit tests in `test/test_registry.c`. That refusal is the reason each
+of the five plugin swaps had to be a single atomic commit, so the work ends by leaving the guard that
+shaped it reachable only from tests.
 
 ## 4. State
 
-The resolver, the two sources, the three languages, the cache, the sync pass and the CLI are all
-implemented and tested. The configuration surface is TOML with an optional Lua overlay: `config.c`
-finds the manifest and dispatches to a registered `fr_config_plugin` by a capability string built
-from the file's extension, and `config_json.c`, `config_toml.c` and `config_lua.c` are all
-registered formats, chosen the same way, with none named in `config.c` itself. TOML is the format a
-manifest is authored in going forward; JSON keeps working, both as a manifest format and as the
-asset a source publishes, since `source_github.c` still fetches `daukle.json` by default from a
-release. Task **F-7** in `spisor/docs/TASKS.md` is unaffected by this work: it says both of the
+The resolver, the cache, the sync pass and the CLI are all implemented and tested. Every source and
+every language now arrives through a plugin: `fr_build_registry` in `sync.c` registers only the
+config formats, and the registry's source and language tables start empty. The configuration surface
+is TOML with an optional Lua overlay: `config.c` finds the manifest and dispatches to a registered
+`fr_config_plugin` by a capability string built from the file's extension, and `config_json.c`,
+`config_toml.c` and `config_lua.c` are all registered formats, chosen the same way, with none named
+in `config.c` itself. TOML is the format a manifest is authored in going forward, and it is also the
+asset name the `daukle/github` plugin fetches by default from a release; JSON keeps working purely as
+a manifest format, since `config_json.c` remains a registered `fr_config_plugin`. Task **F-7** in
+`spisor/docs/TASKS.md` is unaffected by this work: it says both of the
 phase-2 manifest writers are proven against fixtures only, because nothing in the ecosystem
 publishes a manifest release asset yet. basekit's 5.0.0 release carries eight jars and no manifest.
 Until something publishes one, the writers have never met real input.
@@ -149,14 +187,14 @@ does not rewrite an existing module list, so `--modules` for a dependency that a
 error rather than a silent discard, and whatever it produces is read back through the TOML reader
 before anything is written.
 
-A manifest's `[plugins]` table now registers a source or a language the same way the five built-ins
-do, through `plugins.c` and `plugins_remote.c` running each declared plugin in a `lua_verbs.c`
-environment scoped to exactly the verbs it declared. This is a second route to the same registry, not
-a replacement for the first: `source_path.c`, `source_github.c`, `lang_npm.c`, `lang_gradle.c` and
-`lang_c.c` are still compiled in and registered by `fr_build_registry`, unconditionally, beside
-whatever a manifest's plugins add. Removing them, and adding `FR_SOURCE_[A-Z]` and
-`FR_LANGUAGE_[A-Z]` to the agnostic check so `config.c` cannot silently regain one, is a separate,
-later plan. `daukle plugin update [label]` always reads the current manifest first and removes a
+A manifest's `[plugins]` table registers a source or a language by running each declared plugin in a
+`lua_verbs.c` environment scoped to exactly the verbs it declared, through `plugins.c` and
+`plugins_remote.c`. It is now the only route into the registry's source and language tables:
+`fr_build_registry` registers only the config formats, and the five files that used to compile a
+source or a language directly into the binary, `source_path.c`, `source_github.c`, `lang_npm.c`,
+`lang_gradle.c` and `lang_c.c`, are gone. Adding `FR_SOURCE_[A-Z]` and `FR_LANGUAGE_[A-Z]` to the
+agnostic check so `config.c` cannot silently regain one is still a separate, later plan.
+`daukle plugin update [label]` always reads the current manifest first and removes a
 remote plugin's cached copies scoped to what THAT manifest declares: one label's entry, or, with no
 label, every remote entry it declares, and nothing outside it, so the plugin cache root, which is
 shared across every project on the machine, is never touched beyond this manifest's own plugins. The

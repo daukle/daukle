@@ -110,7 +110,8 @@ static int sync_consumer(const fr_consumer *consumer, const fr_manifest *manifes
     snprintf(capability, sizeof capability, "daukle.language/%s", consumer->language);
     const fr_language_plugin *language = fr_registry_language(registry, capability);
     if (language == NULL) {
-        fr_error_set(err, "%s: no language plugin registered for \"%s\"", manifest_path, consumer->language);
+        fr_error_set(err, "consumer \"%s\": no plugin provides language \"%s\"; add it to [plugins] in daukle.toml",
+                    consumer->id, consumer->language);
         fr_resolved_free(resolved, count);
         free(target_path);
         return FR_ERR;
