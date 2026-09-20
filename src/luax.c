@@ -267,9 +267,11 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
     return push_json(state, value, 0, err);
 }
 
-/* An empty table is an object, and a table whose keys are exactly 1..n is an
-   array: lua cannot tell the two apart and the schema's arrays are never
-   empty at the point this runs. */
+/* A table whose keys are exactly 1..n is an array; anything else, an empty
+   table included, is an object, because lua cannot tell an empty table from an
+   empty sequence. A caller that requires an array therefore refuses what an
+   empty table produced, so a plugin wanting one omits the field instead:
+   fr_json_array_of_strings reads an absent key as no entries. */
 static int table_sequence_length(lua_State *state, int index, lua_Integer *count) {
     lua_Integer total = 0;
     lua_Integer max_key = 0;
