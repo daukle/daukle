@@ -148,6 +148,8 @@ static int drain_both(int out_fd, int err_fd, fr_exec_result *out) {
             if (errno == EINTR) continue;
             /* Cannot safely poll further; the fd close below unblocks a
                child mid-write with EPIPE instead of leaving it stuck. */
+            if (!out_stream.eof) out_stream.truncated = 1;
+            if (!err_stream.eof) err_stream.truncated = 1;
             break;
         }
 
@@ -237,8 +239,7 @@ int fr_exec_run(const fr_exec_request *request, fr_exec_result *out, fr_error *e
 
     int code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
     if (code == 127) {
-        /* execv failed in the child, which cannot report through errno across
-           the fork, so 127 is the only signal available. */
+        /* The shared 127 contract; fr_exec_run's declaration says why. */
         fr_exec_result_free(out);
         fr_error_set(err, "\"%s\" could not be started", request->program);
         return FR_ERR;

@@ -12,6 +12,23 @@ static char *join(const char *program, const char *const *argv, size_t count) {
     return line;
 }
 
+/* The reserved bound is two output bytes per input byte plus three per token,
+   and fr_exec_command_line refuses rather than overflowing if the escaping
+   ever needs more. This is the worst case the current rules can produce. */
+TEST the_worst_case_escaping_stays_inside_the_reserved_bound(void) {
+    const char *argv[] = { "\\\\\\\\\\\\\\\\\"", "\"\"\"\"\"\"", "\\\\\\\\", "a b\\\\" };
+    const char *program = "C:\\a\\\\b\"";
+    char *line = join(program, argv, 4);
+    ASSERT(line != NULL);
+
+    size_t bound = strlen(program) * 2 + 3;
+    for (size_t index = 0; index < 4; index++) bound += strlen(argv[index]) * 2 + 3;
+    ASSERT(strlen(line) <= bound);
+
+    free(line);
+    PASS();
+}
+
 TEST a_plain_argument_is_not_quoted(void) {
     const char *argv[] = { "build" };
     char *line = join("gradle", argv, 1);
@@ -78,6 +95,7 @@ GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
+    RUN_TEST(the_worst_case_escaping_stays_inside_the_reserved_bound);
     RUN_TEST(a_plain_argument_is_not_quoted);
     RUN_TEST(an_argument_containing_a_space_is_quoted);
     RUN_TEST(a_double_quote_is_escaped_with_a_backslash);

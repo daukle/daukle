@@ -226,5 +226,10 @@ int fr_exec_run(const fr_exec_request *request, fr_exec_result *out, fr_error *e
        clamped or silently reduced, so a caller comparing against a known
        negative constant still matches. */
     out->code = (int) code;
+    if (out->code == 127) {
+        fr_exec_result_free(out);
+        fr_error_set(err, "\"%s\" could not be started", request->program);
+        return FR_ERR;
+    }
     return FR_OK;
 }

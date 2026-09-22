@@ -10,6 +10,9 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
+#else
+#include <signal.h>
 #endif
 
 /* The child half of this file. Spawned by the tests below as themselves, so a
@@ -51,6 +54,35 @@ static int run_as_big_stderr_child(void) {
     fwrite(big, 1, sizeof big, stderr);
     fflush(stderr);
     return 0;
+}
+
+#define HUGE_STDOUT_LENGTH (FR_EXEC_CAPTURE_LIMIT + 64u * 1024u)
+
+/* Past FR_EXEC_CAPTURE_LIMIT, so the bound and the truncated flag are load
+   bearing here: delete either and this test stops passing. */
+static int run_as_huge_stdout_child(void) {
+#ifdef _WIN32
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+    static char block[64u * 1024u];
+    memset(block, 'o', sizeof block);
+    for (size_t written = 0; written < HUGE_STDOUT_LENGTH; written += sizeof block) {
+        fwrite(block, 1, sizeof block, stdout);
+    }
+    fflush(stdout);
+    return 0;
+}
+
+/* Death that is not an exit: the one place the two backends genuinely cannot
+   report the same number, pinned per platform rather than left to be found. */
+static int run_as_abnormal_child(void) {
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), 0xC0000005u);
+    return 0;
+#else
+    raise(SIGKILL);
+    return 0;
+#endif
 }
 
 /* argv[0] as ctest invokes it, kept so a test can spawn this binary again. */
@@ -134,6 +166,46 @@ TEST captured_stderr_survives_a_full_stdout_pipe(void) {
     PASS();
 }
 
+TEST a_captured_stream_past_the_limit_is_truncated_and_says_so(void) {
+    const char *argv[] = { "--exec-huge-stdout" };
+    fr_exec_result result; fr_error err;
+    ASSERT_EQ(FR_OK, run(argv, 1, 1, &result, &err));
+    ASSERT_EQ(0, result.code);
+    ASSERT_EQ(1, result.truncated);
+    ASSERT(result.stdout_text != NULL);
+    ASSERT_EQ((size_t) FR_EXEC_CAPTURE_LIMIT, strlen(result.stdout_text));
+    fr_exec_result_free(&result);
+    PASS();
+}
+
+/* Both backends turn a child exit of 127 into "could not be started". POSIX
+   has no choice, execv failing in the forked child has no other channel;
+   Windows follows it so the contract does not differ per platform. */
+TEST a_child_exiting_127_is_reported_as_one_that_could_not_start(void) {
+    const char *argv[] = { "--exec-child", "127" };
+    fr_exec_result result; fr_error err;
+    ASSERT_EQ(FR_ERR, run(argv, 2, 0, &result, &err));
+    ASSERT(strstr(err.message, "could not be started") != NULL);
+    PASS();
+}
+
+/* The documented divergence, pinned so a change to either backend is a failing
+   test rather than a surprise in a plugin: POSIX answers 128 + the signal,
+   Windows answers the exception code bit-identically as a negative int. */
+TEST a_child_that_dies_abnormally_reports_its_platforms_code(void) {
+    const char *argv[] = { "--exec-abnormal" };
+    fr_exec_result result; fr_error err;
+    ASSERT_EQ(FR_OK, run(argv, 1, 0, &result, &err));
+#ifdef _WIN32
+    ASSERT_EQ((int) 0xC0000005u, result.code);
+    ASSERT(result.code < 0);
+#else
+    ASSERT_EQ(128 + SIGKILL, result.code);
+#endif
+    fr_exec_result_free(&result);
+    PASS();
+}
+
 TEST a_program_that_does_not_exist_fails_naming_it(void) {
     fr_exec_request request;
     request.program = "daukle-no-such-program";
@@ -154,12 +226,17 @@ int main(int argc, char **argv) {
     self_path = argv[0];
     if (argc >= 3 && strcmp(argv[1], "--exec-child") == 0) return run_as_child(argc, argv);
     if (argc >= 2 && strcmp(argv[1], "--exec-big-stderr") == 0) return run_as_big_stderr_child();
+    if (argc >= 2 && strcmp(argv[1], "--exec-huge-stdout") == 0) return run_as_huge_stdout_child();
+    if (argc >= 2 && strcmp(argv[1], "--exec-abnormal") == 0) return run_as_abnormal_child();
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_child_exit_code_is_reported);
     RUN_TEST(capture_collects_both_streams);
     RUN_TEST(without_capture_the_streams_are_absent_rather_than_empty);
     RUN_TEST(every_argument_arrives_byte_identical);
     RUN_TEST(captured_stderr_survives_a_full_stdout_pipe);
+    RUN_TEST(a_captured_stream_past_the_limit_is_truncated_and_says_so);
+    RUN_TEST(a_child_exiting_127_is_reported_as_one_that_could_not_start);
+    RUN_TEST(a_child_that_dies_abnormally_reports_its_platforms_code);
     RUN_TEST(a_program_that_does_not_exist_fails_naming_it);
     GREATEST_MAIN_END();
 }
