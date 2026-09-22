@@ -44,9 +44,7 @@ static char *duplicate_string(const char *text) {
     return copy;
 }
 
-/* sync.c keeps its own copy of this same small split, rather than exposing
-   one: it is a few lines against a whole header for something only these two
-   translation units need. */
+/* sync.c keeps its own copy of this same small split rather than exposing one. */
 static char *manifest_directory(const char *manifest_path) {
     const char *last_slash = strrchr(manifest_path, '/');
     const char *last_backslash = strrchr(manifest_path, '\\');
@@ -447,11 +445,11 @@ static int plugin_update(const char *label, int use_cache, int verbose) {
     return 0;
 }
 
-static int clean_derived(const char *manifest_path) {
+static int clean_derived(const char *manifest_path, int verbose) {
     fr_error err;
     char *resolved = NULL;
     if (resolve_manifest_path(manifest_path, &resolved, &err) != FR_OK) {
-        report_error(&err, 0);
+        report_error(&err, verbose);
         return 1;
     }
 
@@ -465,7 +463,7 @@ static int clean_derived(const char *manifest_path) {
     int status = fr_derived_clean(directory, &err);
     free(directory);
     if (status != FR_OK) {
-        report_error(&err, 0);
+        report_error(&err, verbose);
         return 1;
     }
 
@@ -496,7 +494,7 @@ int main(int argc, char **argv) {
         case FR_CLI_PLUGIN_UPDATE:
             return plugin_update(options.plugin_label, options.use_cache, options.verbose);
         case FR_CLI_CLEAN:
-            return clean_derived(options.manifest_path);
+            return clean_derived(options.manifest_path, options.verbose);
         case FR_CLI_USAGE:
             break;
     }

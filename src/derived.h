@@ -22,16 +22,38 @@ int fr_derived_dir(const char *manifest_dir, const char *toolchain, char **out_d
    derived_root through fr_derived_root calls this once before generating. */
 int fr_derived_ensure_root(const char *derived_root, fr_error *err);
 
-/* Deletes fr_derived_root(manifest_dir) and everything beneath it. The root is
-   canonicalised with fr_lua_sandbox_canonical_dir and the result is asserted
-   to sit inside the canonical form of manifest_dir before anything is
-   removed: deletion is the one operation in this codebase whose failure mode
-   is unrecoverable data loss, so containment here is a precondition rather
-   than the notice-and-continue treatment fr_derived_apply gives an escaping
-   path. A root that does not exist is FR_OK, since cleaning a project that
-   never generated is not a failure, and the removal walk deletes a symlink or
-   a junction it meets rather than following it out of the tree. */
+/* Deletes fr_derived_root(manifest_dir) and everything beneath it. Refuses
+   outright, before anything else, if the root itself is a symlink or a
+   junction: the derived root is legitimately a plain directory or absent,
+   never a link, and a base-versus-target compare cannot catch this case on
+   its own, since a link whose target happens to sit inside the base compares
+   as contained even though following it deletes whatever it actually points
+   at. Otherwise the root is canonicalised with fr_lua_sandbox_canonical_dir
+   and the result is asserted to be a strict descendant of the canonical form
+   of manifest_dir, via fr_derived_root_is_contained below, the same rule
+   lua_sandbox.c's own within_base_dir applies for a read (equality does not
+   count; the base directory itself is never the thing to delete). Deletion is
+   the one operation in this codebase whose failure mode is unrecoverable data
+   loss, so both checks are a precondition rather than the notice-and-continue
+   treatment fr_derived_apply gives an escaping path.
+   A root that does not exist is FR_OK, since cleaning a project that never
+   generated is not a failure. The removal walk deletes a symlink or a
+   junction it meets below the root rather than following it out of the tree,
+   and it is best-effort per file, so the outcome is re-checked once it
+   finishes: anything left behind (a locked file, say) is reported as FR_ERR
+   rather than claimed as a success that did not happen. */
 int fr_derived_clean(const char *manifest_dir, fr_error *err);
+
+/* The containment predicate fr_derived_clean applies to a canonicalised root
+   against a canonicalised base: a strict descendant passes; the base itself,
+   or anything sharing only a name prefix with it, does not. Exposed, rather
+   than kept static, so test_derived.c can drive it directly with string pairs:
+   canonicalisation applied identically to both sides cannot itself diverge
+   without a real symlink or junction on disk, so this predicate's own
+   boundary logic is the one part of the containment check a path-only test
+   can exercise on every machine. Every real caller reaches it only through
+   fr_derived_clean. */
+int fr_derived_root_is_contained(const char *canonical_base, const char *canonical_root);
 
 /* write == 0 reports what would change and touches nothing, including the
    ledger, so "check" and "sync" differ only in whether they write. A file the

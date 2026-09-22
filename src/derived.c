@@ -371,10 +371,20 @@ static int derived_root_exists(const char *path) {
     DWORD attributes = GetFileAttributesA(path);
     return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
+
+static int derived_root_is_link(const char *path) {
+    DWORD attributes = GetFileAttributesA(path);
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
 #else
 static int derived_root_exists(const char *path) {
     struct stat info;
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+}
+
+static int derived_root_is_link(const char *path) {
+    struct stat info;
+    return lstat(path, &info) == 0 && S_ISLNK(info.st_mode);
 }
 #endif
 
@@ -447,14 +457,11 @@ static void derived_remove_tree(const char *path) {
 #endif
 }
 
-/* Mirrors lua_sandbox.c's own within_base_dir, which it does not expose: a
-   whole path component must match, so a sibling directory whose name merely
-   starts with canonical_base's does not pass as contained. */
-static int derived_root_is_contained(const char *canonical_base, const char *canonical_root) {
+int fr_derived_root_is_contained(const char *canonical_base, const char *canonical_root) {
     size_t base_length = strlen(canonical_base);
     if (strncmp(canonical_base, canonical_root, base_length) != 0) return 0;
     char boundary = canonical_root[base_length];
-    return boundary == '\0' || boundary == '/' || boundary == '\\';
+    return boundary == '/' || boundary == '\\';
 }
 
 int fr_derived_clean(const char *manifest_dir, fr_error *err) {
@@ -468,6 +475,13 @@ int fr_derived_clean(const char *manifest_dir, fr_error *err) {
 
     const char *base = (manifest_dir == NULL || manifest_dir[0] == '\0') ? "." : manifest_dir;
 
+    if (derived_root_is_link(root)) {
+        fr_error_set(err, "the derived directory for \"%s\" is a link; refusing to delete anything",
+                     base);
+        free(root);
+        return FR_ERR;
+    }
+
     char *canonical_base = NULL;
     if (fr_lua_sandbox_canonical_dir(base, &canonical_base, err) != FR_OK) {
         free(root);
@@ -476,7 +490,7 @@ int fr_derived_clean(const char *manifest_dir, fr_error *err) {
 
     char *canonical_root = NULL;
     int status = fr_lua_sandbox_canonical_dir(root, &canonical_root, err);
-    if (status == FR_OK && !derived_root_is_contained(canonical_base, canonical_root)) {
+    if (status == FR_OK && !fr_derived_root_is_contained(canonical_base, canonical_root)) {
         fr_error_set(err, "the derived directory for \"%s\" escapes it; refusing to delete anything",
                      base);
         status = FR_ERR;
@@ -489,6 +503,8 @@ int fr_derived_clean(const char *manifest_dir, fr_error *err) {
     }
 
     derived_remove_tree(root);
+    int still_there = derived_root_exists(root);
+    if (still_there) fr_error_set(err, "could not fully remove \"%s\"", root);
     free(root);
-    return FR_OK;
+    return still_there ? FR_ERR : FR_OK;
 }

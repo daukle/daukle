@@ -512,6 +512,28 @@ TEST the_derived_root_sits_under_build_daukle(void) {
     PASS();
 }
 
+TEST containment_rejects_the_base_directory_itself(void) {
+    ASSERT_FALSE(fr_derived_root_is_contained("/home/user/proj", "/home/user/proj"));
+    PASS();
+}
+
+TEST containment_matches_a_strict_descendant_contract(void) {
+    ASSERT_FALSE(fr_derived_root_is_contained("/home/user/proj", "/home/user/proj2/build/daukle"));
+    ASSERT(fr_derived_root_is_contained("/home/user/proj", "/home/user/proj/build/daukle"));
+    ASSERT(fr_derived_root_is_contained("/home/user/proj", "/home/user/proj/build/daukle/"));
+    ASSERT(fr_derived_root_is_contained("C:\\Users\\dev\\proj", "C:\\Users\\dev\\proj\\build\\daukle"));
+    /* A canonical base ending in its own separator, such as a project at a
+       drive root, is not a shape fr_lua_sandbox_canonical_dir is known to
+       produce outside that one case; the predicate has no special handling
+       for it and refuses rather than risk a false match, the same limitation
+       lua_sandbox.c's own within_base_dir carries. */
+    ASSERT_FALSE(fr_derived_root_is_contained("/home/user/proj/", "/home/user/proj/build/daukle"));
+#ifdef _WIN32
+    ASSERT_FALSE(fr_derived_root_is_contained("C:\\Users\\dev\\Proj", "C:\\Users\\dev\\proj\\build\\daukle"));
+#endif
+    PASS();
+}
+
 TEST clean_removes_the_derived_tree_and_nothing_beside_it(void) {
     make_scratch("clean");
     char keep[700];
@@ -562,13 +584,22 @@ static void remove_link_node(const char *path) {
 #endif
 }
 
-/* Creates build/daukle beneath scratch as a link to outside_dir rather than a
-   real directory: a directory junction on Windows, since an unprivileged
-   process there cannot create a file symlink and can only create a directory
-   link as a junction, and a symlink everywhere else. Success is verified by
-   reading through the link rather than trusting the creation call's own exit
-   status, since a silently no-op mklink would otherwise be read as success. */
-static int create_outside_link(const char *link_path, const char *target_path) {
+/* fr_test_remove_tree's own child walk does not know about reparse points, so
+   the link must be gone before the tree it sits in is handed to it, or
+   cleanup would recurse through the link exactly the way the unguarded
+   fr_derived_clean once did. */
+static void remove_link_before_tree(const char *link_path, const char *tree_path) {
+    remove_link_node(link_path);
+    fr_test_remove_tree(tree_path);
+}
+
+/* Creates link_path as a link to target_path rather than a real directory: a
+   directory junction on Windows, since an unprivileged process there cannot
+   create a file symlink and can only create a directory link as a junction,
+   and a symlink everywhere else. Success is verified by reading through the
+   link rather than trusting the creation call's own exit status, since a
+   silently no-op mklink would otherwise be read as success. */
+static int create_directory_link(const char *link_path, const char *target_path) {
 #ifdef _WIN32
     char command[2048];
     snprintf(command, sizeof command, "cmd /c mklink /J \"%s\" \"%s\" >nul 2>&1",
@@ -585,14 +616,9 @@ static int create_outside_link(const char *link_path, const char *target_path) {
     return worked;
 }
 
-/* This is the one guard in the plan whose failure mode is data loss, so unlike
-   most regression tests here, this one is not disposable: it stays permanently
-   rather than being a one-off check run during development. Per Ruling P7, if
-   this machine cannot create the link at all, the escape assertion below is
-   skipped, visibly (greatest's SKIPm both prints a distinguishing "s" in the
-   non-verbose run and counts toward the final "skipped" tally, so a run that
-   hit this branch cannot be mistaken for a run that verified containment),
-   rather than the test quietly reporting a pass it never checked. */
+/* This guard's failure mode is data loss, so it stays as a permanent
+   regression test rather than a one-off development check; if this machine
+   cannot create the link, SKIPm makes that visible instead of a silent pass. */
 TEST clean_refuses_when_the_derived_root_escapes_through_a_link(void) {
     make_scratch("cleanescape");
 
@@ -612,17 +638,18 @@ TEST clean_refuses_when_the_derived_root_escapes_through_a_link(void) {
     char marker_path[800];
     snprintf(marker_path, sizeof marker_path, "%s/marker.txt", outside_dir);
     fr_error err;
-    fr_file_write_text(marker_path, "precious\n", &err);
+    int wrote_marker = fr_file_write_text(marker_path, "precious\n", &err) == FR_OK;
 
-    int link_created = create_outside_link(link_path, outside_dir);
+    int link_created = wrote_marker && create_directory_link(link_path, outside_dir);
     if (!link_created) {
-        remove_link_node(link_path);
-        fr_test_remove_tree(scratch);
+        remove_link_before_tree(link_path, scratch);
         fr_test_remove_tree(outside_dir);
+        ASSERT(wrote_marker);
         SKIPm("could not create a junction/symlink pointing outside the tree on this "
               "machine; the containment-escape assertion did not run");
     }
 
+    err.message[0] = '\0';
     int status = fr_derived_clean(scratch, &err);
     char error_message[sizeof err.message];
     snprintf(error_message, sizeof error_message, "%s", err.message);
@@ -631,15 +658,57 @@ TEST clean_refuses_when_the_derived_root_escapes_through_a_link(void) {
     int marker_survived = survivor != NULL && strcmp(survivor, "precious\n") == 0;
     free(survivor);
 
-    /* Cleanup runs before any assertion, and the link node is removed before the
-       tree it sits in: fr_test_remove_tree's own child walk does not know about
-       reparse points, so handing it a directory that still contains the link
-       would recurse through it exactly the way the unguarded fr_derived_clean
-       once did, deleting outside_dir's contents as a side effect of tidying up
-       after the test that proves that deletion must never happen. */
-    remove_link_node(link_path);
-    fr_test_remove_tree(scratch);
+    remove_link_before_tree(link_path, scratch);
     fr_test_remove_tree(outside_dir);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(marker_survived);
+    ASSERT(strstr(error_message, "refusing to delete") != NULL);
+    PASS();
+}
+
+/* The escape case above catches a link whose target sits outside the project;
+   this one catches a link whose target still sits inside it (build/daukle
+   pointing at proj/src, say), which a base-versus-target compare alone passes
+   as contained even though opening it to delete would destroy the real
+   directory it points at. Same permanence and create-or-visibly-skip rule. */
+TEST clean_refuses_when_the_derived_root_is_a_link_inside_the_project(void) {
+    make_scratch("cleanselflink");
+
+    char src_dir[700];
+    snprintf(src_dir, sizeof src_dir, "%s/src", scratch);
+    fr_test_make_directory(src_dir);
+
+    char marker_path[800];
+    snprintf(marker_path, sizeof marker_path, "%s/marker.txt", src_dir);
+    fr_error err;
+    int wrote_marker = fr_file_write_text(marker_path, "precious\n", &err) == FR_OK;
+
+    char build_dir[700];
+    snprintf(build_dir, sizeof build_dir, "%s/build", scratch);
+    fr_test_make_directory(build_dir);
+
+    char link_path[700];
+    snprintf(link_path, sizeof link_path, "%s/daukle", build_dir);
+
+    int link_created = wrote_marker && create_directory_link(link_path, src_dir);
+    if (!link_created) {
+        remove_link_before_tree(link_path, scratch);
+        ASSERT(wrote_marker);
+        SKIPm("could not create a junction/symlink pointing at a project subdirectory on "
+              "this machine; the self-referential containment assertion did not run");
+    }
+
+    err.message[0] = '\0';
+    int status = fr_derived_clean(scratch, &err);
+    char error_message[sizeof err.message];
+    snprintf(error_message, sizeof error_message, "%s", err.message);
+
+    char *survivor = read_file(marker_path);
+    int marker_survived = survivor != NULL && strcmp(survivor, "precious\n") == 0;
+    free(survivor);
+
+    remove_link_before_tree(link_path, scratch);
 
     ASSERT_EQ(FR_ERR, status);
     ASSERT(marker_survived);
@@ -672,8 +741,11 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plain_toolchain_name_resolves_beneath_the_derived_root);
     RUN_TEST(ensure_root_creates_the_directory_and_a_gitignore_it_never_overwrites);
     RUN_TEST(the_derived_root_sits_under_build_daukle);
+    RUN_TEST(containment_rejects_the_base_directory_itself);
+    RUN_TEST(containment_matches_a_strict_descendant_contract);
     RUN_TEST(clean_removes_the_derived_tree_and_nothing_beside_it);
     RUN_TEST(clean_on_a_project_that_never_generated_is_not_an_error);
     RUN_TEST(clean_refuses_when_the_derived_root_escapes_through_a_link);
+    RUN_TEST(clean_refuses_when_the_derived_root_is_a_link_inside_the_project);
     GREATEST_MAIN_END();
 }
