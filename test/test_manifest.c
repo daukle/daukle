@@ -145,6 +145,47 @@ TEST reports_the_origin_of_a_bad_document(void) {
     PASS();
 }
 
+TEST a_toolchain_block_is_read_with_its_own_keys(void) {
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/toolchain/daukle.toml", &manifest, &err));
+    ASSERT_EQ(2, (int) manifest.toolchain_count);
+
+    const fr_toolchain *stub = NULL;
+    for (size_t index = 0; index < manifest.toolchain_count; index++) {
+        if (strcmp(manifest.toolchains[index].name, "stub") == 0) stub = &manifest.toolchains[index];
+    }
+    int found = stub != NULL;
+    int version_is_read = found && strcmp(stub->version, "21") == 0;
+    const cJSON *target = found ? cJSON_GetObjectItemCaseSensitive(stub->block, "target") : NULL;
+    int target_is_kept = target != NULL && cJSON_IsString(target)
+                         && strcmp(target->valuestring, "app") == 0;
+    fr_manifest_free(&manifest);
+
+    ASSERT(found);
+    ASSERT(version_is_read);
+    ASSERT(target_is_kept);
+    PASS();
+}
+
+TEST a_toolchain_written_as_a_string_is_a_version_constraint(void) {
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/toolchain/daukle.toml", &manifest, &err));
+
+    const fr_toolchain *shorthand = NULL;
+    for (size_t index = 0; index < manifest.toolchain_count; index++) {
+        if (strcmp(manifest.toolchains[index].name, "shorthand") == 0) {
+            shorthand = &manifest.toolchains[index];
+        }
+    }
+    int found = shorthand != NULL;
+    int version_is_read = found && strcmp(shorthand->version, ">=3.20") == 0;
+    fr_manifest_free(&manifest);
+
+    ASSERT(found);
+    ASSERT(version_is_read);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -159,5 +200,7 @@ int main(int argc, char **argv) {
     RUN_TEST(rejects_an_unknown_schema);
     RUN_TEST(validates_a_document_built_in_memory);
     RUN_TEST(reports_the_origin_of_a_bad_document);
+    RUN_TEST(a_toolchain_block_is_read_with_its_own_keys);
+    RUN_TEST(a_toolchain_written_as_a_string_is_a_version_constraint);
     GREATEST_MAIN_END();
 }

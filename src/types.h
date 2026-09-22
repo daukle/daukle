@@ -75,6 +75,8 @@ typedef struct {
     size_t source_count;
     fr_consumer *consumers;
     size_t consumer_count;
+    fr_toolchain *toolchains;
+    size_t toolchain_count;
     struct cJSON *document;
 } fr_manifest;
 
