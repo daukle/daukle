@@ -5,6 +5,7 @@
 #include "config_lua.h"
 #include "config_toml.h"
 #include "error.h"
+#include "generate.h"
 #include "manifest.h"
 #include "plugins.h"
 #include "region.h"
@@ -172,7 +173,10 @@ int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report 
     }
 
     int result = FR_OK;
-    for (size_t index = 0; index < manifest.consumer_count; index++) {
+    if (fr_generate(&manifest, manifest_path, manifest_dir, registry, write, report, err) != FR_OK) {
+        result = FR_ERR;
+    }
+    for (size_t index = 0; result == FR_OK && index < manifest.consumer_count; index++) {
         if (sync_consumer(&manifest.consumers[index], &manifest, manifest_path, manifest_dir,
                           registry, write, report, err) != FR_OK) {
             result = FR_ERR;

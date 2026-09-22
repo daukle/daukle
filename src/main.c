@@ -2,6 +2,7 @@
 #include "cli.h"
 #include "config.h"
 #include "config_lua.h"
+#include "derived.h"
 #include "error.h"
 #include "lua_verbs.h"
 #include "luax.h"
@@ -21,6 +22,10 @@
 #define DAUKLE_VERSION "0.1.0"
 
 static void print_lua_log(const char *message) {
+    fprintf(stderr, "daukle: %s\n", message);
+}
+
+static void print_notice(const char *message) {
     fprintf(stderr, "daukle: %s\n", message);
 }
 
@@ -428,6 +433,7 @@ int main(int argc, char **argv) {
     fr_cli_options options;
     fr_cli_parse(argc, argv, &options);
     fr_lua_set_log_sink(print_lua_log);
+    fr_derived_set_notice_sink(print_notice);
     fr_lua_set_limits(options.instruction_limit, options.memory_limit);
     fr_lua_verbs_set_verbose(options.verbose);
 
