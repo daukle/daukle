@@ -34,6 +34,15 @@ int fr_lua_plugin_load(const char *text, const char *origin, const char *const *
    load phase is open. */
 fr_registry *fr_lua_registering_registry(void);
 
+/* True while a plugin chunk is running, which is exactly when daukle.exec must
+   refuse: the checks in daukle.language and daukle.source fire only once a
+   plugin declares its kind, and a plugin that execs at the top of its chunk has
+   already run the program by then. No plugin kind that may exec exists yet, so
+   the whole of a plugin chunk is refused; when toolchain plugins land this
+   narrows to the kinds that may not, and the declaration-time checks stay as
+   the place spec section 4.4's message is raised. */
+int fr_lua_plugin_exec_is_refused(void);
+
 /* Sets language, source and plugin on the table on top of the stack, for
    lua_verbs.c to build a plugin environment around; the underlying functions
    are file statics here, so this is their only way out. */

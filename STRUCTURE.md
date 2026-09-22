@@ -84,7 +84,7 @@ the client tier's rules.
 | the shared exec logic, joining a program and its argument vector into the one command line `CreateProcess` requires, and freeing an `fr_exec_result` | `exec.c`, `exec.h`, tested by `test/test_exec_quote.c` | spawning a process. That is `exec_posix.c` and `exec_win32.c`. Reachable from Lua through `daukle.exec`, which takes a `daukle.tool` handle, never a path string |
 | spawning a process on POSIX with `fork`/`execv`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `exec_posix.c`, tested by `test/test_exec.c` | building the command line, which stays in `exec.c` because Windows needs it too |
 | spawning a process on Windows with `CreateProcessA`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `exec_win32.c`, tested by `test/test_exec.c` | building the command line, which it calls into `exec.c` for |
-| resolving an executable name to an absolute path by searching the host's `PATH` | `tool.c`, tested by `test/test_tool.c` | provisioning a missing tool. Discovery only, per spec section 3.1; child spec 4 extends the same `fr_tool_resolve` with that later. Reachable from Lua through `daukle.tool`, which returns an unforgeable full-userdata handle, never the path itself |
+| resolving an executable name to an absolute path by searching the host's `PATH` | `tool.c`, tested by `test/test_tool.c` | provisioning a missing tool. Discovery only, per spec section 3.1; child spec 4 extends the same `fr_tool_resolve` with that later. Reachable from Lua through `daukle.tool`, which returns an unforgeable full-userdata handle, never the path itself. A name that resolves only to a `.bat` or `.cmd` is refused naming the file, since starting one needs `cmd.exe` |
 
 **A `daukle.lua` runs against a curated globals table, not Lua's own.** The two lists that define it
 are `KEPT` and `REMOVED` at the top of `src/lua_sandbox.c`, and reading a removed name raises an
@@ -120,6 +120,12 @@ toolchain plugin" when `fr_lua_verbs_env_declared_exec` (`lua_verbs.c`) reports 
 the plugin's chunk is running in included `exec`. The flag is reset at the top of every
 `fr_lua_verbs_push_env` call, so it can never carry a stale answer from a previously loaded plugin.
 Only a toolchain plugin, not yet built, may declare `exec`.
+
+That check fires when a plugin says what kind it is, which is too late on its own: a plugin that
+calls `daukle.exec` at the top of its chunk and declares afterwards has already run the program.
+So `verb_exec` refuses again at the call itself, for the whole of any plugin chunk
+(`fr_lua_plugin_exec_is_refused` in `config_lua.c`), since no plugin kind that may exec exists yet.
+The two together are what make the refusal fail closed.
 
 **The cache key includes the artifact, and that is load bearing.** Two manifests can name one project
 id and one version and resolve them from different repositories. Keyed by project and version alone,

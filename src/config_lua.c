@@ -500,6 +500,12 @@ fr_registry *fr_lua_registering_registry(void) {
     return registering_into;
 }
 
+static int plugin_chunk_running;
+
+int fr_lua_plugin_exec_is_refused(void) {
+    return plugin_chunk_running;
+}
+
 int fr_lua_plugin_load(const char *text, const char *origin, const char *const *verbs,
                        size_t verb_count, fr_error *err) {
     lua_State *state = fr_lua_runtime_state();
@@ -512,7 +518,9 @@ int fr_lua_plugin_load(const char *text, const char *origin, const char *const *
     if (fr_lua_verbs_push_env(state, verbs, verb_count, err) != FR_OK) return FR_ERR;
     int env = lua_gettop(state);
 
+    plugin_chunk_running = 1;
     int status = fr_lua_run_in_env(state, text, origin, env, err);
+    plugin_chunk_running = 0;
     lua_settop(state, top);
     return status;
 }
