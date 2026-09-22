@@ -29,6 +29,13 @@ static void append_quoted(const char *argument, char *line, size_t *length) {
     line[(*length)++] = '"';
 }
 
+void fr_exec_result_free(fr_exec_result *result) {
+    free(result->stdout_text);
+    free(result->stderr_text);
+    result->stdout_text = NULL;
+    result->stderr_text = NULL;
+}
+
 int fr_exec_command_line(const char *program, const char *const *argv, size_t argv_count,
                          char **out_line, fr_error *err) {
     size_t bound = strlen(program) * 2 + 3;

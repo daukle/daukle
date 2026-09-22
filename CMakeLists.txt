@@ -26,12 +26,16 @@ file(GLOB DAUKLE_CORE_SOURCES CONFIGURE_DEPENDS src/*.c)
 list(REMOVE_ITEM DAUKLE_CORE_SOURCES
      ${CMAKE_CURRENT_SOURCE_DIR}/src/main.c
      ${CMAKE_CURRENT_SOURCE_DIR}/src/http_winhttp.c
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/http_curl.c)
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/http_curl.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/exec_win32.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/exec_posix.c)
 
 if(WIN32)
     list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/http_winhttp.c)
+    list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/exec_win32.c)
 else()
     list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/http_curl.c)
+    list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/exec_posix.c)
 endif()
 
 add_library(daukle_core STATIC ${DAUKLE_CORE_SOURCES})
