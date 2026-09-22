@@ -13,6 +13,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 static char *test_verb_dup(const char *text) {
     size_t size = strlen(text) + 1;
     char *copy = malloc(size);
@@ -80,22 +85,135 @@ TEST registration_functions_are_always_present(void) {
     PASS();
 }
 
-TEST exec_is_accepted_in_uses_but_not_implemented(void) {
+TEST publish_is_accepted_in_uses_but_not_implemented(void) {
     fr_error err;
     fr_registry *registry = fr_registry_create();
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     lua_State *state = fr_lua_runtime_state();
 
-    ASSERT_EQ(1, fr_lua_verbs_is_known("exec"));
-    ASSERT_EQ(1, fr_lua_verbs_is_reserved("exec"));
+    ASSERT_EQ(1, fr_lua_verbs_is_known("publish"));
+    ASSERT_EQ(1, fr_lua_verbs_is_reserved("publish"));
+
+    const char *verbs[] = { "publish" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, "daukle.publish('git')", "=t", env, &err));
+    ASSERT(strstr(err.message, "not implemented") != NULL);
+    ASSERT(strstr(err.message, "was not declared") == NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST tool_resolves_and_exec_runs_what_it_resolved(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "local t = daukle.tool('test_lua_verbs')\n"
+        "result = daukle.exec(t, { '--exec-child', '0', 'hi' }, { capture = true })",
+        "=t", env, &err));
+
+    lua_getfield(state, env, "result");
+    lua_getfield(state, -1, "code");
+    ASSERT_EQ(0, (int) lua_tointeger(state, -1));
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "stdout");
+    ASSERT(strstr(lua_tostring(state, -1), "[hi]") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST exec_raises_on_a_nonzero_exit_by_default(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "local t = daukle.tool('test_lua_verbs')\n"
+        "daukle.exec(t, { '--exec-child', '4' })",
+        "=t", env, &err));
+    ASSERT(strstr(err.message, "exited with code 4") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST exec_returns_the_code_when_check_is_false(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "local t = daukle.tool('test_lua_verbs')\n"
+        "code = daukle.exec(t, { '--exec-child', '4' }, { check = false }).code",
+        "=t", env, &err));
+    lua_getfield(state, env, "code");
+    ASSERT_EQ(4, (int) lua_tointeger(state, -1));
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST exec_refuses_anything_that_is_not_a_tool_handle(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
 
     const char *verbs[] = { "exec" };
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
     int env = lua_gettop(state);
 
-    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, "daukle.exec('git')", "=t", env, &err));
-    ASSERT(strstr(err.message, "not implemented") != NULL);
-    ASSERT(strstr(err.message, "was not declared") == NULL);
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.exec('/bin/sh', { '-c', 'echo no' })", "=t", env, &err));
+    ASSERT(strstr(err.message, "must be a tool handle") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST tool_names_what_it_could_not_find(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.tool('daukle-no-such-tool')", "=t", env, &err));
+    ASSERT(strstr(err.message, "is not installed") != NULL);
 
     lua_settop(state, 0);
     fr_registry_destroy(registry);
@@ -588,11 +706,27 @@ TEST parse_refuses_an_executable_config_format(void) {
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
+    if (argc >= 3 && strcmp(argv[1], "--exec-child") == 0) {
+#ifdef _WIN32
+        _setmode(_fileno(stdout), _O_BINARY);
+#endif
+        int code = atoi(argv[2]);
+        for (int index = 3; index < argc; index++) printf("[%s]\n", argv[index]);
+        fflush(stdout);
+        return code;
+    }
+    fr_test_prepend_to_path_dir_of(argv[0]);
+
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_declared_verb_is_present);
     RUN_TEST(an_undeclared_verb_raises_naming_itself);
     RUN_TEST(registration_functions_are_always_present);
-    RUN_TEST(exec_is_accepted_in_uses_but_not_implemented);
+    RUN_TEST(publish_is_accepted_in_uses_but_not_implemented);
+    RUN_TEST(tool_resolves_and_exec_runs_what_it_resolved);
+    RUN_TEST(exec_raises_on_a_nonzero_exit_by_default);
+    RUN_TEST(exec_returns_the_code_when_check_is_false);
+    RUN_TEST(exec_refuses_anything_that_is_not_a_tool_handle);
+    RUN_TEST(tool_names_what_it_could_not_find);
     RUN_TEST(env_reads_a_variable_and_nil_for_an_absent_one);
     RUN_TEST(read_refuses_a_path_outside_the_base_directory);
     RUN_TEST(read_returns_the_text_of_a_file_inside_the_base_directory);

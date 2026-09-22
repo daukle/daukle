@@ -4,6 +4,7 @@
 #include "config_json.h"
 #include "config_lua.h"
 #include "error.h"
+#include "exec.h"
 #include "http.h"
 #include "jsonedit.h"
 #include "lang_region.h"
@@ -11,6 +12,7 @@
 #include "luax.h"
 #include "region.h"
 #include "registry.h"
+#include "tool.h"
 
 #include "cJSON.h"
 #include "lauxlib.h"
@@ -28,10 +30,15 @@ static const char *BASE[] = {
 };
 
 static const char *KNOWN_VERBS[] = {
-    "fetch", "read", "cache", "env", "region", "json_set", "json_parse", "parse", "exec"
+    "fetch", "read", "cache", "env", "region", "json_set", "json_parse", "parse", "exec", "tool",
+    "publish"
 };
 
-static const char *RESERVED_VERBS[] = { "exec" };
+/* daukle.publish is spec section 10's next reserved name: a fourth table and
+   a "daukle publish" command, not yet implemented. Keeping one name here
+   pins the array's shape and keeps fr_lua_verbs_is_reserved's own test true
+   for a name this version does not implement. */
+static const char *RESERVED_VERBS[] = { "publish" };
 
 int fr_lua_verbs_is_known(const char *name) {
     for (size_t index = 0; index < sizeof KNOWN_VERBS / sizeof KNOWN_VERBS[0]; index++) {
@@ -77,7 +84,7 @@ static int verb_read(lua_State *state) {
 }
 
 static int reserved_verb(lua_State *state) {
-    return luaL_error(state, "daukle.exec is not implemented in this version");
+    return luaL_error(state, "daukle.publish is not implemented in this version");
 }
 
 static int verb_fetch(lua_State *state) {
@@ -277,7 +284,130 @@ static int verb_parse(lua_State *state) {
     return 1;
 }
 
-/* install_one handles every declared verb plus the reserved exec; a name
+#define FR_TOOL_HANDLE "daukle.tool"
+#define FR_VERB_MAX_ARGV 256
+
+typedef struct {
+    char path[1024];
+    char name[128];
+} fr_lua_tool;
+
+static int g_verbose;
+
+void fr_lua_verbs_set_verbose(int enabled) {
+    g_verbose = enabled;
+}
+
+static int verb_tool(lua_State *state) {
+    const char *name = luaL_checkstring(state, 1);
+
+    char *path = NULL;
+    fr_error err;
+    if (fr_tool_resolve(name, &path, &err) != FR_OK) return luaL_error(state, "%s", err.message);
+
+    fr_lua_tool *handle = lua_newuserdatauv(state, sizeof *handle, 0);
+    snprintf(handle->path, sizeof handle->path, "%s", path);
+    snprintf(handle->name, sizeof handle->name, "%s", name);
+    free(path);
+
+    luaL_getmetatable(state, FR_TOOL_HANDLE);
+    lua_setmetatable(state, -2);
+    return 1;
+}
+
+static int option_flag(lua_State *state, int index, const char *key, int fallback) {
+    if (lua_type(state, index) != LUA_TTABLE) return fallback;
+    lua_getfield(state, index, key);
+    int value = lua_isnil(state, -1) ? fallback : lua_toboolean(state, -1);
+    lua_pop(state, 1);
+    return value;
+}
+
+static void report_verbose_exec(const fr_lua_tool *handle, const char *const *argv,
+                                lua_Integer argv_count, const char *cwd) {
+    fprintf(stderr, "exec %s (%s)\n", handle->name, handle->path);
+    fprintf(stderr, "  args:");
+    for (lua_Integer index = 0; index < argv_count; index++) fprintf(stderr, " %s", argv[index]);
+    fprintf(stderr, "\n  cwd:  %s\n", cwd != NULL ? cwd : ".");
+}
+
+static int verb_exec(lua_State *state) {
+    if (luaL_testudata(state, 1, FR_TOOL_HANDLE) == NULL) {
+        return luaL_error(state, "daukle.exec argument 1 must be a tool handle from daukle.tool");
+    }
+    fr_lua_tool *handle = lua_touserdata(state, 1);
+    luaL_checktype(state, 2, LUA_TTABLE);
+
+    lua_Integer count = luaL_len(state, 2);
+    if (count < 0 || count > FR_VERB_MAX_ARGV) {
+        return luaL_error(state, "daukle.exec takes at most %d arguments", FR_VERB_MAX_ARGV);
+    }
+
+    int argv_base = lua_gettop(state);
+    const char *argv[FR_VERB_MAX_ARGV];
+    for (lua_Integer index = 1; index <= count; index++) {
+        lua_geti(state, 2, index);
+        if (lua_type(state, -1) != LUA_TSTRING) {
+            return luaL_error(state, "daukle.exec argument %d is not a string",
+                              (int) index);
+        }
+        /* Every value stays on the stack until fr_exec_run has read it: taking
+           the char * and popping here would let Lua collect the string while
+           argv still points at it. */
+        argv[index - 1] = lua_tostring(state, -1);
+    }
+
+    int capture = option_flag(state, 3, "capture", 0);
+    int check = option_flag(state, 3, "check", 1);
+
+    const char *cwd = NULL;
+    if (lua_type(state, 3) == LUA_TTABLE) {
+        lua_getfield(state, 3, "cwd");
+        if (!lua_isnil(state, -1)) cwd = luaL_checkstring(state, -1);
+        lua_pop(state, 1);
+    }
+
+    if (g_verbose) report_verbose_exec(handle, argv, count, cwd);
+
+    fr_exec_request request;
+    request.program = handle->path;
+    request.argv = argv;
+    request.argv_count = (size_t) count;
+    request.cwd = cwd;
+    request.capture = capture;
+
+    fr_exec_result result;
+    fr_error err;
+    int status = fr_exec_run(&request, &result, &err);
+    lua_settop(state, argv_base);
+    if (status != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    if (check && result.code != 0) {
+        int code = result.code;
+        fr_exec_result_free(&result);
+        return luaL_error(state, "%s exited with code %d", handle->name, code);
+    }
+
+    lua_newtable(state);
+    lua_pushinteger(state, result.code);
+    lua_setfield(state, -2, "code");
+    if (capture) {
+        lua_pushstring(state, result.stdout_text != NULL ? result.stdout_text : "");
+        lua_setfield(state, -2, "stdout");
+        lua_pushstring(state, result.stderr_text != NULL ? result.stderr_text : "");
+        lua_setfield(state, -2, "stderr");
+        if (result.truncated) {
+            lua_pushboolean(state, 1);
+            lua_setfield(state, -2, "truncated");
+        }
+    }
+    fr_exec_result_free(&result);
+    return 1;
+}
+
+/* install_one handles every declared verb plus the reserved publish; a name
    that is known (fr_lua_verbs_is_known) but neither handled here nor reserved
    would be left unset, which cannot currently happen. */
 static void install_one(lua_State *state, const char *name) {
@@ -297,6 +427,10 @@ static void install_one(lua_State *state, const char *name) {
         lua_pushcfunction(state, verb_json_parse);
     } else if (strcmp(name, "parse") == 0) {
         lua_pushcfunction(state, verb_parse);
+    } else if (strcmp(name, "tool") == 0) {
+        lua_pushcfunction(state, verb_tool);
+    } else if (strcmp(name, "exec") == 0) {
+        lua_pushcfunction(state, verb_exec);
     } else if (fr_lua_verbs_is_reserved(name)) {
         lua_pushcfunction(state, reserved_verb);
     } else {
@@ -315,6 +449,9 @@ static const char *const *pending_verbs;
 static size_t pending_verb_count;
 
 static int protected_push_env(lua_State *state) {
+    luaL_newmetatable(state, FR_TOOL_HANDLE);
+    lua_pop(state, 1);
+
     lua_newtable(state);
     for (size_t index = 0; index < sizeof BASE / sizeof BASE[0]; index++) {
         lua_getglobal(state, BASE[index]);

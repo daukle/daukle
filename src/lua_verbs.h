@@ -29,7 +29,12 @@ int fr_lua_verbs_push_env(lua_State *state, const char *const *verbs, size_t ver
    environment is built. Returns 1 for a known name. */
 int fr_lua_verbs_is_known(const char *name);
 
-/* A known name that this version does not implement, such as exec. */
+/* A known name that this version does not implement, such as publish. */
 int fr_lua_verbs_is_reserved(const char *name);
+
+/* Threads --verbose into daukle.exec's own reporting, the way fr_cache_set_enabled
+   threads --no-cache into the cache: main.c is the one place that reads the CLI
+   flag, and lua_verbs.c has no other way to reach it. */
+void fr_lua_verbs_set_verbose(int enabled);
 
 #endif

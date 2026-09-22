@@ -3,6 +3,7 @@
 #include "config.h"
 #include "config_lua.h"
 #include "error.h"
+#include "lua_verbs.h"
 #include "luax.h"
 #include "manifest.h"
 #include "plugins.h"
@@ -428,6 +429,7 @@ int main(int argc, char **argv) {
     fr_cli_parse(argc, argv, &options);
     fr_lua_set_log_sink(print_lua_log);
     fr_lua_set_limits(options.instruction_limit, options.memory_limit);
+    fr_lua_verbs_set_verbose(options.verbose);
 
     switch (options.command) {
         case FR_CLI_VERSION:
