@@ -14,6 +14,8 @@ struct fr_registry {
     size_t language_count;
     fr_config_plugin configs[FR_REGISTRY_CAPACITY];
     size_t config_count;
+    fr_toolchain_plugin toolchains[FR_REGISTRY_CAPACITY];
+    size_t toolchain_count;
 };
 
 fr_registry *fr_registry_create(void) {
@@ -97,4 +99,26 @@ size_t fr_registry_config_count(const fr_registry *registry) {
 const fr_config_plugin *fr_registry_config_at(const fr_registry *registry, size_t index) {
     if (index >= registry->config_count) return NULL;
     return &registry->configs[index];
+}
+
+int fr_registry_add_toolchain(fr_registry *registry, const fr_toolchain_plugin *plugin, fr_error *err) {
+    for (size_t index = 0; index < registry->toolchain_count; index++) {
+        if (strcmp(registry->toolchains[index].capability, plugin->capability) == 0) {
+            fr_error_set(err, "capability \"%s\" is already registered", plugin->capability);
+            return FR_ERR;
+        }
+    }
+    if (registry->toolchain_count == FR_REGISTRY_CAPACITY) {
+        fr_error_set(err, "cannot register \"%s\": registry is full", plugin->capability);
+        return FR_ERR;
+    }
+    registry->toolchains[registry->toolchain_count++] = *plugin;
+    return FR_OK;
+}
+
+const fr_toolchain_plugin *fr_registry_toolchain(const fr_registry *registry, const char *capability) {
+    for (size_t index = 0; index < registry->toolchain_count; index++) {
+        if (strcmp(registry->toolchains[index].capability, capability) == 0) return &registry->toolchains[index];
+    }
+    return NULL;
 }

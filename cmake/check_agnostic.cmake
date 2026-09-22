@@ -5,7 +5,7 @@ set(CORE_FILES
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
-              "daukle\\.language/[a-z]" "daukle\\.config/[a-z]"
+              "daukle\\.language/[a-z]" "daukle\\.config/[a-z]" "daukle\\.toolchain/[a-z]"
               "FR_SOURCE_[A-Z]" "FR_LANGUAGE_[A-Z]")
 
 set(FINDINGS "")
