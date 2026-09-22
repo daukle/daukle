@@ -29,6 +29,11 @@ int fr_lua_verbs_push_env(lua_State *state, const char *const *verbs, size_t ver
    environment is built. Returns 1 for a known name. */
 int fr_lua_verbs_is_known(const char *name);
 
+/* Whether the environment most recently built by fr_lua_verbs_push_env included
+   exec. Reset at the top of every push_env call, so it can never carry a stale
+   answer from a previously loaded plugin's chunk. */
+int fr_lua_verbs_env_declared_exec(void);
+
 /* A known name that this version does not implement, such as publish. */
 int fr_lua_verbs_is_reserved(const char *name);
 

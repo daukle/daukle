@@ -323,6 +323,9 @@ static int take_slot(lua_State *state, const char *prefix, const char *field,
 }
 
 static int lua_declare_language(lua_State *state) {
+    if (fr_lua_verbs_env_declared_exec()) {
+        return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+    }
     luaL_checktype(state, 1, LUA_TTABLE);
     fr_lua_plugin_slot *slot = NULL;
     if (take_slot(state, "daukle.language/", "apply", &slot) != 0 || slot == NULL) {
@@ -338,6 +341,9 @@ static int lua_declare_language(lua_State *state) {
 }
 
 static int lua_declare_source(lua_State *state) {
+    if (fr_lua_verbs_env_declared_exec()) {
+        return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+    }
     luaL_checktype(state, 1, LUA_TTABLE);
     fr_lua_plugin_slot *slot = NULL;
     if (take_slot(state, "daukle.source/", "load", &slot) != 0 || slot == NULL) {

@@ -254,6 +254,53 @@ TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
     PASS();
 }
 
+TEST a_language_plugin_may_not_declare_exec(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/plugin-exec-refused/daukle.toml",
+                                          registry, &manifest, &err));
+    ASSERT(strstr(err.message, "daukle.exec is available only to a toolchain plugin") != NULL);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST a_source_plugin_may_not_declare_exec(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/plugin-exec-refused-source/daukle.toml",
+                                          registry, &manifest, &err));
+    ASSERT(strstr(err.message, "daukle.exec is available only to a toolchain plugin") != NULL);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* daukle.tool alone must still load: the refusal is exec's alone, not tool's. */
+TEST a_language_plugin_declaring_tool_but_not_exec_still_loads(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-tool-only/daukle.toml",
+                                         registry, &manifest, &err));
+    ASSERT(fr_registry_language(registry, "daukle.language/ok") != NULL);
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 static int load_manifest(const char *file_path, fr_error *err) {
     fr_registry *registry = NULL;
     if (fr_build_registry(&registry, err) != FR_OK) return FR_ERR;
@@ -1142,6 +1189,9 @@ int main(int argc, char **argv) {
     RUN_TEST(sync_writes_through_a_plugin_registered_language);
     RUN_TEST(a_verb_a_plugin_declared_is_there_when_it_runs);
     RUN_TEST(a_manifest_declaring_no_plugins_opens_no_lua_state);
+    RUN_TEST(a_language_plugin_may_not_declare_exec);
+    RUN_TEST(a_source_plugin_may_not_declare_exec);
+    RUN_TEST(a_language_plugin_declaring_tool_but_not_exec_still_loads);
     RUN_TEST(a_verb_uses_does_not_know_is_refused);
     RUN_TEST(a_plugin_written_against_a_later_api_says_which);
     RUN_TEST(a_uses_entry_that_is_not_a_string_is_refused);

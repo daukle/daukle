@@ -54,6 +54,12 @@ int fr_lua_verbs_is_reserved(const char *name) {
     return 0;
 }
 
+static int env_declared_exec;
+
+int fr_lua_verbs_env_declared_exec(void) {
+    return env_declared_exec;
+}
+
 static int verb_env(lua_State *state) {
     const char *name = luaL_checkstring(state, 1);
     const char *value = getenv(name);
@@ -464,6 +470,7 @@ static void install_one(lua_State *state, const char *name) {
     } else if (strcmp(name, "tool") == 0) {
         lua_pushcfunction(state, verb_tool);
     } else if (strcmp(name, "exec") == 0) {
+        env_declared_exec = 1;
         lua_pushcfunction(state, verb_exec);
     } else if (fr_lua_verbs_is_reserved(name)) {
         lua_pushcfunction(state, reserved_verb);
@@ -514,6 +521,7 @@ static int protected_push_env(lua_State *state) {
 
 int fr_lua_verbs_push_env(lua_State *state, const char *const *verbs, size_t verb_count,
                           fr_error *err) {
+    env_declared_exec = 0;
     pending_verbs = verbs;
     pending_verb_count = verb_count;
     lua_pushcfunction(state, protected_push_env);

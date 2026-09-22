@@ -1,0 +1,8 @@
+schema = 1
+project = "forebay/tool-only"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+ok = "./plugins/ok.lua"

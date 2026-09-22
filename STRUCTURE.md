@@ -106,13 +106,20 @@ between canonical paths, which `fr_lua_sandbox_install` hands back so there is o
 than two that could disagree, and the refusal names both directories.
 
 **Adding a source or a language means writing a Lua plugin and declaring it in `[plugins]`.**
-`config_lua.c:334` and `config_lua.c:349` are the only places that fill in an `fr_language_plugin`
+`config_lua.c:337` and `config_lua.c:355` are the only places that fill in an `fr_language_plugin`
 or an `fr_source_plugin` and register it, turning a `daukle.language{}` or `daukle.source{}`
 declaration into a registry entry; no other file in `src/` calls `fr_registry_add_source` or
 `fr_registry_add_language`, whose only direct callers in `test/` are `test_registry.c`'s unit tests of
 the registry and the one stub source `test_resolve.c:75` injects to watch a plugin get its own state.
 Neither touches `resolve.c`, and a change that does touch it for a new source or language is the
 signal that the seam was bypassed.
+
+**A source or a language plugin may not declare `exec`.** `lua_declare_language` and
+`lua_declare_source` in `config_lua.c` both refuse with "daukle.exec is available only to a
+toolchain plugin" when `fr_lua_verbs_env_declared_exec` (`lua_verbs.c`) reports that the environment
+the plugin's chunk is running in included `exec`. The flag is reset at the top of every
+`fr_lua_verbs_push_env` call, so it can never carry a stale answer from a previously loaded plugin.
+Only a toolchain plugin, not yet built, may declare `exec`.
 
 **The cache key includes the artifact, and that is load bearing.** Two manifests can name one project
 id and one version and resolve them from different repositories. Keyed by project and version alone,
