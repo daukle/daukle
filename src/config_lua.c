@@ -266,7 +266,11 @@ static int protected_toolchain_generate(lua_State *state) {
     if (block != NULL) {
         const cJSON *member = block->child;
         while (member != NULL) {
-            if (strcmp(member->string, "version") != 0) {
+            /* version and dependencies already reach the plugin as their own
+               arguments (version, resolved dependencies); config must not
+               also carry the raw copy. */
+            if (strcmp(member->string, "version") != 0 &&
+                strcmp(member->string, "dependencies") != 0) {
                 fr_error push_err;
                 if (fr_lua_push_json(state, member, &push_err) != FR_OK) {
                     return luaL_error(state, "%s", push_err.message);

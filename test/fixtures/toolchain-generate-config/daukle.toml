@@ -11,3 +11,6 @@ stub-toolchain-config = "./plugins/stub-toolchain-config.lua"
 version = "1"
 target = "app"
 flag = "on"
+
+  [toolchains.stub.dependencies."forebay/basekit"]
+  version = "^5.0.0"

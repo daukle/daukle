@@ -556,11 +556,15 @@ TEST a_toolchain_generate_bridges_project_config_root_and_host(void) {
     PASS();
 }
 
-/* config is built member by member skipping "version" specifically, not by
-   duplicating the block and deleting a key; a plugin that reads
-   toolchain.config.version must see nil, and this only shows up in the set of
-   keys the table actually holds. Same cleanup-before-ASSERT shape as above. */
-TEST a_toolchain_config_excludes_the_reserved_version_key(void) {
+/* config is built member by member skipping "version" and "dependencies"
+   specifically, not by duplicating the block and deleting keys: both already
+   reach the plugin as their own arguments (version, resolved dependencies),
+   so a raw copy in config would let a plugin see dependencies twice, once
+   raw and once resolved. A plugin that reads toolchain.config.version or
+   toolchain.config.dependencies must see nil either way, and this only shows
+   up in the set of keys the table actually holds. Same cleanup-before-ASSERT
+   shape as above. */
+TEST a_toolchain_config_excludes_the_reserved_version_and_dependencies_keys(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest = {0};
     fr_error err;
@@ -725,7 +729,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_declares_a_toolchain_and_it_reaches_the_registry);
     RUN_TEST(a_toolchain_needs_a_generate_function);
     RUN_TEST(a_toolchain_generate_bridges_project_config_root_and_host);
-    RUN_TEST(a_toolchain_config_excludes_the_reserved_version_key);
+    RUN_TEST(a_toolchain_config_excludes_the_reserved_version_and_dependencies_keys);
     RUN_TEST(a_toolchain_generate_must_return_a_table);
     RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_path);
     RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_contents);
