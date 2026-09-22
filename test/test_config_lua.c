@@ -700,6 +700,75 @@ TEST a_toolchain_generate_refuses_a_non_string_file_contents(void) {
     PASS();
 }
 
+TEST a_task_is_declared_and_registered(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *uses[] = { "exec" };
+    const char *chunk =
+        "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n"
+        "daukle.task{ name = 'cmake:build', partOf = 'build', dependsOn = { 'cmake:configure' },"
+        " run = function() end }\n";
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, "cmake.lua", uses, 1, &err));
+
+    const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/cmake:build");
+    ASSERT(task != NULL);
+    ASSERT_STR_EQ("build", task->part_of);
+    ASSERT_EQ(1u, task->depends_on_count);
+    ASSERT_STR_EQ("cmake:configure", task->depends_on[0]);
+    ASSERT(task->run != NULL);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, "squatter.lua", NULL, 0, &err));
+    ASSERT(strstr(err.message, "declares no toolchain \"cmake\"") != NULL);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST an_aggregator_needs_no_run(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *chunk = "daukle.task{ name = 'build' }\n";
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, "lifecycle.lua", NULL, 0, &err));
+
+    const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/build");
+    ASSERT(task != NULL);
+    ASSERT(task->run == NULL);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+/* Guards the ordering hazard directly: chunk_toolchains_clear() must run
+   between loads, so a toolchain declared by one plugin's chunk can never
+   authorize a task named by a later, unrelated chunk. */
+TEST a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *first_chunk =
+        "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n";
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(first_chunk, "cmake.lua", NULL, 0, &err));
+
+    const char *second_chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(second_chunk, "squatter.lua", NULL, 0, &err));
+    ASSERT(strstr(err.message, "declares no toolchain \"cmake\"") != NULL);
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -735,5 +804,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_toolchain_generate_must_return_a_table);
     RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_path);
     RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_contents);
+    RUN_TEST(a_task_is_declared_and_registered);
+    RUN_TEST(a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare);
+    RUN_TEST(an_aggregator_needs_no_run);
+    RUN_TEST(a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain);
     GREATEST_MAIN_END();
 }
