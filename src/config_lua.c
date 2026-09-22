@@ -520,10 +520,8 @@ static int lua_declare_source(lua_State *state) {
 
 /* Which toolchains the chunk now running has declared, so that a task naming
    "<toolchain>:" can be checked against them. Reset per chunk in
-   fr_lua_plugin_load. The check runs at declaration rather than at the end of
-   the chunk, which means a plugin must declare its toolchain before the tasks
-   that belong to it; that ordering is stated in AUTHORING.md and is the same
-   direction Lua already forces on a plugin using a local it defined earlier. */
+   fr_lua_plugin_load. The check runs at declaration, so a plugin must declare
+   a toolchain before the tasks that name it. */
 #define FR_LUA_MAX_CHUNK_TOOLCHAINS 8
 static char *chunk_toolchains[FR_LUA_MAX_CHUNK_TOOLCHAINS];
 static size_t chunk_toolchain_count;
@@ -566,10 +564,34 @@ static int lua_declare_toolchain(lua_State *state) {
     return 0;
 }
 
+/* Copies the toolchain-name prefix of a colon-qualified task name into a
+   fixed buffer. luaL_error's format string is Lua's own minimal printf
+   (lua_pushvfstring), which has no precision specifier: "%.*s" raises
+   "invalid option '%.'" at runtime instead of truncating, so the substring
+   has to be built by hand before it can be interpolated with a plain "%s". */
+static void copy_toolchain_prefix(const char *name, const char *colon, char *out, size_t out_size) {
+    size_t length = (size_t) (colon - name);
+    if (length >= out_size) length = out_size - 1;
+    memcpy(out, name, length);
+    out[length] = '\0';
+}
+
 static int lua_task_run(void *state, const fr_task_run_context *context, fr_error *err) {
     (void) state; (void) context;
     fr_error_set(err, "running a task is not implemented yet");
     return FR_ERR;
+}
+
+/* Frees everything a task slot owns and zeroes it. This is needed only for a
+   raise that happens before plugin_slot_count is incremented: the shutdown
+   loop walks slots by that count, so a slot not yet counted has no other way
+   to be released. */
+static void release_task_slot(fr_lua_plugin_slot *slot) {
+    free(slot->capability);
+    free(slot->part_of);
+    for (size_t index = 0; index < slot->depends_on_count; index++) free(slot->depends_on[index]);
+    free(slot->depends_on);
+    memset(slot, 0, sizeof *slot);
 }
 
 static int lua_declare_task(lua_State *state) {
@@ -582,13 +604,7 @@ static int lua_declare_task(lua_State *state) {
     const char *colon = strchr(name, ':');
     if (colon != NULL && !chunk_declares_toolchain(name, (size_t) (colon - name))) {
         char toolchain_name[64];
-        size_t toolchain_length = (size_t) (colon - name);
-        if (toolchain_length >= sizeof toolchain_name) toolchain_length = sizeof toolchain_name - 1;
-        memcpy(toolchain_name, name, toolchain_length);
-        toolchain_name[toolchain_length] = '\0';
-        /* luaL_error's format string is Lua's own minimal printf (lua_pushvfstring),
-           which has no precision specifier: "%.*s" raises "invalid option '%.'"
-           at runtime instead of truncating, so the substring is built by hand first. */
+        copy_toolchain_prefix(name, colon, toolchain_name, sizeof toolchain_name);
         return luaL_error(state, "task \"%s\" cannot be declared here: this plugin declares no"
                                  " toolchain \"%s\"", name, toolchain_name);
     }
@@ -612,27 +628,51 @@ static int lua_declare_task(lua_State *state) {
     slot->capability = fr_dup_string(capability);
     if (slot->capability == NULL) return luaL_error(state, "out of memory");
 
+    /* Every check below stands in for a luaL_check* call, so that a rejection
+       can free the slot's allocations before it raises: plugin_slot_count has
+       not been incremented yet at any of these points (see release_task_slot). */
     lua_getfield(state, 1, "partOf");
     if (!lua_isnil(state, -1)) {
-        const char *part_of = luaL_checkstring(state, -1);
-        slot->part_of = fr_dup_string(part_of);
-        if (slot->part_of == NULL) return luaL_error(state, "out of memory");
+        if (!lua_isstring(state, -1)) {
+            release_task_slot(slot);
+            return luaL_error(state, "\"%s\" needs partOf to be a string", capability);
+        }
+        slot->part_of = fr_dup_string(lua_tostring(state, -1));
+        if (slot->part_of == NULL) {
+            release_task_slot(slot);
+            return luaL_error(state, "out of memory");
+        }
     }
     lua_pop(state, 1);
 
     lua_getfield(state, 1, "dependsOn");
     if (!lua_isnil(state, -1)) {
-        luaL_checktype(state, -1, LUA_TTABLE);
-        lua_Integer length = luaL_len(state, -1);
+        if (!lua_istable(state, -1)) {
+            release_task_slot(slot);
+            return luaL_error(state, "\"%s\" needs dependsOn to be a table", capability);
+        }
+        /* lua_rawlen, not luaL_len: a table's __len metamethod can raise (a
+           non-integer result), and dependsOn needs a plain array length that
+           cannot raise, so the slot stays freeable up to this point. */
+        lua_Integer length = (lua_Integer) lua_rawlen(state, -1);
         if (length > 0) {
             slot->depends_on = calloc((size_t) length, sizeof *slot->depends_on);
-            if (slot->depends_on == NULL) return luaL_error(state, "out of memory");
+            if (slot->depends_on == NULL) {
+                release_task_slot(slot);
+                return luaL_error(state, "out of memory");
+            }
         }
         for (lua_Integer index = 1; index <= length; index++) {
             lua_geti(state, -1, index);
-            const char *item = luaL_checkstring(state, -1);
-            slot->depends_on[index - 1] = fr_dup_string(item);
-            if (slot->depends_on[index - 1] == NULL) return luaL_error(state, "out of memory");
+            if (!lua_isstring(state, -1)) {
+                release_task_slot(slot);
+                return luaL_error(state, "\"%s\" needs dependsOn to contain only strings", capability);
+            }
+            slot->depends_on[index - 1] = fr_dup_string(lua_tostring(state, -1));
+            if (slot->depends_on[index - 1] == NULL) {
+                release_task_slot(slot);
+                return luaL_error(state, "out of memory");
+            }
             slot->depends_on_count = (size_t) index;
             lua_pop(state, 1);
         }
@@ -642,6 +682,7 @@ static int lua_declare_task(lua_State *state) {
     lua_getfield(state, 1, "run");
     if (!lua_isnil(state, -1)) {
         if (!lua_isfunction(state, -1)) {
+            release_task_slot(slot);
             return luaL_error(state, "\"%s\" needs run to be a function", capability);
         }
         slot->callback = luaL_ref(state, LUA_REGISTRYINDEX);
