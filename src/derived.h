@@ -22,6 +22,17 @@ int fr_derived_dir(const char *manifest_dir, const char *toolchain, char **out_d
    derived_root through fr_derived_root calls this once before generating. */
 int fr_derived_ensure_root(const char *derived_root, fr_error *err);
 
+/* Deletes fr_derived_root(manifest_dir) and everything beneath it. The root is
+   canonicalised with fr_lua_sandbox_canonical_dir and the result is asserted
+   to sit inside the canonical form of manifest_dir before anything is
+   removed: deletion is the one operation in this codebase whose failure mode
+   is unrecoverable data loss, so containment here is a precondition rather
+   than the notice-and-continue treatment fr_derived_apply gives an escaping
+   path. A root that does not exist is FR_OK, since cleaning a project that
+   never generated is not a failure, and the removal walk deletes a symlink or
+   a junction it meets rather than following it out of the tree. */
+int fr_derived_clean(const char *manifest_dir, fr_error *err);
+
 /* write == 0 reports what would change and touches nothing, including the
    ledger, so "check" and "sync" differ only in whether they write. A file the
    ledger records but whose digest no longer matches was changed outside daukle:

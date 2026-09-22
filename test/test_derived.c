@@ -9,6 +9,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
+
 static char scratch[512];
 
 static void make_scratch(const char *label) {
@@ -506,6 +512,141 @@ TEST the_derived_root_sits_under_build_daukle(void) {
     PASS();
 }
 
+TEST clean_removes_the_derived_tree_and_nothing_beside_it(void) {
+    make_scratch("clean");
+    char keep[700];
+    snprintf(keep, sizeof keep, "%s/src", scratch);
+    fr_test_make_directory(keep);
+    char keep_file[800];
+    snprintf(keep_file, sizeof keep_file, "%s/main.c", keep);
+    fr_error err;
+    fr_file_write_text(keep_file, "int main(void){return 0;}\n", &err);
+
+    char derived[700];
+    snprintf(derived, sizeof derived, "%s/build/daukle/stub", scratch);
+    fr_generated_file files[1] = { { "build.txt", "x\n" } };
+    fr_derived_report report;
+    fr_derived_apply(derived, files, 1, 1, &report, &err);
+    fr_derived_report_free(&report);
+
+    int status = fr_derived_clean(scratch, &err);
+
+    char *gone = read_file(derived);
+    char *survivor = read_file(keep_file);
+    int derived_is_gone = gone == NULL;
+    int source_survived = survivor != NULL;
+    free(gone);
+    free(survivor);
+    fr_test_remove_tree(scratch);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(derived_is_gone);
+    ASSERT(source_survived);
+    PASS();
+}
+
+TEST clean_on_a_project_that_never_generated_is_not_an_error(void) {
+    make_scratch("cleanempty");
+    fr_error err;
+    int status = fr_derived_clean(scratch, &err);
+    fr_test_remove_tree(scratch);
+    ASSERT_EQ(FR_OK, status);
+    PASS();
+}
+
+static void remove_link_node(const char *path) {
+#ifdef _WIN32
+    _rmdir(path);
+#else
+    remove(path);
+#endif
+}
+
+/* Creates build/daukle beneath scratch as a link to outside_dir rather than a
+   real directory: a directory junction on Windows, since an unprivileged
+   process there cannot create a file symlink and can only create a directory
+   link as a junction, and a symlink everywhere else. Success is verified by
+   reading through the link rather than trusting the creation call's own exit
+   status, since a silently no-op mklink would otherwise be read as success. */
+static int create_outside_link(const char *link_path, const char *target_path) {
+#ifdef _WIN32
+    char command[2048];
+    snprintf(command, sizeof command, "cmd /c mklink /J \"%s\" \"%s\" >nul 2>&1",
+             link_path, target_path);
+    system(command);
+#else
+    symlink(target_path, link_path);
+#endif
+    char probe[900];
+    snprintf(probe, sizeof probe, "%s/marker.txt", link_path);
+    char *text = read_file(probe);
+    int worked = text != NULL;
+    free(text);
+    return worked;
+}
+
+/* This is the one guard in the plan whose failure mode is data loss, so unlike
+   most regression tests here, this one is not disposable: it stays permanently
+   rather than being a one-off check run during development. Per Ruling P7, if
+   this machine cannot create the link at all, the escape assertion below is
+   skipped, visibly (greatest's SKIPm both prints a distinguishing "s" in the
+   non-verbose run and counts toward the final "skipped" tally, so a run that
+   hit this branch cannot be mistaken for a run that verified containment),
+   rather than the test quietly reporting a pass it never checked. */
+TEST clean_refuses_when_the_derived_root_escapes_through_a_link(void) {
+    make_scratch("cleanescape");
+
+    char build_dir[700];
+    snprintf(build_dir, sizeof build_dir, "%s/build", scratch);
+    fr_test_make_directory(build_dir);
+
+    char link_path[700];
+    snprintf(link_path, sizeof link_path, "%s/daukle", build_dir);
+
+    char outside_dir[700];
+    snprintf(outside_dir, sizeof outside_dir, "%s/daukle_test_derived_clean_outside_%d",
+             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(outside_dir);
+    fr_test_make_directory(outside_dir);
+
+    char marker_path[800];
+    snprintf(marker_path, sizeof marker_path, "%s/marker.txt", outside_dir);
+    fr_error err;
+    fr_file_write_text(marker_path, "precious\n", &err);
+
+    int link_created = create_outside_link(link_path, outside_dir);
+    if (!link_created) {
+        remove_link_node(link_path);
+        fr_test_remove_tree(scratch);
+        fr_test_remove_tree(outside_dir);
+        SKIPm("could not create a junction/symlink pointing outside the tree on this "
+              "machine; the containment-escape assertion did not run");
+    }
+
+    int status = fr_derived_clean(scratch, &err);
+    char error_message[sizeof err.message];
+    snprintf(error_message, sizeof error_message, "%s", err.message);
+
+    char *survivor = read_file(marker_path);
+    int marker_survived = survivor != NULL && strcmp(survivor, "precious\n") == 0;
+    free(survivor);
+
+    /* Cleanup runs before any assertion, and the link node is removed before the
+       tree it sits in: fr_test_remove_tree's own child walk does not know about
+       reparse points, so handing it a directory that still contains the link
+       would recurse through it exactly the way the unguarded fr_derived_clean
+       once did, deleting outside_dir's contents as a side effect of tidying up
+       after the test that proves that deletion must never happen. */
+    remove_link_node(link_path);
+    fr_test_remove_tree(scratch);
+    fr_test_remove_tree(outside_dir);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(marker_survived);
+    ASSERT(strstr(error_message, "refusing to delete") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -531,5 +672,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plain_toolchain_name_resolves_beneath_the_derived_root);
     RUN_TEST(ensure_root_creates_the_directory_and_a_gitignore_it_never_overwrites);
     RUN_TEST(the_derived_root_sits_under_build_daukle);
+    RUN_TEST(clean_removes_the_derived_tree_and_nothing_beside_it);
+    RUN_TEST(clean_on_a_project_that_never_generated_is_not_an_error);
+    RUN_TEST(clean_refuses_when_the_derived_root_escapes_through_a_link);
     GREATEST_MAIN_END();
 }

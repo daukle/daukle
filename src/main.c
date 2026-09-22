@@ -44,6 +44,24 @@ static char *duplicate_string(const char *text) {
     return copy;
 }
 
+/* sync.c keeps its own copy of this same small split, rather than exposing
+   one: it is a few lines against a whole header for something only these two
+   translation units need. */
+static char *manifest_directory(const char *manifest_path) {
+    const char *last_slash = strrchr(manifest_path, '/');
+    const char *last_backslash = strrchr(manifest_path, '\\');
+    const char *last = last_slash;
+    if (last_backslash != NULL && (last == NULL || last_backslash > last)) last = last_backslash;
+
+    size_t length = last != NULL ? (size_t) (last - manifest_path) : 0;
+    char *dir = malloc(length + 1);
+    if (dir != NULL) {
+        memcpy(dir, manifest_path, length);
+        dir[length] = '\0';
+    }
+    return dir;
+}
+
 /* A NULL manifest_path means "search the current directory"; a registry is
    built only for that search and torn down again before returning, per the
    rule that every registry a path builds is destroyed and shut down there. */
@@ -429,6 +447,32 @@ static int plugin_update(const char *label, int use_cache, int verbose) {
     return 0;
 }
 
+static int clean_derived(const char *manifest_path) {
+    fr_error err;
+    char *resolved = NULL;
+    if (resolve_manifest_path(manifest_path, &resolved, &err) != FR_OK) {
+        report_error(&err, 0);
+        return 1;
+    }
+
+    char *directory = manifest_directory(resolved);
+    free(resolved);
+    if (directory == NULL) {
+        fprintf(stderr, "daukle: out of memory finding the manifest directory\n");
+        return 1;
+    }
+
+    int status = fr_derived_clean(directory, &err);
+    free(directory);
+    if (status != FR_OK) {
+        report_error(&err, 0);
+        return 1;
+    }
+
+    printf("daukle: cleaned\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     fr_cli_options options;
     fr_cli_parse(argc, argv, &options);
@@ -451,6 +495,8 @@ int main(int argc, char **argv) {
             return add_dependency(&options);
         case FR_CLI_PLUGIN_UPDATE:
             return plugin_update(options.plugin_label, options.use_cache, options.verbose);
+        case FR_CLI_CLEAN:
+            return clean_derived(options.manifest_path);
         case FR_CLI_USAGE:
             break;
     }
@@ -462,6 +508,7 @@ int main(int argc, char **argv) {
 
     fprintf(stderr, "usage: daukle [--version | sync [manifest] | check [manifest]"
                     " | add <project>@<range> --to <consumer> [--modules a,b]"
-                    " | config print | plugin update [label]] [--no-cache] [--verbose]\n");
+                    " | config print | plugin update [label] | clean [manifest]]"
+                    " [--no-cache] [--verbose]\n");
     return 2;
 }

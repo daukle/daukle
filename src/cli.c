@@ -101,5 +101,9 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
         }
         out->command = FR_CLI_PLUGIN_UPDATE;
         if (word_count == 3) out->plugin_label = words[2];
+    } else if (strcmp(command, "clean") == 0) {
+        if (word_count > 2) return;
+        out->command = FR_CLI_CLEAN;
+        if (word_count == 2) out->manifest_path = words[1];
     }
 }
