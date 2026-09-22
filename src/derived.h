@@ -22,26 +22,28 @@ int fr_derived_dir(const char *manifest_dir, const char *toolchain, char **out_d
    derived_root through fr_derived_root calls this once before generating. */
 int fr_derived_ensure_root(const char *derived_root, fr_error *err);
 
-/* Deletes fr_derived_root(manifest_dir) and everything beneath it. Refuses
-   outright, before anything else, if the root itself is a symlink or a
-   junction: the derived root is legitimately a plain directory or absent,
-   never a link, and a base-versus-target compare cannot catch this case on
-   its own, since a link whose target happens to sit inside the base compares
-   as contained even though following it deletes whatever it actually points
-   at. Otherwise the root is canonicalised with fr_lua_sandbox_canonical_dir
-   and the result is asserted to be a strict descendant of the canonical form
-   of manifest_dir, via fr_derived_root_is_contained below, the same rule
-   lua_sandbox.c's own within_base_dir applies for a read (equality does not
-   count; the base directory itself is never the thing to delete). Deletion is
-   the one operation in this codebase whose failure mode is unrecoverable data
-   loss, so both checks are a precondition rather than the notice-and-continue
+/* Deletes fr_derived_root(manifest_dir) and everything beneath it. Existence
+   is checked first: a root that does not exist, including a dangling link,
+   is FR_OK, since cleaning a project that never generated is not a failure,
+   and the link check below never runs for it. Once the root is known to
+   exist, refuses outright if it is itself a symlink or a junction: the
+   derived root is legitimately a plain directory, never a link, and a
+   base-versus-target compare cannot catch this case on its own, since a link
+   whose target happens to sit inside the base compares as contained even
+   though following it deletes whatever it actually points at. Otherwise the
+   root is canonicalised with fr_lua_sandbox_canonical_dir and the result is
+   asserted to be a strict descendant of the canonical form of manifest_dir,
+   via fr_derived_root_is_contained below, the same rule lua_sandbox.c's own
+   within_base_dir applies for a read (equality does not count; the base
+   directory itself is never the thing to delete). Deletion is the one
+   operation in this codebase whose failure mode is unrecoverable data loss,
+   so both checks are a precondition rather than the notice-and-continue
    treatment fr_derived_apply gives an escaping path.
-   A root that does not exist is FR_OK, since cleaning a project that never
-   generated is not a failure. The removal walk deletes a symlink or a
-   junction it meets below the root rather than following it out of the tree,
-   and it is best-effort per file, so the outcome is re-checked once it
-   finishes: anything left behind (a locked file, say) is reported as FR_ERR
-   rather than claimed as a success that did not happen. */
+   The removal walk deletes a symlink or a junction it meets below the root
+   rather than following it out of the tree, and it is best-effort per file,
+   so the outcome is re-checked once it finishes: anything left behind (a
+   locked file, say) is reported as FR_ERR rather than claimed as a success
+   that did not happen. */
 int fr_derived_clean(const char *manifest_dir, fr_error *err);
 
 /* The containment predicate fr_derived_clean applies to a canonicalised root
