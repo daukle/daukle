@@ -8,7 +8,8 @@
 
 #ifdef _WIN32
 #define PATH_SEPARATOR ';'
-static const char *const EXTENSIONS[] = { ".exe", ".com", ".bat", ".cmd", "" };
+static const char *const EXTENSIONS[] = { ".exe", ".com", "" };
+static const char *const BATCH_EXTENSIONS[] = { ".bat", ".cmd" };
 #else
 #include <sys/stat.h>
 #include <unistd.h>
@@ -39,6 +40,40 @@ static char *join_candidate(const char *dir, size_t dir_length, const char *name
     return candidate;
 }
 
+static char *first_existing(const char *dir, size_t dir_length, const char *name,
+                            const char *const *extensions, size_t extension_count,
+                            int *out_of_memory) {
+    for (size_t index = 0; index < extension_count; index++) {
+        char *candidate = join_candidate(dir, dir_length, name, extensions[index]);
+        if (candidate == NULL) {
+            *out_of_memory = 1;
+            return NULL;
+        }
+        if (is_executable_file(candidate)) return candidate;
+        free(candidate);
+    }
+    return NULL;
+}
+
+/* A PATH entry may itself be relative, and the two backends would then
+   disagree about what it means: POSIX chdir()s into options.cwd before
+   execv(), so the program would resolve against the child's new directory,
+   while CreateProcess resolves it against daukle's own. */
+static int absolute_form(char *candidate, const char *name, char **out_path, fr_error *err) {
+#ifdef _WIN32
+    char *absolute = _fullpath(NULL, candidate, 0);
+#else
+    char *absolute = realpath(candidate, NULL);
+#endif
+    free(candidate);
+    if (absolute == NULL) {
+        fr_error_set(err, "\"%s\" was found but its absolute path could not be resolved", name);
+        return FR_ERR;
+    }
+    *out_path = absolute;
+    return FR_OK;
+}
+
 int fr_tool_resolve(const char *name, char **out_path, fr_error *err) {
     *out_path = NULL;
 
@@ -49,18 +84,32 @@ int fr_tool_resolve(const char *name, char **out_path, fr_error *err) {
         const char *end = strchr(entry, PATH_SEPARATOR);
         size_t length = end == NULL ? strlen(entry) : (size_t) (end - entry);
         if (length > 0) {
-            for (size_t index = 0; index < sizeof EXTENSIONS / sizeof EXTENSIONS[0]; index++) {
-                char *candidate = join_candidate(entry, length, name, EXTENSIONS[index]);
-                if (candidate == NULL) {
-                    fr_error_set(err, "out of memory resolving \"%s\"", name);
-                    return FR_ERR;
-                }
-                if (is_executable_file(candidate)) {
-                    *out_path = candidate;
-                    return FR_OK;
-                }
-                free(candidate);
+            int out_of_memory = 0;
+            char *found = first_existing(entry, length, name, EXTENSIONS,
+                                         sizeof EXTENSIONS / sizeof EXTENSIONS[0], &out_of_memory);
+            if (out_of_memory) {
+                fr_error_set(err, "out of memory resolving \"%s\"", name);
+                return FR_ERR;
             }
+            if (found != NULL) return absolute_form(found, name, out_path, err);
+#ifdef _WIN32
+            /* Refused by name rather than reported as missing: CreateProcess cannot
+               start a batch file at all, and doing so would mean handing a command
+               string to cmd.exe, which is the shell design section 4.1 forbids. */
+            char *batch = first_existing(entry, length, name, BATCH_EXTENSIONS,
+                                         sizeof BATCH_EXTENSIONS / sizeof BATCH_EXTENSIONS[0],
+                                         &out_of_memory);
+            if (out_of_memory) {
+                fr_error_set(err, "out of memory resolving \"%s\"", name);
+                return FR_ERR;
+            }
+            if (batch != NULL) {
+                fr_error_set(err, "daukle cannot run a batch file, and \"%s\" resolved to %s",
+                            name, batch);
+                free(batch);
+                return FR_ERR;
+            }
+#endif
         }
         if (end == NULL) break;
         entry = end + 1;

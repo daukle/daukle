@@ -127,6 +127,22 @@ void fr_test_set_env(const char *name, const char *value) {
 #endif
 }
 
+int fr_test_get_working_directory(char *buffer, size_t size) {
+#ifdef _WIN32
+    return _getcwd(buffer, (int) size) != NULL;
+#else
+    return getcwd(buffer, size) != NULL;
+#endif
+}
+
+int fr_test_set_working_directory(const char *path) {
+#ifdef _WIN32
+    return _chdir(path) == 0;
+#else
+    return chdir(path) == 0;
+#endif
+}
+
 void fr_test_prepend_to_path_dir_of(const char *argv_zero) {
 #ifdef _WIN32
     const char list_separator = ';';
