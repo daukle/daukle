@@ -150,6 +150,143 @@ TEST a_task_capability_must_carry_the_task_prefix(void) {
     PASS();
 }
 
+TEST a_diamond_runs_its_shared_dependency_once(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},\"tasks\":{"
+        "\"all\":{\"dependsOn\":[\"left\",\"right\"]},"
+        "\"left\":{\"dependsOn\":[\"base\"]},"
+        "\"right\":{\"dependsOn\":[\"base\"]},"
+        "\"base\":{}}}");
+    fr_task_set set; fr_error err;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "all", &plan, &err));
+    ASSERT_EQ(4u, plan.count);
+    ASSERT_STR_EQ("base", plan.nodes[0]->name);
+    ASSERT_STR_EQ("all", plan.nodes[3]->name);
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST a_cycle_names_its_members(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},\"tasks\":{"
+        "\"a\":{\"dependsOn\":[\"b\"]},\"b\":{\"dependsOn\":[\"a\"]}}}");
+    fr_task_set set; fr_error err;
+    fr_tasks_collect(registry, &manifest, &set, &err);
+
+    fr_task_plan plan;
+    ASSERT_EQ(FR_ERR, fr_tasks_plan(&set, "a", &plan, &err));
+    ASSERT(strstr(err.message, "depend on each other in a cycle") != NULL);
+    ASSERT(strstr(err.message, "a -> b -> a") != NULL);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST a_part_of_naming_nothing_is_refused(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},\"tasks\":{"
+        "\"mine\":{\"partOf\":\"build\"}}}");
+    fr_task_set set; fr_error err;
+    fr_tasks_collect(registry, &manifest, &set, &err);
+
+    fr_task_plan plan;
+    ASSERT_EQ(FR_ERR, fr_tasks_plan(&set, "mine", &plan, &err));
+    ASSERT(strstr(err.message, "is part of \"build\", which nothing declares") != NULL);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST a_depends_on_naming_nothing_is_refused(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},\"tasks\":{"
+        "\"mine\":{\"dependsOn\":[\"ghost\"]}}}");
+    fr_task_set set; fr_error err;
+    fr_tasks_collect(registry, &manifest, &set, &err);
+
+    fr_task_plan plan;
+    ASSERT_EQ(FR_ERR, fr_tasks_plan(&set, "mine", &plan, &err));
+    ASSERT(strstr(err.message, "depends on \"ghost\", which nothing declares") != NULL);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST an_aggregator_pulls_in_what_joined_it(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},\"tasks\":{"
+        "\"build\":{},\"mine\":{\"partOf\":\"build\"}}}");
+    fr_task_set set; fr_error err;
+    fr_tasks_collect(registry, &manifest, &set, &err);
+
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "build", &plan, &err));
+    ASSERT_EQ(2u, plan.count);
+    ASSERT_STR_EQ("mine", plan.nodes[0]->name);
+    ASSERT_STR_EQ("build", plan.nodes[1]->name);
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST the_same_graph_plans_the_same_order_twice(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},\"tasks\":{"
+        "\"all\":{\"dependsOn\":[\"one\",\"two\",\"three\"]},"
+        "\"one\":{},\"two\":{\"dependsOn\":[\"one\"]},\"three\":{\"dependsOn\":[\"one\"]}}}");
+    fr_task_set set; fr_error err;
+    fr_tasks_collect(registry, &manifest, &set, &err);
+
+    fr_task_plan first, second;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "all", &first, &err));
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "all", &second, &err));
+    ASSERT_EQ(first.count, second.count);
+    for (size_t index = 0; index < first.count; index++) {
+        ASSERT_STR_EQ(first.nodes[index]->name, second.nodes[index]->name);
+    }
+    /* and it is the order declaration implies, not merely a stable one */
+    ASSERT_STR_EQ("one", first.nodes[0]->name);
+    ASSERT_STR_EQ("all", first.nodes[first.count - 1]->name);
+    fr_tasks_plan_free(&first);
+    fr_tasks_plan_free(&second);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST a_goal_nothing_declares_is_refused(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_manifest manifest = manifest_of("{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{}}");
+    fr_task_set set; fr_error err;
+    fr_tasks_collect(registry, &manifest, &set, &err);
+
+    fr_task_plan plan;
+    ASSERT_EQ(FR_ERR, fr_tasks_plan(&set, "build", &plan, &err));
+    ASSERT(strstr(err.message, "no task \"build\" is declared") != NULL);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -162,5 +299,12 @@ int main(int argc, char **argv) {
     RUN_TEST(a_manifest_block_adds_edges_to_a_declared_task);
     RUN_TEST(a_malformed_task_name_is_refused);
     RUN_TEST(a_task_capability_must_carry_the_task_prefix);
+    RUN_TEST(a_diamond_runs_its_shared_dependency_once);
+    RUN_TEST(a_cycle_names_its_members);
+    RUN_TEST(a_part_of_naming_nothing_is_refused);
+    RUN_TEST(a_depends_on_naming_nothing_is_refused);
+    RUN_TEST(an_aggregator_pulls_in_what_joined_it);
+    RUN_TEST(the_same_graph_plans_the_same_order_twice);
+    RUN_TEST(a_goal_nothing_declares_is_refused);
     GREATEST_MAIN_END();
 }

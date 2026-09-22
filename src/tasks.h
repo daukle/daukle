@@ -42,4 +42,16 @@ const fr_task_node *fr_tasks_find(const fr_task_set *set, const char *name);
    wins at dispatch and the task would exist, list, and never run. */
 int fr_tasks_name_is_reserved(const char *name);
 
+typedef struct {
+    const fr_task_node **nodes;
+    size_t count;
+} fr_task_plan;
+
+/* Resolves goal's transitive closure and orders it so that every edge runs
+   before the task it points at. An edge naming nothing, a cycle, or a goal
+   nothing declares is refused here, before anything runs: a graph error must
+   never leave half a build behind. */
+int fr_tasks_plan(const fr_task_set *set, const char *goal, fr_task_plan *out, fr_error *err);
+void fr_tasks_plan_free(fr_task_plan *plan);
+
 #endif
