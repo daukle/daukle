@@ -215,6 +215,36 @@ TEST a_toolchains_table_that_is_not_a_table_is_rejected(void) {
     PASS();
 }
 
+TEST a_tasks_table_is_read(void) {
+    const char *text =
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"tasks\":{\"release\":{\"dependsOn\":[\"build\",\"npm:publish\"]},"
+        "\"cmake:build\":{\"partOf\":\"build\"}}}";
+    fr_manifest manifest; fr_error err;
+    cJSON *root = cJSON_Parse(text);
+    ASSERT_EQ(FR_OK, fr_manifest_from_document(root, "daukle.toml", &manifest, &err));
+
+    ASSERT_EQ(2u, manifest.task_count);
+    ASSERT_STR_EQ("release", manifest.tasks[0].name);
+    ASSERT_EQ(2u, manifest.tasks[0].depends_on_count);
+    ASSERT_STR_EQ("npm:publish", manifest.tasks[0].depends_on[1]);
+    ASSERT(manifest.tasks[0].part_of == NULL);
+    ASSERT_STR_EQ("build", manifest.tasks[1].part_of);
+    fr_manifest_free(&manifest);
+    PASS();
+}
+
+TEST a_task_block_refuses_a_key_it_does_not_define(void) {
+    const char *text =
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"tasks\":{\"release\":{\"dependsOn\":[\"build\"],\"runs\":\"make\"}}}";
+    fr_manifest manifest; fr_error err;
+    cJSON *root = cJSON_Parse(text);
+    ASSERT_EQ(FR_ERR, fr_manifest_from_document(root, "daukle.toml", &manifest, &err));
+    ASSERT(strstr(err.message, "\"runs\" is not a key a task block defines") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -235,5 +265,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_toolchain_version_that_is_not_a_string_is_rejected);
     RUN_TEST(a_toolchain_dependencies_that_is_not_a_table_is_rejected);
     RUN_TEST(a_toolchains_table_that_is_not_a_table_is_rejected);
+    RUN_TEST(a_tasks_table_is_read);
+    RUN_TEST(a_task_block_refuses_a_key_it_does_not_define);
     GREATEST_MAIN_END();
 }
