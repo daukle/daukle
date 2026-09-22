@@ -6,18 +6,31 @@
 #include <stddef.h>
 
 typedef struct {
-    char **paths;
+    char **paths;   /* full paths (derived_dir joined with each file's relative
+                        path), not merely relative to the manifest dir */
     size_t count;
 } fr_derived_report;
 
 int fr_derived_root(const char *manifest_dir, char **out_dir, fr_error *err);
 int fr_derived_dir(const char *manifest_dir, const char *toolchain, char **out_dir, fr_error *err);
 
+/* Creates derived_root, if needed, and writes "*\n" to
+   <derived_root>/.gitignore when that file is absent, never overwriting one
+   that exists: a user who edited it had a reason. Not called by
+   fr_derived_apply, which only ever touches the directory it is handed and
+   never the toolchain-agnostic root above it; the caller that resolved
+   derived_root through fr_derived_root calls this once before generating. */
+int fr_derived_ensure_root(const char *derived_root, fr_error *err);
+
 /* write == 0 reports what would change and touches nothing, including the
    ledger, so "check" and "sync" differ only in whether they write. A file the
    ledger records but whose digest no longer matches was changed outside daukle:
    it is overwritten when still generated and KEPT when not, because deleting a
-   file someone edited is unrecoverable where a stale one is merely visible. */
+   file someone edited is unrecoverable where a stale one is merely visible. A
+   ledger line or a generated path that could escape derived_dir is refused
+   outright: this directory is meant to hold whatever a plugin tool writes
+   beside daukle's own files, and a planted ledger line must never turn into a
+   delete of something outside it. */
 int fr_derived_apply(const char *derived_dir, const fr_generated_file *files, size_t count,
                      int write, fr_derived_report *report, fr_error *err);
 void fr_derived_report_free(fr_derived_report *report);
