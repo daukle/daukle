@@ -81,6 +81,7 @@ the client tier's rules.
 | reading `[plugins]`, the declaration pass, and loading a local plugin | `plugins.c` | the remote half, which is `plugins_remote.c` |
 | resolving a remote coordinate, the plugin cache, and fetching from GitHub | `plugins_remote.c` | the parser or the declaration reader, which are `plugins.c` |
 | a sha-256 digest | `sha256.c` | a general crypto library |
+| the shared exec logic, joining a program and its argument vector into the one command line `CreateProcess` requires | `exec.c`, `exec.h`, tested by `test/test_exec_quote.c` | spawning a process. This task only builds the command-line string |
 
 **A `daukle.lua` runs against a curated globals table, not Lua's own.** The two lists that define it
 are `KEPT` and `REMOVED` at the top of `src/lua_sandbox.c`, and reading a removed name raises an
