@@ -126,3 +126,35 @@ void fr_test_set_env(const char *name, const char *value) {
     else setenv(name, value, 1);
 #endif
 }
+
+void fr_test_prepend_to_path_dir_of(const char *argv_zero) {
+#ifdef _WIN32
+    const char list_separator = ';';
+#else
+    const char list_separator = ':';
+#endif
+    const char *last_slash = strrchr(argv_zero, '/');
+    const char *last_backslash = strrchr(argv_zero, '\\');
+    const char *end_of_dir = last_slash;
+    if (last_backslash != NULL && (end_of_dir == NULL || last_backslash > end_of_dir)) {
+        end_of_dir = last_backslash;
+    }
+    size_t dir_length = end_of_dir == NULL ? 0 : (size_t) (end_of_dir - argv_zero);
+
+    const char *old_path = getenv("PATH");
+    if (old_path == NULL) old_path = "";
+
+    size_t size = dir_length + 1 + strlen(old_path) + 1;
+    char *new_path = malloc(size);
+    if (new_path == NULL) return;
+    if (dir_length > 0) {
+        memcpy(new_path, argv_zero, dir_length);
+        new_path[dir_length] = list_separator;
+        memcpy(new_path + dir_length + 1, old_path, strlen(old_path) + 1);
+    } else {
+        memcpy(new_path, old_path, strlen(old_path) + 1);
+    }
+
+    fr_test_set_env("PATH", new_path);
+    free(new_path);
+}

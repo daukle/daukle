@@ -84,6 +84,7 @@ the client tier's rules.
 | the shared exec logic, joining a program and its argument vector into the one command line `CreateProcess` requires, and freeing an `fr_exec_result` | `exec.c`, `exec.h`, tested by `test/test_exec_quote.c` | spawning a process. That is `exec_posix.c` and `exec_win32.c` |
 | spawning a process on POSIX with `fork`/`execv`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `exec_posix.c`, tested by `test/test_exec.c` | building the command line, which stays in `exec.c` because Windows needs it too |
 | spawning a process on Windows with `CreateProcessA`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `exec_win32.c`, tested by `test/test_exec.c` | building the command line, which it calls into `exec.c` for |
+| resolving an executable name to an absolute path by searching the host's `PATH` | `tool.c`, tested by `test/test_tool.c` | provisioning a missing tool. Discovery only, per spec section 3.1; child spec 4 extends the same `fr_tool_resolve` with that later |
 
 **A `daukle.lua` runs against a curated globals table, not Lua's own.** The two lists that define it
 are `KEPT` and `REMOVED` at the top of `src/lua_sandbox.c`, and reading a removed name raises an
