@@ -547,6 +547,7 @@ TEST a_toolchain_generate_bridges_project_config_root_and_host(void) {
     ASSERT_EQ(1, (int) file_count);
     ASSERT_STR_EQ("generated.txt", path);
     ASSERT(strstr(text, "project forebay/managed\n") != NULL);
+    ASSERT(strstr(text, "version 9.9.9\n") != NULL);
     ASSERT(strstr(text, "target app\n") != NULL);
     ASSERT(strstr(text, "root derived/stub\n") != NULL);
     int has_os = strstr(text, "\nos windows\n") != NULL ||
@@ -557,13 +558,14 @@ TEST a_toolchain_generate_bridges_project_config_root_and_host(void) {
 }
 
 /* config is built member by member skipping "version" and "dependencies"
-   specifically, not by duplicating the block and deleting keys: both already
-   reach the plugin as their own arguments (version, resolved dependencies),
-   so a raw copy in config would let a plugin see dependencies twice, once
-   raw and once resolved. A plugin that reads toolchain.config.version or
-   toolchain.config.dependencies must see nil either way, and this only shows
-   up in the set of keys the table actually holds. Same cleanup-before-ASSERT
-   shape as above. */
+   specifically, not by duplicating the block and deleting keys: dependencies
+   already reaches the plugin as its own resolved argument, so a raw copy in
+   config would let a plugin see it twice, once raw and once resolved.
+   version's raw constraint has no plugin use in this version (spec section
+   7) and is dropped for the same reason. A plugin that reads
+   toolchain.config.version or toolchain.config.dependencies must see nil
+   either way, and this only shows up in the set of keys the table actually
+   holds. Same cleanup-before-ASSERT shape as above. */
 TEST a_toolchain_config_excludes_the_reserved_version_and_dependencies_keys(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest = {0};

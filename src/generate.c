@@ -29,6 +29,25 @@ static int path_is_safe(const char *path) {
     return 1;
 }
 
+/* canonical_root's own separator form is not the only one a plugin can write:
+   CMake output on Windows uses forward slashes even though
+   GetFinalPathNameByHandleA returns backslashes. Testing both spellings
+   catches either; on POSIX the flipped form never occurs in real text. */
+static int text_names_root(const char *text, const char *canonical_root) {
+    if (canonical_root == NULL) return 0;
+    if (strstr(text, canonical_root) != NULL) return 1;
+
+    size_t length = strlen(canonical_root);
+    char flipped[1024];
+    if (length >= sizeof flipped) return 0;
+    for (size_t index = 0; index < length; index++) {
+        char c = canonical_root[index];
+        flipped[index] = c == '/' ? '\\' : c == '\\' ? '/' : c;
+    }
+    flipped[length] = '\0';
+    return strstr(text, flipped) != NULL;
+}
+
 static int validate(const fr_generated_file *files, size_t count, const char *canonical_root,
                     fr_error *err) {
     if (count > FR_GENERATE_MAX_FILES) {
@@ -46,7 +65,7 @@ static int validate(const fr_generated_file *files, size_t count, const char *ca
                          files[index].path);
             return FR_ERR;
         }
-        if (canonical_root != NULL && strstr(files[index].text, canonical_root) != NULL) {
+        if (text_names_root(files[index].text, canonical_root)) {
             fr_error_set(err, "generated file \"%s\" names the project root; "
                               "use the relative \"root\" instead",
                          files[index].path);
@@ -129,10 +148,14 @@ static int generate_toolchain(const fr_toolchain *toolchain, const fr_manifest *
         return FR_ERR;
     }
 
+    char project_version[64];
+    snprintf(project_version, sizeof project_version, "%d.%d.%d", manifest->self.version.major,
+            manifest->self.version.minor, manifest->self.version.patch);
+
     fr_generated_file *files = NULL;
     size_t file_count = 0;
     int result = plugin->generate(plugin->state, toolchain, manifest->self.project,
-                                  toolchain->version, "../../..", resolved, resolved_count,
+                                  project_version, "../../..", resolved, resolved_count,
                                   &files, &file_count, err);
     fr_resolved_free(resolved, resolved_count);
 
@@ -164,9 +187,11 @@ static int generate_toolchain(const fr_toolchain *toolchain, const fr_manifest *
 
 int fr_generate(const fr_manifest *manifest, const char *manifest_path, const char *manifest_dir,
                 const fr_registry *registry, int write, fr_sync_report *report, fr_error *err) {
+    const char *canonical_base = (manifest_dir == NULL || manifest_dir[0] == '\0') ? "." : manifest_dir;
+
     char *canonical_root = NULL;
     fr_error canonical_err;
-    if (fr_lua_sandbox_canonical_dir(manifest_dir, &canonical_root, &canonical_err) != FR_OK) {
+    if (fr_lua_sandbox_canonical_dir(canonical_base, &canonical_root, &canonical_err) != FR_OK) {
         canonical_root = NULL;
     }
 

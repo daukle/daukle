@@ -266,9 +266,11 @@ static int protected_toolchain_generate(lua_State *state) {
     if (block != NULL) {
         const cJSON *member = block->child;
         while (member != NULL) {
-            /* version and dependencies already reach the plugin as their own
-               arguments (version, resolved dependencies); config must not
-               also carry the raw copy. */
+            /* dependencies already reach the plugin as their own argument, so
+               config must not also carry the raw copy. version is dropped too:
+               its raw constraint has no plugin use in this version (spec
+               section 7), and the "version" argument now carries the
+               project's own version instead. */
             if (strcmp(member->string, "version") != 0 &&
                 strcmp(member->string, "dependencies") != 0) {
                 fr_error push_err;

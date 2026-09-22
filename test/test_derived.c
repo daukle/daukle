@@ -158,15 +158,21 @@ TEST a_dropped_file_edited_since_it_was_written_is_kept(void) {
     snprintf(dropped, sizeof dropped, "%s/drop.txt", scratch);
     fr_file_write_text(dropped, "a human wrote this\n", &err);
 
+    last_notice[0] = '\0';
+    fr_derived_set_notice_sink(record_notice);
     fr_derived_apply(scratch, one, 1, 1, &second, &err);
+    fr_derived_set_notice_sink(NULL);
     fr_derived_report_free(&second);
 
     char *survivor = read_file(dropped);
     int still_there = survivor != NULL && strcmp(survivor, "a human wrote this\n") == 0;
+    int said_so = strstr(last_notice, "drop.txt") != NULL
+                  && strstr(last_notice, "so it is kept") != NULL;
     free(survivor);
     fr_test_remove_tree(scratch);
 
     ASSERT(still_there);
+    ASSERT(said_so);
     PASS();
 }
 
@@ -244,6 +250,51 @@ TEST check_writes_no_file_and_no_ledger(void) {
     ASSERT_EQ(FR_OK, status);
     ASSERT(reported_once);
     ASSERT(wrote_nothing);
+    PASS();
+}
+
+/* Every other check-mode test runs against a fresh scratch directory with no
+   prior ledger, so the sweep loop that considers removing a no-longer-
+   generated file never executes and can hide a write == 0 gate that has gone
+   missing on the delete path. This test seeds a real ledger with a real write
+   first, so the second, check-mode apply actually reaches that sweep, and it
+   asserts on the ledger's bytes rather than merely its existence: a write
+   would leave the file dropped from the ledger even though "keep.txt" alone
+   would still read back the same, so only a byte-for-byte compare against the
+   ledger's post-first-apply content proves nothing was rewritten either. */
+TEST check_on_a_stale_derived_tree_leaves_the_ledger_untouched(void) {
+    make_scratch("checkstale");
+    fr_generated_file both[2] = { { "keep.txt", "keep\n" }, { "drop.txt", "drop\n" } };
+    fr_generated_file one[1] = { { "keep.txt", "keep\n" } };
+    fr_derived_report first; fr_derived_report second; fr_error err;
+
+    fr_derived_apply(scratch, both, 2, 1, &first, &err);
+    fr_derived_report_free(&first);
+
+    char ledger[700];
+    snprintf(ledger, sizeof ledger, "%s/.daukle-generated", scratch);
+    char *ledger_before = read_file(ledger);
+
+    int status = fr_derived_apply(scratch, one, 1, 0, &second, &err);
+    fr_derived_report_free(&second);
+
+    char dropped[700];
+    snprintf(dropped, sizeof dropped, "%s/drop.txt", scratch);
+    char *survivor = read_file(dropped);
+    char *ledger_after = read_file(ledger);
+
+    int dropped_survived = survivor != NULL && strcmp(survivor, "drop\n") == 0;
+    int ledger_untouched = ledger_before != NULL && ledger_after != NULL
+                           && strcmp(ledger_before, ledger_after) == 0;
+
+    free(survivor);
+    free(ledger_before);
+    free(ledger_after);
+    fr_test_remove_tree(scratch);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(dropped_survived);
+    ASSERT(ledger_untouched);
     PASS();
 }
 
@@ -728,6 +779,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_file_a_tool_wrote_beside_the_generated_ones_is_never_touched);
     RUN_TEST(a_missing_ledger_removes_nothing);
     RUN_TEST(check_writes_no_file_and_no_ledger);
+    RUN_TEST(check_on_a_stale_derived_tree_leaves_the_ledger_untouched);
     RUN_TEST(an_empty_file_set_creates_no_directory);
     RUN_TEST(more_files_than_the_ledger_can_hold_is_rejected);
     RUN_TEST(a_generated_file_creates_its_own_directory);

@@ -207,8 +207,8 @@ int fr_derived_apply(const char *derived_dir, const fr_generated_file *files, si
 
     for (size_t index = 0; index < count; index++) {
         if (fr_lua_sandbox_climbs_out(files[index].path)) {
-            fr_error_set(err, "generated path \"%s\" cannot escape \"%s\"",
-                        files[index].path, derived_dir);
+            fr_error_set(err, "generated path cannot escape \"%s\": \"%s\"",
+                        derived_dir, files[index].path);
             return FR_ERR;
         }
     }
@@ -245,7 +245,11 @@ int fr_derived_apply(const char *derived_dir, const fr_generated_file *files, si
             char existing_digest[65];
             fr_sha256_hex(existing, strlen(existing), existing_digest);
             if (recorded == NULL || strcmp(recorded->digest, existing_digest) != 0) {
-                notice("\"%s\" was changed outside daukle and has been regenerated", full);
+                if (write) {
+                    notice("\"%s\" was changed outside daukle and has been regenerated", full);
+                } else {
+                    notice("\"%s\" was changed outside daukle and would be regenerated", full);
+                }
             }
         }
         free(existing);
