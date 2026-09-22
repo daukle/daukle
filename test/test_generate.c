@@ -113,6 +113,16 @@ TEST a_generated_number_value_is_refused_naming_the_key(void) {
     PASS();
 }
 
+TEST a_generated_file_over_the_size_limit_is_refused_naming_the_key(void) {
+    char message[512];
+    int refused = generate_fails_with("test/fixtures/generate-oversized-value/daukle.toml",
+                                      message, sizeof message);
+    ASSERT(refused);
+    ASSERT(strstr(message, "a.txt") != NULL);
+    ASSERT(strstr(message, "is larger than the 1 MiB limit") != NULL);
+    PASS();
+}
+
 /* generate-root-path cannot discover the absolute project root from inside a
    sandboxed plugin, so its manifest carries a placeholder the test rewrites to
    the fixture directory's own canonical form, the same form fr_generate
@@ -205,6 +215,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_generated_backslash_path_is_refused_naming_the_key);
     RUN_TEST(a_generated_newline_path_is_refused_naming_the_key);
     RUN_TEST(a_generated_number_value_is_refused_naming_the_key);
+    RUN_TEST(a_generated_file_over_the_size_limit_is_refused_naming_the_key);
     RUN_TEST(a_generated_file_naming_the_project_root_is_refused);
     RUN_TEST(an_empty_generate_table_creates_no_directory);
     GREATEST_MAIN_END();

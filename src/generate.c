@@ -56,6 +56,10 @@ static int validate(const fr_generated_file *files, size_t count, const char *ca
     return FR_OK;
 }
 
+static int should_seed_derived_root(int validated, int write, size_t file_count) {
+    return validated == FR_OK && write && file_count > 0;
+}
+
 /* fr_derived_report's paths are owned by that report and freed by
    fr_derived_report_free; report gets its own copies so the two frees never
    race over the same allocation. */
@@ -67,7 +71,10 @@ static int adopt_derived_paths(fr_sync_report *report, const fr_derived_report *
             fr_error_set(err, "out of memory recording \"%s\"", derived_report->paths[index]);
             return FR_ERR;
         }
-        if (fr_sync_report_add(report, copy, err) != FR_OK) return FR_ERR;
+        if (fr_sync_report_add(report, copy, err) != FR_OK) {
+            free(copy);
+            return FR_ERR;
+        }
     }
     return FR_OK;
 }
@@ -116,10 +123,7 @@ static int generate_toolchain(const fr_toolchain *toolchain, const fr_manifest *
 
     if (result == FR_OK) result = validate(files, file_count, canonical_root, err);
 
-    /* Only when a file will actually land, and only when writing: an empty
-       table must leave build/daukle/ untouched, and a check pass (write == 0)
-       must not create it either. */
-    if (result == FR_OK && write && file_count > 0) {
+    if (should_seed_derived_root(result, write, file_count)) {
         char *derived_root = NULL;
         if (fr_derived_root(manifest_dir, &derived_root, err) != FR_OK) {
             result = FR_ERR;
