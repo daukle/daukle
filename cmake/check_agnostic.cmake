@@ -2,12 +2,12 @@
 set(CORE_FILES
     resolve.c resolve.h manifest.c manifest.h registry.c registry.h
     types.h sync.c sync.h main.c cli.c cli.h config.c config.h
-    derived.c derived.h generate.c generate.h)
+    derived.c derived.h generate.c generate.h tasks.c tasks.h)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
               "daukle\\.language/[a-z]" "daukle\\.config/[a-z]" "daukle\\.toolchain/[a-z]"
-              "FR_SOURCE_[A-Z]" "FR_LANGUAGE_[A-Z]")
+              "daukle\\.task/[a-z]" "FR_SOURCE_[A-Z]" "FR_LANGUAGE_[A-Z]")
 
 set(FINDINGS "")
 foreach(name ${CORE_FILES})
