@@ -26,6 +26,13 @@ int fr_lua_sandbox_canonical_dir(const char *path, char **out, fr_error *err);
    fails if the result escapes it. The caller owns *out_path. */
 int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_path, fr_error *err);
 
+/* fr_lua_sandbox_resolve for a directory rather than a file, so daukle.exec
+   holds its cwd to the containment rule daukle.read is held to. The base
+   directory itself counts as inside, since "." is an ordinary cwd where it
+   would be a meaningless file. The caller owns *out_path. */
+int fr_lua_sandbox_resolve_dir(lua_State *state, const char *relative, char **out_path,
+                               fr_error *err);
+
 /* True if relative_path could escape a base directory it was joined onto: a
    leading separator, a drive letter, or a ".." component anywhere (which also
    rejects a legitimate file named "a..b.lua"; a simple, auditable rule beats a

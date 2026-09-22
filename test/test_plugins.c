@@ -284,6 +284,25 @@ TEST a_source_plugin_may_not_declare_exec(void) {
     PASS();
 }
 
+/* The gate at daukle.language and daukle.source fires only once a plugin says
+   what kind it is, by which time a plugin that execs at the top of its chunk
+   has already run the program. The refusal has to reach the call itself. */
+TEST a_plugin_execing_before_it_declares_is_refused_at_the_call(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/plugin-exec-before-declaring/daukle.toml",
+                                          registry, &manifest, &err));
+    ASSERT(strstr(err.message, "daukle.exec is available only to a toolchain plugin") != NULL);
+    ASSERT(strstr(err.message, "must be a tool handle") == NULL);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 /* daukle.tool alone must still load: the refusal is exec's alone, not tool's. */
 TEST a_language_plugin_declaring_tool_but_not_exec_still_loads(void) {
     fr_error err;
@@ -1191,6 +1210,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_manifest_declaring_no_plugins_opens_no_lua_state);
     RUN_TEST(a_language_plugin_may_not_declare_exec);
     RUN_TEST(a_source_plugin_may_not_declare_exec);
+    RUN_TEST(a_plugin_execing_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_language_plugin_declaring_tool_but_not_exec_still_loads);
     RUN_TEST(a_verb_uses_does_not_know_is_refused);
     RUN_TEST(a_plugin_written_against_a_later_api_says_which);

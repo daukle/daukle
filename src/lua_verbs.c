@@ -293,9 +293,11 @@ static int verb_parse(lua_State *state) {
 #define FR_TOOL_HANDLE "daukle.tool"
 #define FR_VERB_MAX_ARGV 256
 
+#define FR_TOOL_NAME_MAX 128
+
 typedef struct {
     char path[1024];
-    char name[128];
+    char name[FR_TOOL_NAME_MAX];
 } fr_lua_tool;
 
 static int g_verbose;
@@ -316,8 +318,16 @@ static int tool_name_is_valid(const char *name) {
 
 static int verb_tool(lua_State *state) {
     const char *name = luaL_checkstring(state, 1);
+    if (!lua_isnoneornil(state, 2)) {
+        return luaL_error(state, "daukle.tool: version constraints are not implemented yet");
+    }
     if (!tool_name_is_valid(name)) {
         return luaL_error(state, "\"%s\" is not a tool name: a tool is named, not pathed", name);
+    }
+    /* Checked before resolving, both so the cheap answer comes first and so
+       the message can report a length without echoing an unbounded name. */
+    if (strlen(name) >= FR_TOOL_NAME_MAX) {
+        return luaL_error(state, "the tool name is too long (%d characters)", (int) strlen(name));
     }
 
     char *path = NULL;
@@ -325,12 +335,16 @@ static int verb_tool(lua_State *state) {
     if (fr_tool_resolve(name, &path, &err) != FR_OK) return luaL_error(state, "%s", err.message);
 
     fr_lua_tool *handle = lua_newuserdatauv(state, sizeof *handle, 0);
-    snprintf(handle->path, sizeof handle->path, "%s", path);
-    snprintf(handle->name, sizeof handle->name, "%s", name);
+    int path_written = snprintf(handle->path, sizeof handle->path, "%s", path);
     free(path);
+    if (path_written < 0 || (size_t) path_written >= sizeof handle->path) {
+        return luaL_error(state, "the path \"%s\" resolves to is too long for a tool handle", name);
+    }
+    snprintf(handle->name, sizeof handle->name, "%s", name);
 
     luaL_getmetatable(state, FR_TOOL_HANDLE);
     lua_setmetatable(state, -2);
+    if (g_verbose) fprintf(stderr, "tool %s (%s)\n", handle->name, handle->path);
     return 1;
 }
 
@@ -342,15 +356,28 @@ static int option_flag(lua_State *state, int index, const char *key, int fallbac
     return value;
 }
 
+/* Space-joining alone would print {"a b"} and {"a","b"} identically, and the
+   line would read like the shell command daukle deliberately never builds. */
+static int argument_needs_showing_as_one(const char *argument) {
+    return argument[0] == '\0' || strpbrk(argument, " \t") != NULL;
+}
+
 static void report_verbose_exec(const fr_lua_tool *handle, const char *const *argv,
                                 lua_Integer argv_count, const char *cwd) {
     fprintf(stderr, "exec %s (%s)\n", handle->name, handle->path);
     fprintf(stderr, "  args:");
-    for (lua_Integer index = 0; index < argv_count; index++) fprintf(stderr, " %s", argv[index]);
+    for (lua_Integer index = 0; index < argv_count; index++) {
+        const char *argument = argv[index];
+        if (argument_needs_showing_as_one(argument)) fprintf(stderr, " [%s]", argument);
+        else fprintf(stderr, " %s", argument);
+    }
     fprintf(stderr, "\n  cwd:  %s\n", cwd != NULL ? cwd : ".");
 }
 
 static int verb_exec(lua_State *state) {
+    if (fr_lua_plugin_exec_is_refused()) {
+        return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+    }
     if (luaL_testudata(state, 1, FR_TOOL_HANDLE) == NULL) {
         return luaL_error(state, "daukle.exec argument 1 must be a tool handle from daukle.tool");
     }
@@ -360,16 +387,15 @@ static int verb_exec(lua_State *state) {
     int capture = option_flag(state, 3, "capture", 0);
     int check = option_flag(state, 3, "check", 1);
 
-    /* Left unpopped below: a numeric cwd's Lua-converted string needs the same anchor argv does. */
     int anchor_base = lua_gettop(state);
-    const char *cwd = NULL;
+    const char *requested_cwd = NULL;
     if (lua_type(state, 3) == LUA_TTABLE) {
         lua_getfield(state, 3, "cwd");
         if (!lua_isnil(state, -1)) {
             if (lua_type(state, -1) != LUA_TSTRING) {
                 return luaL_error(state, "daukle.exec option \"cwd\" must be a string");
             }
-            cwd = lua_tostring(state, -1);
+            requested_cwd = lua_tostring(state, -1);
         }
     }
 
@@ -392,6 +418,13 @@ static int verb_exec(lua_State *state) {
         argv[index - 1] = lua_tostring(state, -1);
     }
 
+    fr_error err;
+    char *cwd = NULL;
+    if (requested_cwd != NULL
+        && fr_lua_sandbox_resolve_dir(state, requested_cwd, &cwd, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
     if (g_verbose) report_verbose_exec(handle, argv, count, cwd);
 
     fr_exec_request request;
@@ -402,8 +435,8 @@ static int verb_exec(lua_State *state) {
     request.capture = capture;
 
     fr_exec_result result;
-    fr_error err;
     int status = fr_exec_run(&request, &result, &err);
+    free(cwd);
     lua_settop(state, anchor_base);
     if (status != FR_OK) {
         return luaL_error(state, "%s", err.message);
@@ -490,7 +523,12 @@ static const char *const *pending_verbs;
 static size_t pending_verb_count;
 
 static int protected_push_env(lua_State *state) {
+    /* getmetatable and setmetatable are both base globals a plugin keeps, and
+       this metatable is shared by every state, so leaving it reachable would
+       be a cross-plugin channel the sandbox does not otherwise have. */
     luaL_newmetatable(state, FR_TOOL_HANDLE);
+    lua_pushboolean(state, 0);
+    lua_setfield(state, -2, "__metatable");
     lua_pop(state, 1);
 
     lua_newtable(state);

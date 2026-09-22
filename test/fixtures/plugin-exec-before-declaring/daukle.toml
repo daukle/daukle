@@ -1,0 +1,8 @@
+schema = 1
+project = "forebay/exec-before-declaring"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+early = "./plugins/early.lua"

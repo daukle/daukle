@@ -128,7 +128,8 @@ static int within_base_dir(const char *canonical_base, const char *canonical_tar
     return boundary == '/' || boundary == '\\';
 }
 
-int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_path, fr_error *err) {
+static int resolve_under_base(lua_State *state, const char *relative, int as_directory,
+                              char **out_path, fr_error *err) {
     if (fr_lua_sandbox_climbs_out(relative)) {
         fr_error_set(err, "\"%s\" is outside the project directory", relative);
         return FR_ERR;
@@ -149,13 +150,16 @@ int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_pa
     }
 
     char *canonical_target = NULL;
-    if (canonical_file_path(path, &canonical_target, err) != FR_OK) {
-        return FR_ERR;
-    }
+    int resolved = as_directory ? fr_lua_sandbox_canonical_dir(path, &canonical_target, err)
+                                : canonical_file_path(path, &canonical_target, err);
+    if (resolved != FR_OK) return FR_ERR;
+
     /* A symlink or an NTFS junction inside base_dir can point anywhere on disk;
        climbs_out only rejects the literal argument, so the real destination has
        to be resolved and re-checked, not just the lexical request. */
-    if (!within_base_dir(canonical_base, canonical_target)) {
+    int inside = within_base_dir(canonical_base, canonical_target)
+                 || (as_directory && strcmp(canonical_base, canonical_target) == 0);
+    if (!inside) {
         free(canonical_target);
         fr_error_set(err, "\"%s\" is outside the project directory", relative);
         return FR_ERR;
@@ -163,6 +167,15 @@ int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_pa
 
     *out_path = canonical_target;
     return FR_OK;
+}
+
+int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_path, fr_error *err) {
+    return resolve_under_base(state, relative, 0, out_path, err);
+}
+
+int fr_lua_sandbox_resolve_dir(lua_State *state, const char *relative, char **out_path,
+                               fr_error *err) {
+    return resolve_under_base(state, relative, 1, out_path, err);
 }
 
 static int sandbox_include(lua_State *state) {

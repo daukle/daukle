@@ -325,6 +325,132 @@ TEST tool_refuses_a_drive_letter_prefix(void) {
     PASS();
 }
 
+/* The spec's own example is daukle.tool("gcc", ">=13"). Ignoring it would hand
+   back an unversioned handle to an author who believes a constraint holds. */
+TEST tool_refuses_a_version_constraint_it_cannot_honour(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.tool('test_lua_verbs', '>=13')", "=t", env, &err));
+    ASSERT(strstr(err.message, "version constraints are not implemented") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* A truncated name would name a different tool than the one resolved, so the
+   handle refuses to be built rather than quietly holding a shortened one. */
+TEST tool_refuses_a_name_too_long_for_a_handle(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.tool(string.rep('t', 200))", "=t", env, &err));
+    ASSERT(strstr(err.message, "too long") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* getmetatable is a base global and the handle metatable is shared by every
+   plugin, so handing it out would be a table one plugin could rewrite for all. */
+TEST the_tool_handle_metatable_cannot_be_reached_from_a_plugin(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "local t = daukle.tool('test_lua_verbs')\n"
+        "hidden = getmetatable(t) == false",
+        "=t", env, &err));
+    lua_getfield(state, env, "hidden");
+    ASSERT(lua_toboolean(state, -1));
+    lua_pop(state, 1);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "local t = daukle.tool('test_lua_verbs')\n"
+        "getmetatable(t).__index = 'mine'",
+        "=t", env, &err));
+    ASSERT(strstr(err.message, "attempt to index a boolean") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* Proves two things at once: cwd is honoured, and the resolved program is
+   absolute, since a relative one would no longer be found from the new cwd. */
+TEST exec_runs_in_a_cwd_inside_the_project_directory(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "local t = daukle.tool('test_lua_verbs')\n"
+        "result = daukle.exec(t, { '--exec-child', '0', 'in-test' }, "
+        "{ capture = true, cwd = 'test' })",
+        "=t", env, &err));
+
+    lua_getfield(state, env, "result");
+    lua_getfield(state, -1, "stdout");
+    ASSERT(strstr(lua_tostring(state, -1), "[in-test]") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST exec_refuses_a_cwd_outside_the_project_directory(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "local t = daukle.tool('test_lua_verbs')\n"
+        "daukle.exec(t, { '--exec-child', '0' }, { cwd = '../..' })",
+        "=t", env, &err));
+    ASSERT(strstr(err.message, "outside the project directory") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 /* Regression for the missing lua_checkstack this file's own json_set_array
    already knew to call: an argv past LUA_MINSTACK (20) must not silently
    overrun the Lua stack, so this pushes comfortably past it and checks the
@@ -872,6 +998,11 @@ int main(int argc, char **argv) {
     RUN_TEST(tool_refuses_a_name_with_an_interior_separator);
     RUN_TEST(tool_refuses_a_bare_climb);
     RUN_TEST(tool_refuses_a_drive_letter_prefix);
+    RUN_TEST(tool_refuses_a_version_constraint_it_cannot_honour);
+    RUN_TEST(tool_refuses_a_name_too_long_for_a_handle);
+    RUN_TEST(the_tool_handle_metatable_cannot_be_reached_from_a_plugin);
+    RUN_TEST(exec_runs_in_a_cwd_inside_the_project_directory);
+    RUN_TEST(exec_refuses_a_cwd_outside_the_project_directory);
     RUN_TEST(exec_accepts_an_argv_well_past_the_guaranteed_lua_stack);
     RUN_TEST(env_reads_a_variable_and_nil_for_an_absent_one);
     RUN_TEST(read_refuses_a_path_outside_the_base_directory);
