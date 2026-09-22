@@ -1,10 +1,12 @@
 #include "config_lua.h"
 
+#include "derived.h"
 #include "error.h"
 #include "luax.h"
 #include "lua_sandbox.h"
 #include "lua_verbs.h"
 #include "manifest.h"
+#include "plugins.h"
 #include "resolve.h"
 
 #include "cJSON.h"
@@ -227,6 +229,146 @@ static int lua_language_apply(void *state, const fr_consumer *consumer,
 
 typedef struct {
     fr_lua_plugin_slot *slot;
+    const fr_toolchain *toolchain;
+    const char *project;
+    const char *version;
+    const char *root;
+    const fr_resolved *resolved;
+    size_t count;
+    fr_generated_file **out_files;
+    size_t *out_count;
+} lua_generate_context;
+
+static lua_generate_context *generate_context;
+
+static int protected_toolchain_generate(lua_State *state) {
+    const lua_generate_context *context = generate_context;
+    const fr_lua_plugin_slot *slot = context->slot;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, slot->callback);
+
+    lua_newtable(state);
+    lua_pushstring(state, context->project);
+    lua_setfield(state, -2, "project");
+    lua_pushstring(state, context->version);
+    lua_setfield(state, -2, "version");
+    lua_pushstring(state, context->root);
+    lua_setfield(state, -2, "root");
+
+    lua_newtable(state);
+    lua_pushstring(state, host_os());
+    lua_setfield(state, -2, "os");
+    lua_pushstring(state, host_arch());
+    lua_setfield(state, -2, "arch");
+    lua_setfield(state, -2, "host");
+
+    lua_newtable(state);
+    const cJSON *block = context->toolchain->block;
+    if (block != NULL) {
+        const cJSON *member = block->child;
+        while (member != NULL) {
+            if (strcmp(member->string, "version") != 0) {
+                fr_error push_err;
+                if (fr_lua_push_json(state, member, &push_err) != FR_OK) {
+                    return luaL_error(state, "%s", push_err.message);
+                }
+                lua_setfield(state, -2, member->string);
+            }
+            member = member->next;
+        }
+    }
+    lua_setfield(state, -2, "config");
+
+    lua_newtable(state);
+    for (size_t index = 0; index < context->count; index++) {
+        lua_newtable(state);
+        lua_pushstring(state, context->resolved[index].project);
+        lua_setfield(state, -2, "project");
+        lua_pushstring(state, context->resolved[index].module);
+        lua_setfield(state, -2, "module");
+        fr_error push_err;
+        if (fr_lua_push_json(state, context->resolved[index].block, &push_err) != FR_OK) {
+            return luaL_error(state, "%s", push_err.message);
+        }
+        lua_setfield(state, -2, "block");
+        lua_rawseti(state, -2, (lua_Integer) index + 1);
+    }
+    lua_setfield(state, -2, "dependencies");
+
+    /* lua_call, not lua_pcall: see protected_language_apply above. */
+    lua_call(state, 1, 1);
+
+    if (!lua_istable(state, -1)) {
+        return luaL_error(state, "the \"%s\" plugin returned %s, expected a table",
+                          slot->capability, luaL_typename(state, -1));
+    }
+
+    size_t file_count = 0;
+    lua_pushnil(state);
+    while (lua_next(state, -2) != 0) {
+        file_count++;
+        lua_pop(state, 1);
+    }
+
+    fr_generated_file *files = NULL;
+    if (file_count > 0) {
+        files = malloc(file_count * sizeof *files);
+        if (files == NULL) {
+            return luaL_error(state, "out of memory taking the output of \"%s\"", slot->capability);
+        }
+    }
+
+    size_t written = 0;
+    lua_pushnil(state);
+    while (lua_next(state, -2) != 0) {
+        if (lua_type(state, -2) != LUA_TSTRING) {
+            fr_derived_free_files(files, written);
+            return luaL_error(state, "a generated file path must be a string");
+        }
+        const char *path = lua_tostring(state, -2);
+        if (lua_type(state, -1) != LUA_TSTRING) {
+            fr_derived_free_files(files, written);
+            return luaL_error(state, "generated file \"%s\" must be a string", path);
+        }
+        const char *text = lua_tostring(state, -1);
+
+        files[written].path = fr_dup_string(path);
+        files[written].text = fr_dup_string(text);
+        if (files[written].path == NULL || files[written].text == NULL) {
+            fr_derived_free_files(files, written + 1);
+            return luaL_error(state, "out of memory taking the output of \"%s\"", slot->capability);
+        }
+        written++;
+        lua_pop(state, 1);
+    }
+
+    *context->out_files = files;
+    *context->out_count = written;
+    return 0;
+}
+
+static int lua_toolchain_generate(void *state, const fr_toolchain *toolchain, const char *project,
+                                  const char *version, const char *root,
+                                  const fr_resolved *resolved, size_t count,
+                                  fr_generated_file **out_files, size_t *out_count, fr_error *err) {
+    int top = lua_gettop(runtime_state);
+    lua_generate_context context = { state, toolchain, project, version, root,
+                                     resolved, count, out_files, out_count };
+    generate_context = &context;
+    lua_pushcfunction(runtime_state, protected_toolchain_generate);
+    int status = lua_pcall(runtime_state, 0, 0, 0);
+    generate_context = NULL;
+
+    if (status != LUA_OK) {
+        fr_error_set(err, "%s", fr_lua_error_text(runtime_state));
+        lua_settop(runtime_state, top);
+        return FR_ERR;
+    }
+    lua_settop(runtime_state, top);
+    return FR_OK;
+}
+
+typedef struct {
+    fr_lua_plugin_slot *slot;
     const char *project;
     const cJSON *block;
     const char *base_dir;
@@ -358,6 +500,21 @@ static int lua_declare_source(lua_State *state) {
     return 0;
 }
 
+static int lua_declare_toolchain(lua_State *state) {
+    luaL_checktype(state, 1, LUA_TTABLE);
+    fr_lua_plugin_slot *slot = NULL;
+    if (take_slot(state, "daukle.toolchain/", "generate", &slot) != 0 || slot == NULL) {
+        return luaL_error(state, "a toolchain plugin could not be declared");
+    }
+
+    fr_toolchain_plugin plugin = { slot->capability, lua_toolchain_generate, slot };
+    fr_error err;
+    if (fr_registry_add_toolchain(registering_into, &plugin, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    return 0;
+}
+
 static int lua_declare_plugin(lua_State *state) {
     (void) state;
     return 0;
@@ -368,6 +525,8 @@ void fr_lua_verbs_install_registration(lua_State *state) {
     lua_setfield(state, -2, "language");
     lua_pushcfunction(state, lua_declare_source);
     lua_setfield(state, -2, "source");
+    lua_pushcfunction(state, lua_declare_toolchain);
+    lua_setfield(state, -2, "toolchain");
     lua_pushcfunction(state, lua_declare_plugin);
     lua_setfield(state, -2, "plugin");
 }

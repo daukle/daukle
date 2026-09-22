@@ -1,0 +1,12 @@
+schema = 1
+project = "forebay/managed"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+stub-toolchain-badvalue = "./plugins/stub-toolchain-badvalue.lua"
+
+[toolchains.stub]
+version = "1"
+target = "app"

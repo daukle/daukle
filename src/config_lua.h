@@ -43,9 +43,9 @@ fr_registry *fr_lua_registering_registry(void);
    the place spec section 4.4's message is raised. */
 int fr_lua_plugin_exec_is_refused(void);
 
-/* Sets language, source and plugin on the table on top of the stack, for
-   lua_verbs.c to build a plugin environment around; the underlying functions
-   are file statics here, so this is their only way out. */
+/* Sets language, source, toolchain and plugin on the table on top of the
+   stack, for lua_verbs.c to build a plugin environment around; the underlying
+   functions are file statics here, so this is their only way out. */
 void fr_lua_verbs_install_registration(lua_State *state);
 
 /* The registry stores plugin structs by value and does not own their capability

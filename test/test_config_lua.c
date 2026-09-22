@@ -1,6 +1,7 @@
 #include "greatest.h"
 #include "config.h"
 #include "config_lua.h"
+#include "derived.h"
 #include "manifest.h"
 #include "region.h"
 #include "registry.h"
@@ -461,6 +462,238 @@ TEST the_same_base_directory_spelled_differently_still_reuses_the_runtime(void) 
     PASS();
 }
 
+TEST a_plugin_declares_a_toolchain_and_it_reaches_the_registry(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    int loaded = fr_config_load_file("test/fixtures/toolchain-plugin/daukle.toml", registry,
+                                     &manifest, &err) == FR_OK;
+    int registered = loaded && fr_registry_toolchain(registry, "daukle.toolchain/stub") != NULL;
+    if (loaded) fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT(registered);
+    PASS();
+}
+
+TEST a_toolchain_needs_a_generate_function(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest; fr_error err;
+    fr_build_registry(&registry, &err);
+    int status = fr_config_load_file("test/fixtures/toolchain-nogenerate/daukle.toml", registry,
+                                     &manifest, &err);
+    char message[sizeof err.message];
+    snprintf(message, sizeof message, "%s", err.message);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "needs a generate function") != NULL);
+    PASS();
+}
+
+/* Exercises the whole marshaling protected_toolchain_generate does: project,
+   root and host.os travel through as plain strings, and toolchain.config.target
+   is reached through the block-walk rather than a duplicated-and-trimmed copy.
+   generate() is called directly through the registry's function pointer since
+   nothing yet drives it end to end (that lands with the derived-directory
+   writer in a later task).
+
+   Every result is copied into a plain local before any cleanup runs, and
+   cleanup always runs before the first ASSERT: an ASSERT that fails macro-
+   returns immediately, and skipping fr_registry_destroy/fr_lua_runtime_shutdown
+   would leave the shared lua runtime bound to this test's registry, failing
+   every unrelated test that runs after it with "another registry's plugins
+   are still registered" instead of its own reason. */
+TEST a_toolchain_generate_bridges_project_config_root_and_host(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest = {0};
+    fr_error err;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int loaded = built && fr_config_load_file("test/fixtures/toolchain-plugin/daukle.toml",
+                                              registry, &manifest, &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+    int toolchain_count = loaded ? (int) manifest.toolchain_count : 0;
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int status = FR_ERR;
+    if (plugin != NULL && toolchain_count == 1) {
+        fr_error gen_err;
+        status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
+                                  "9.9.9", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+    }
+
+    char path[256] = "";
+    char text[256] = "";
+    if (status == FR_OK && file_count == 1) {
+        snprintf(path, sizeof path, "%s", files[0].path);
+        snprintf(text, sizeof text, "%s", files[0].text);
+    }
+
+    fr_derived_free_files(files, file_count);
+    if (loaded) fr_manifest_free(&manifest);
+    if (built) fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(built);
+    ASSERT(loaded);
+    ASSERT(plugin != NULL);
+    ASSERT_EQ(1, toolchain_count);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_EQ(1, (int) file_count);
+    ASSERT_STR_EQ("generated.txt", path);
+    ASSERT(strstr(text, "project forebay/managed\n") != NULL);
+    ASSERT(strstr(text, "target app\n") != NULL);
+    ASSERT(strstr(text, "root derived/stub\n") != NULL);
+    int has_os = strstr(text, "\nos windows\n") != NULL ||
+                 strstr(text, "\nos macos\n") != NULL ||
+                 strstr(text, "\nos linux\n") != NULL;
+    ASSERT(has_os);
+    PASS();
+}
+
+/* config is built member by member skipping "version" specifically, not by
+   duplicating the block and deleting a key; a plugin that reads
+   toolchain.config.version must see nil, and this only shows up in the set of
+   keys the table actually holds. Same cleanup-before-ASSERT shape as above. */
+TEST a_toolchain_config_excludes_the_reserved_version_key(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest = {0};
+    fr_error err;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-config/daukle.toml",
+                                              registry, &manifest, &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int status = FR_ERR;
+    if (plugin != NULL) {
+        fr_error gen_err;
+        status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
+                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+    }
+
+    char text[256] = "";
+    if (status == FR_OK && file_count == 1) snprintf(text, sizeof text, "%s", files[0].text);
+
+    fr_derived_free_files(files, file_count);
+    if (loaded) fr_manifest_free(&manifest);
+    if (built) fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT(plugin != NULL);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_EQ(1, (int) file_count);
+    ASSERT_STR_EQ("flag,target", text);
+    PASS();
+}
+
+TEST a_toolchain_generate_must_return_a_table(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest = {0};
+    fr_error err;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-badreturn/daukle.toml",
+                                              registry, &manifest, &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int status = FR_ERR;
+    char message[sizeof err.message] = "";
+    if (plugin != NULL) {
+        fr_error gen_err;
+        status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
+                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+        snprintf(message, sizeof message, "%s", gen_err.message);
+    }
+
+    fr_derived_free_files(files, file_count);
+    if (loaded) fr_manifest_free(&manifest);
+    if (built) fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT(plugin != NULL);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "expected a table") != NULL);
+    PASS();
+}
+
+TEST a_toolchain_generate_refuses_a_non_string_file_path(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest = {0};
+    fr_error err;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-badkey/daukle.toml",
+                                              registry, &manifest, &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int status = FR_ERR;
+    char message[sizeof err.message] = "";
+    if (plugin != NULL) {
+        fr_error gen_err;
+        status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
+                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+        snprintf(message, sizeof message, "%s", gen_err.message);
+    }
+
+    fr_derived_free_files(files, file_count);
+    if (loaded) fr_manifest_free(&manifest);
+    if (built) fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT(plugin != NULL);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "file path must be a string") != NULL);
+    PASS();
+}
+
+TEST a_toolchain_generate_refuses_a_non_string_file_contents(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest = {0};
+    fr_error err;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-badvalue/daukle.toml",
+                                              registry, &manifest, &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int status = FR_ERR;
+    char message[sizeof err.message] = "";
+    if (plugin != NULL) {
+        fr_error gen_err;
+        status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
+                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+        snprintf(message, sizeof message, "%s", gen_err.message);
+    }
+
+    fr_derived_free_files(files, file_count);
+    if (loaded) fr_manifest_free(&manifest);
+    if (built) fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT(plugin != NULL);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "generated file \"generated.txt\" must be a string") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -489,5 +722,12 @@ int main(int argc, char **argv) {
     RUN_TEST(a_second_registry_is_refused_while_the_first_holds_plugins);
     RUN_TEST(a_second_base_directory_is_refused_naming_both);
     RUN_TEST(the_same_base_directory_spelled_differently_still_reuses_the_runtime);
+    RUN_TEST(a_plugin_declares_a_toolchain_and_it_reaches_the_registry);
+    RUN_TEST(a_toolchain_needs_a_generate_function);
+    RUN_TEST(a_toolchain_generate_bridges_project_config_root_and_host);
+    RUN_TEST(a_toolchain_config_excludes_the_reserved_version_key);
+    RUN_TEST(a_toolchain_generate_must_return_a_table);
+    RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_path);
+    RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_contents);
     GREATEST_MAIN_END();
 }
