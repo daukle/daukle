@@ -123,7 +123,13 @@ static int verb_cache(lua_State *state) {
 
     char *cached = NULL;
     fr_error err;
-    if (fr_cache_read(project, version, artifact, &cached, &err) == FR_OK && cached != NULL) {
+    /* A miss is FR_OK with no text; FR_ERR is the cache refusing the path or
+       failing to read it, and falling through to the producer would turn that
+       into a silent refetch on every run. */
+    if (fr_cache_read(project, version, artifact, &cached, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    if (cached != NULL) {
         lua_pushstring(state, cached);
         free(cached);
         return 1;

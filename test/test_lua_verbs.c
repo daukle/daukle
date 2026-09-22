@@ -268,6 +268,39 @@ TEST cache_calls_the_producer_once(void) {
     PASS();
 }
 
+TEST cache_propagates_a_read_failure_rather_than_refetching(void) {
+    fr_error err;
+    fr_cache_set_enabled(1);
+
+    char project[128];
+    cache_test_project(project, sizeof project);
+
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "cache" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    char script[256];
+    snprintf(script, sizeof script,
+        "calls = 0\n"
+        "local function make() calls = calls + 1; return 'body' end\n"
+        "daukle.cache('%s', '..', 'art', make)",
+        project);
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, script, "=t", env, &err));
+    ASSERT(strstr(err.message, "not a safe cache path component") != NULL);
+
+    lua_getfield(state, env, "calls");
+    ASSERT_EQ(0, (int) lua_tointeger(state, -1));
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 TEST region_replaces_only_between_the_markers(void) {
     fr_error err;
     fr_registry *registry = fr_registry_create();
@@ -565,6 +598,7 @@ int main(int argc, char **argv) {
     RUN_TEST(read_returns_the_text_of_a_file_inside_the_base_directory);
     RUN_TEST(fetch_returns_the_body_and_passes_headers);
     RUN_TEST(cache_calls_the_producer_once);
+    RUN_TEST(cache_propagates_a_read_failure_rather_than_refetching);
     RUN_TEST(region_replaces_only_between_the_markers);
     RUN_TEST(json_set_preserves_the_rest_of_the_document);
     RUN_TEST(json_set_writes_a_key_containing_a_dot);
