@@ -9,6 +9,7 @@ typedef enum {
     FR_CLI_ADD,
     FR_CLI_CONFIG_PRINT,
     FR_CLI_PLUGIN_UPDATE,
+    FR_CLI_CLEAN,
     FR_CLI_VERSION,
     FR_CLI_USAGE
 } fr_cli_command;

@@ -317,6 +317,10 @@ static int tool_name_is_valid(const char *name) {
 }
 
 static int verb_tool(lua_State *state) {
+    if (fr_lua_generation_is_running()) {
+        return luaL_error(state, "daukle.tool is not available while generating; "
+                                 "generation is a pure function of the manifest");
+    }
     const char *name = luaL_checkstring(state, 1);
     if (!lua_isnoneornil(state, 2)) {
         return luaL_error(state, "daukle.tool: version constraints are not implemented yet");
@@ -375,6 +379,10 @@ static void report_verbose_exec(const fr_lua_tool *handle, const char *const *ar
 }
 
 static int verb_exec(lua_State *state) {
+    if (fr_lua_generation_is_running()) {
+        return luaL_error(state, "daukle.exec is not available while generating; "
+                                 "generation is a pure function of the manifest");
+    }
     if (fr_lua_plugin_exec_is_refused()) {
         return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
     }

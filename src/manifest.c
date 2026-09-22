@@ -228,6 +228,71 @@ static int read_consumer(const cJSON *entry, size_t consumer_index, fr_consumer 
     return FR_OK;
 }
 
+static int read_toolchain(const cJSON *entry, const char *name, fr_toolchain *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+    char path[320];
+    snprintf(path, sizeof path, "toolchains.%s", name);
+
+    out->name = duplicate(name);
+    if (out->name == NULL) {
+        fr_error_set(err, "out of memory reading %s", path);
+        return FR_ERR;
+    }
+
+    if (cJSON_IsString(entry)) {
+        out->version = duplicate(entry->valuestring);
+        if (out->version == NULL) {
+            fr_error_set(err, "out of memory reading %s", path);
+            return FR_ERR;
+        }
+        return FR_OK;
+    }
+    if (!cJSON_IsObject(entry)) {
+        fr_error_set(err, "%s must be a table or a version string", path);
+        return FR_ERR;
+    }
+    out->block = entry;
+
+    const cJSON *version = cJSON_GetObjectItemCaseSensitive(entry, "version");
+    if (version != NULL) {
+        if (!cJSON_IsString(version)) {
+            fr_error_set(err, "%s.version must be a string", path);
+            return FR_ERR;
+        }
+        out->version = duplicate(version->valuestring);
+        if (out->version == NULL) {
+            fr_error_set(err, "out of memory reading %s.version", path);
+            return FR_ERR;
+        }
+    }
+
+    const cJSON *dependencies_obj = cJSON_GetObjectItemCaseSensitive(entry, "dependencies");
+    if (dependencies_obj == NULL) return FR_OK;
+    if (!cJSON_IsObject(dependencies_obj)) {
+        fr_error_set(err, "%s.dependencies must be a table", path);
+        return FR_ERR;
+    }
+    int size = cJSON_GetArraySize(dependencies_obj);
+    if (size > 0) {
+        out->dependencies = calloc((size_t) size, sizeof *out->dependencies);
+        if (out->dependencies == NULL) {
+            fr_error_set(err, "out of memory reading %s.dependencies", path);
+            return FR_ERR;
+        }
+    }
+    size_t index = 0;
+    const cJSON *dependency_entry = NULL;
+    cJSON_ArrayForEach(dependency_entry, dependencies_obj) {
+        out->dependency_count = index + 1;
+        if (read_dependency(dependency_entry, dependency_entry->string, path,
+                            &out->dependencies[index], err) != FR_OK) {
+            return FR_ERR;
+        }
+        index++;
+    }
+    return FR_OK;
+}
+
 static int manifest_from_json(const cJSON *root, const char *file_path, fr_manifest *out, fr_error *err) {
     if (project_from_json(root, file_path, &out->self, err) != FR_OK) return FR_ERR;
 
@@ -273,6 +338,31 @@ static int manifest_from_json(const cJSON *root, const char *file_path, fr_manif
         cJSON_ArrayForEach(entry, consumers_arr) {
             out->consumer_count = index + 1;
             if (read_consumer(entry, index, &out->consumers[index], err) != FR_OK) return FR_ERR;
+            index++;
+        }
+    }
+
+    const cJSON *toolchains_obj = cJSON_GetObjectItemCaseSensitive(root, "toolchains");
+    if (toolchains_obj != NULL) {
+        if (!cJSON_IsObject(toolchains_obj)) {
+            fr_error_set(err, "%s.toolchains must be a table", file_path);
+            return FR_ERR;
+        }
+        int size = cJSON_GetArraySize(toolchains_obj);
+        if (size > 0) {
+            out->toolchains = calloc((size_t) size, sizeof *out->toolchains);
+            if (out->toolchains == NULL) {
+                fr_error_set(err, "out of memory reading %s.toolchains", file_path);
+                return FR_ERR;
+            }
+        }
+        size_t index = 0;
+        const cJSON *entry = NULL;
+        cJSON_ArrayForEach(entry, toolchains_obj) {
+            out->toolchain_count = index + 1;
+            if (read_toolchain(entry, entry->string, &out->toolchains[index], err) != FR_OK) {
+                return FR_ERR;
+            }
             index++;
         }
     }
@@ -361,10 +451,22 @@ void fr_manifest_free(fr_manifest *manifest) {
         consumer_free(&manifest->consumers[index]);
     }
     free(manifest->consumers);
+    for (size_t index = 0; index < manifest->toolchain_count; index++) {
+        fr_toolchain *toolchain = &manifest->toolchains[index];
+        free(toolchain->name);
+        free(toolchain->version);
+        for (size_t d = 0; d < toolchain->dependency_count; d++) {
+            dependency_free(&toolchain->dependencies[d]);
+        }
+        free(toolchain->dependencies);
+    }
+    free(manifest->toolchains);
     manifest->sources = NULL;
     manifest->source_count = 0;
     manifest->consumers = NULL;
     manifest->consumer_count = 0;
+    manifest->toolchains = NULL;
+    manifest->toolchain_count = 0;
     cJSON_Delete(manifest->document);
     manifest->document = NULL;
 }

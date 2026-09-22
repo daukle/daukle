@@ -66,6 +66,8 @@ the client tier's rules.
 | rewriting a marked region of a file in place | `region.c` | a JSON editor. `jsonedit.c` is, for files that are JSON |
 | rewriting a toml manifest in place | `tomledit.c` | a toml parser. It splices spans, as `jsonedit.c` does for json |
 | the whole write pass over a manifest | `sync.c` | per-language. It drives the language plugins |
+| the derived directory: its path, the ledger of what daukle generated, write-if-changed, the sweep, and clean | `derived.c`, tested by `test/test_derived.c` | the generation pass, which is `generate.c`. It is handed a file set and decides only what happens on disk |
+| the generation pass: resolving each declared toolchain, building what its `generate` receives, and validating what it returns | `generate.c`, tested by `test/test_generate.c` | what happens on disk, which is `derived.c` |
 | HTTP, per platform | `http.c` over `http_curl.c` and `http_winhttp.c` | two implementations to keep in step. One interface, one backend per platform |
 | caching a resolved artifact | `cache.c` | keyed by project and version alone. The artifact string is part of the key, deliberately |
 | version ranges and ordering | `semver.c` | date or tag ordering |

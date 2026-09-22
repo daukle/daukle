@@ -7,11 +7,13 @@
 #ifdef _WIN32
 #include <direct.h>
 #include <process.h>
+#include <sys/stat.h>
 #include <windows.h>
 #else
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 #endif
 
@@ -173,4 +175,27 @@ void fr_test_prepend_to_path_dir_of(const char *argv_zero) {
 
     fr_test_set_env("PATH", new_path);
     free(new_path);
+}
+
+long long fr_test_file_mtime(const char *path) {
+#ifdef _WIN32
+    struct _stat info;
+    if (_stat(path, &info) != 0) return 0;
+    return (long long) info.st_mtime;
+#else
+    struct stat info;
+    if (stat(path, &info) != 0) return 0;
+    return (long long) info.st_mtime;
+#endif
+}
+
+void fr_test_sleep_past_mtime_resolution(void) {
+#ifdef _WIN32
+    Sleep(1100);
+#else
+    struct timespec duration;
+    duration.tv_sec = 1;
+    duration.tv_nsec = 100000000;
+    nanosleep(&duration, NULL);
+#endif
 }

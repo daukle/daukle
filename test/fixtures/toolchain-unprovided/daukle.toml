@@ -1,0 +1,8 @@
+schema = 1
+project = "forebay/toolchain-unprovided"
+version = "1.0.0"
+
+[modules]
+
+[toolchains.stub]
+version = "1"

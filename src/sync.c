@@ -5,6 +5,7 @@
 #include "config_lua.h"
 #include "config_toml.h"
 #include "error.h"
+#include "generate.h"
 #include "manifest.h"
 #include "plugins.h"
 #include "region.h"
@@ -44,10 +45,7 @@ static void wrap_error_with_path(fr_error *err, const char *path) {
     fr_error_set(err, "%s: %s", path, original);
 }
 
-/* On success it takes ownership even when it stores nothing: two consumers can
-   target one file, and a report naming it twice would have main.c count one
-   changed file as two. */
-static int report_adopt(fr_sync_report *report, char *path, fr_error *err) {
+int fr_sync_report_add(fr_sync_report *report, char *path, fr_error *err) {
     for (size_t index = 0; index < report->count; index++) {
         if (strcmp(report->files[index], path) == 0) {
             free(path);
@@ -136,7 +134,7 @@ static int sync_consumer(const fr_consumer *consumer, const fr_manifest *manifes
         if (write) result = fr_file_write_text(target_path, replaced, err);
         if (result != FR_OK) {
             wrap_error_with_path(err, target_path);
-        } else if (report_adopt(report, target_path, err) != FR_OK) {
+        } else if (fr_sync_report_add(report, target_path, err) != FR_OK) {
             result = FR_ERR;
         } else {
             target_path = NULL;
@@ -175,7 +173,10 @@ int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report 
     }
 
     int result = FR_OK;
-    for (size_t index = 0; index < manifest.consumer_count; index++) {
+    if (fr_generate(&manifest, manifest_path, manifest_dir, registry, write, report, err) != FR_OK) {
+        result = FR_ERR;
+    }
+    for (size_t index = 0; result == FR_OK && index < manifest.consumer_count; index++) {
         if (sync_consumer(&manifest.consumers[index], &manifest, manifest_path, manifest_dir,
                           registry, write, report, err) != FR_OK) {
             result = FR_ERR;

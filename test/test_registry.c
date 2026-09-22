@@ -3,6 +3,7 @@
 
 #include "cJSON.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static int fake_load(void *state, const char *project, const cJSON *block,
@@ -123,6 +124,62 @@ TEST walks_every_registered_config_plugin(void) {
     PASS();
 }
 
+static int stub_generate(void *state, const fr_toolchain *toolchain, const char *project,
+                         const char *version, const char *root,
+                         const fr_resolved *resolved, size_t count,
+                         fr_generated_file **out_files, size_t *out_count, fr_error *err) {
+    (void) state; (void) toolchain; (void) project; (void) version; (void) root;
+    (void) resolved; (void) count; (void) err;
+    *out_files = NULL;
+    *out_count = 0;
+    return FR_OK;
+}
+
+TEST a_toolchain_is_found_by_its_capability(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_toolchain_plugin plugin = { "daukle.toolchain/stub", stub_generate, NULL };
+    fr_error err;
+
+    ASSERT_EQ(FR_OK, fr_registry_add_toolchain(registry, &plugin, &err));
+    const fr_toolchain_plugin *found = fr_registry_toolchain(registry, "daukle.toolchain/stub");
+    int found_it = found != NULL;
+    int same_callback = found_it && found->generate == stub_generate;
+    fr_registry_destroy(registry);
+
+    ASSERT(found_it);
+    ASSERT(same_callback);
+    PASS();
+}
+
+TEST a_toolchain_capability_cannot_be_registered_twice(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_toolchain_plugin plugin = { "daukle.toolchain/stub", stub_generate, NULL };
+    fr_error err;
+    fr_registry_add_toolchain(registry, &plugin, &err);
+
+    int status = fr_registry_add_toolchain(registry, &plugin, &err);
+    char message[sizeof err.message];
+    snprintf(message, sizeof message, "%s", err.message);
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "is already registered") != NULL);
+    PASS();
+}
+
+TEST a_toolchain_and_a_language_may_share_a_name(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_toolchain_plugin toolchain = { "daukle.toolchain/stub", stub_generate, NULL };
+    fr_error err;
+    int added_toolchain = fr_registry_add_toolchain(registry, &toolchain, &err) == FR_OK;
+    int toolchain_is_not_a_language = fr_registry_language(registry, "daukle.toolchain/stub") == NULL;
+    fr_registry_destroy(registry);
+
+    ASSERT(added_toolchain);
+    ASSERT(toolchain_is_not_a_language);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -135,5 +192,8 @@ int main(int argc, char **argv) {
     RUN_TEST(registers_and_finds_a_config_plugin);
     RUN_TEST(rejects_a_duplicate_config_capability);
     RUN_TEST(walks_every_registered_config_plugin);
+    RUN_TEST(a_toolchain_is_found_by_its_capability);
+    RUN_TEST(a_toolchain_capability_cannot_be_registered_twice);
+    RUN_TEST(a_toolchain_and_a_language_may_share_a_name);
     GREATEST_MAIN_END();
 }

@@ -1,0 +1,19 @@
+schema = 1
+project = "forebay/both-modes"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+stub = "./plugins/stub-both.lua"
+
+[toolchains.stub]
+version = "1"
+
+[[consumers]]
+id = "stub"
+language = "stub"
+file = "build.gradle"
+configuration = "implementation"
+
+  [consumers.dependencies]

@@ -1,5 +1,6 @@
 #include "greatest.h"
 #include "region.h"
+#include "support.h"
 #include "sync.h"
 
 #include <stdio.h>
@@ -135,6 +136,71 @@ TEST reports_a_missing_language_as_a_missing_plugin(void) {
     PASS();
 }
 
+TEST a_repository_with_no_tool_file_generates_into_the_derived_directory(void) {
+    fr_test_remove_tree("test/fixtures/managed/build");
+    fr_sync_report report; fr_error err;
+
+    int status = fr_sync("test/fixtures/managed/daukle.toml", 1, 1, &report, &err);
+    int reported_one = report.count == 1;
+    fr_sync_report_free(&report);
+
+    char *text = NULL;
+    int wrote_it = fr_file_read_text("test/fixtures/managed/build/daukle/stub/build.txt",
+                                     &text, &err) == FR_OK;
+    int content_is_right = wrote_it && strcmp(text, "target app\n") == 0;
+    free(text);
+    fr_test_remove_tree("test/fixtures/managed/build");
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(reported_one);
+    ASSERT(content_is_right);
+    PASS();
+}
+
+TEST generating_twice_changes_nothing_the_second_time(void) {
+    fr_test_remove_tree("test/fixtures/managed/build");
+    fr_sync_report first; fr_sync_report second; fr_error err;
+    fr_sync("test/fixtures/managed/daukle.toml", 1, 1, &first, &err);
+    int first_reported_one = first.count == 1;
+    fr_sync_report_free(&first);
+
+    char *text = NULL;
+    int first_wrote_it = fr_file_read_text("test/fixtures/managed/build/daukle/stub/build.txt",
+                                           &text, &err) == FR_OK;
+    free(text);
+
+    int status = fr_sync("test/fixtures/managed/daukle.toml", 1, 1, &second, &err);
+    int reported_nothing = second.count == 0;
+    fr_sync_report_free(&second);
+    fr_test_remove_tree("test/fixtures/managed/build");
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(first_reported_one);
+    ASSERT(first_wrote_it);
+    ASSERT(reported_nothing);
+    PASS();
+}
+
+TEST check_names_a_stale_derived_tree_without_writing(void) {
+    fr_test_remove_tree("test/fixtures/managed/build");
+    fr_sync_report report; fr_error err;
+
+    int status = fr_sync("test/fixtures/managed/daukle.toml", 0, 1, &report, &err);
+    int reported_one = report.count == 1;
+    fr_sync_report_free(&report);
+
+    char *text = NULL;
+    int wrote_nothing = fr_file_read_text("test/fixtures/managed/build/daukle/stub/build.txt",
+                                          &text, &err) != FR_OK;
+    free(text);
+    fr_test_remove_tree("test/fixtures/managed/build");
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(reported_one);
+    ASSERT(wrote_nothing);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -148,5 +214,8 @@ int main(int argc, char **argv) {
     RUN_TEST(counts_the_files_written_before_a_failure);
     RUN_TEST(reports_an_unknown_source_kind_as_a_missing_plugin);
     RUN_TEST(reports_a_missing_language_as_a_missing_plugin);
+    RUN_TEST(a_repository_with_no_tool_file_generates_into_the_derived_directory);
+    RUN_TEST(generating_twice_changes_nothing_the_second_time);
+    RUN_TEST(check_names_a_stale_derived_tree_without_writing);
     GREATEST_MAIN_END();
 }

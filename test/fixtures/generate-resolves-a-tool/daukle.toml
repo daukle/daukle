@@ -1,0 +1,11 @@
+schema = 1
+project = "forebay/generate-resolves-a-tool"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+stub = "./plugins/stub-tool.lua"
+
+[toolchains.stub]
+version = "1"

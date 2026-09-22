@@ -2,6 +2,7 @@
 #include "cli.h"
 #include "config.h"
 #include "config_lua.h"
+#include "derived.h"
 #include "error.h"
 #include "lua_verbs.h"
 #include "luax.h"
@@ -24,6 +25,10 @@ static void print_lua_log(const char *message) {
     fprintf(stderr, "daukle: %s\n", message);
 }
 
+static void print_notice(const char *message) {
+    fprintf(stderr, "daukle: %s\n", message);
+}
+
 static void report_error(const fr_error *err, int verbose) {
     fprintf(stderr, "daukle: %s\n", err->message);
     if (verbose) {
@@ -37,6 +42,22 @@ static char *duplicate_string(const char *text) {
     char *copy = malloc(length);
     if (copy != NULL) memcpy(copy, text, length);
     return copy;
+}
+
+/* sync.c keeps its own copy of this same small split rather than exposing one. */
+static char *manifest_directory(const char *manifest_path) {
+    const char *last_slash = strrchr(manifest_path, '/');
+    const char *last_backslash = strrchr(manifest_path, '\\');
+    const char *last = last_slash;
+    if (last_backslash != NULL && (last == NULL || last_backslash > last)) last = last_backslash;
+
+    size_t length = last != NULL ? (size_t) (last - manifest_path) : 0;
+    char *dir = malloc(length + 1);
+    if (dir != NULL) {
+        memcpy(dir, manifest_path, length);
+        dir[length] = '\0';
+    }
+    return dir;
 }
 
 /* A NULL manifest_path means "search the current directory"; a registry is
@@ -424,10 +445,37 @@ static int plugin_update(const char *label, int use_cache, int verbose) {
     return 0;
 }
 
+static int clean_derived(const char *manifest_path, int verbose) {
+    fr_error err;
+    char *resolved = NULL;
+    if (resolve_manifest_path(manifest_path, &resolved, &err) != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    char *directory = manifest_directory(resolved);
+    free(resolved);
+    if (directory == NULL) {
+        fprintf(stderr, "daukle: out of memory finding the manifest directory\n");
+        return 1;
+    }
+
+    int status = fr_derived_clean(directory, &err);
+    free(directory);
+    if (status != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    printf("daukle: cleaned\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     fr_cli_options options;
     fr_cli_parse(argc, argv, &options);
     fr_lua_set_log_sink(print_lua_log);
+    fr_derived_set_notice_sink(print_notice);
     fr_lua_set_limits(options.instruction_limit, options.memory_limit);
     fr_lua_verbs_set_verbose(options.verbose);
 
@@ -445,6 +493,8 @@ int main(int argc, char **argv) {
             return add_dependency(&options);
         case FR_CLI_PLUGIN_UPDATE:
             return plugin_update(options.plugin_label, options.use_cache, options.verbose);
+        case FR_CLI_CLEAN:
+            return clean_derived(options.manifest_path, options.verbose);
         case FR_CLI_USAGE:
             break;
     }
@@ -456,6 +506,7 @@ int main(int argc, char **argv) {
 
     fprintf(stderr, "usage: daukle [--version | sync [manifest] | check [manifest]"
                     " | add <project>@<range> --to <consumer> [--modules a,b]"
-                    " | config print | plugin update [label]] [--no-cache] [--verbose]\n");
+                    " | config print | plugin update [label] | clean [manifest]]"
+                    " [--no-cache] [--verbose]\n");
     return 2;
 }

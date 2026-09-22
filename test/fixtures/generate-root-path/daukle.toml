@@ -1,0 +1,12 @@
+schema = 1
+project = "forebay/managed"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+stub = "./plugins/root.lua"
+
+[toolchains.stub]
+version = "1"
+leak = '<placeholder>'

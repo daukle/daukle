@@ -189,6 +189,21 @@ TEST rejects_a_limit_that_is_not_a_number(void) {
     PASS();
 }
 
+TEST clean_is_parsed(void) {
+    const char *argv[] = { "daukle", "clean" };
+    fr_cli_options options = parse(2, argv);
+    ASSERT_EQ(FR_CLI_CLEAN, options.command);
+    PASS();
+}
+
+TEST clean_takes_an_optional_manifest(void) {
+    const char *argv[] = { "daukle", "clean", "some/daukle.toml" };
+    fr_cli_options options = parse(3, argv);
+    ASSERT_EQ(FR_CLI_CLEAN, options.command);
+    ASSERT_STR_EQ("some/daukle.toml", options.manifest_path);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -215,5 +230,7 @@ int main(int argc, char **argv) {
     RUN_TEST(leaves_the_manifest_path_unset_so_the_directory_is_searched);
     RUN_TEST(reads_both_lua_limits);
     RUN_TEST(rejects_a_limit_that_is_not_a_number);
+    RUN_TEST(clean_is_parsed);
+    RUN_TEST(clean_takes_an_optional_manifest);
     GREATEST_MAIN_END();
 }

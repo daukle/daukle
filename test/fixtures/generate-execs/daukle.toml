@@ -1,0 +1,11 @@
+schema = 1
+project = "forebay/generate-execs"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+stub = "./plugins/stub-execs.lua"
+
+[toolchains.stub]
+version = "1"

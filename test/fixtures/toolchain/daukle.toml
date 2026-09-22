@@ -1,0 +1,12 @@
+schema = 1
+project = "forebay/managed"
+version = "1.0.0"
+
+[modules]
+
+[toolchains]
+shorthand = ">=3.20"
+
+[toolchains.stub]
+version = "21"
+target = "app"

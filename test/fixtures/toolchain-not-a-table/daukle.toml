@@ -1,0 +1,6 @@
+schema = 1
+project = "forebay/managed"
+version = "1.0.0"
+toolchains = "nope"
+
+[modules]

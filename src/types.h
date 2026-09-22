@@ -48,6 +48,22 @@ typedef struct {
 } fr_consumer;
 
 typedef struct {
+    char *name;
+    char *version;
+    const struct cJSON *block;
+    fr_dependency *dependencies;
+    size_t dependency_count;
+} fr_toolchain;
+
+/* path is relative to the toolchain's derived directory and uses forward
+   slashes only; text is the file's whole content, because a toolchain produces
+   a document rather than editing one. */
+typedef struct {
+    char *path;
+    char *text;
+} fr_generated_file;
+
+typedef struct {
     char *project;
     char *kind;
     const struct cJSON *block;
@@ -59,6 +75,8 @@ typedef struct {
     size_t source_count;
     fr_consumer *consumers;
     size_t consumer_count;
+    fr_toolchain *toolchains;
+    size_t toolchain_count;
     struct cJSON *document;
 } fr_manifest;
 

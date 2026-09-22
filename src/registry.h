@@ -26,6 +26,15 @@ typedef struct {
 
 typedef struct {
     const char *capability;
+    int (*generate)(void *state, const fr_toolchain *toolchain, const char *project,
+                    const char *version, const char *root,
+                    const fr_resolved *resolved, size_t count,
+                    fr_generated_file **out_files, size_t *out_count, fr_error *err);
+    void *state;
+} fr_toolchain_plugin;
+
+typedef struct {
+    const char *capability;
     const char *file_name;
     int overlay;
     int (*load)(void *state, const char *text, const char *origin, const char *base_dir,
@@ -39,9 +48,11 @@ void fr_registry_destroy(fr_registry *registry);
 int fr_registry_add_source(fr_registry *registry, const fr_source_plugin *plugin, fr_error *err);
 int fr_registry_add_language(fr_registry *registry, const fr_language_plugin *plugin, fr_error *err);
 int fr_registry_add_config(fr_registry *registry, const fr_config_plugin *plugin, fr_error *err);
+int fr_registry_add_toolchain(fr_registry *registry, const fr_toolchain_plugin *plugin, fr_error *err);
 const fr_source_plugin *fr_registry_source(const fr_registry *registry, const char *capability);
 const fr_language_plugin *fr_registry_language(const fr_registry *registry, const char *capability);
 const fr_config_plugin *fr_registry_config(const fr_registry *registry, const char *capability);
+const fr_toolchain_plugin *fr_registry_toolchain(const fr_registry *registry, const char *capability);
 size_t fr_registry_config_count(const fr_registry *registry);
 const fr_config_plugin *fr_registry_config_at(const fr_registry *registry, size_t index);
 
