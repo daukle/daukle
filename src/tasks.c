@@ -1,6 +1,8 @@
 #include "tasks.h"
 
+#include "derived.h"
 #include "error.h"
+#include "resolve.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -357,4 +359,60 @@ void fr_tasks_plan_free(fr_task_plan *plan) {
     free(plan->nodes);
     plan->nodes = NULL;
     plan->count = 0;
+}
+
+int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *err) {
+    for (size_t index = 0; index < plan->count; index++) {
+        const fr_task_node *node = plan->nodes[index];
+        if (node->plugin == NULL || node->plugin->run == NULL) continue;
+
+        char *derived_dir = NULL;
+        if (fr_derived_dir(session->manifest_dir, node->toolchain->name, &derived_dir, err) != FR_OK) {
+            return FR_ERR;
+        }
+        char *derived_root = NULL;
+        if (fr_derived_root(session->manifest_dir, &derived_root, err) != FR_OK) {
+            free(derived_dir);
+            return FR_ERR;
+        }
+        int prepared = fr_derived_ensure_root(derived_root, err);
+        free(derived_root);
+        if (prepared != FR_OK || fr_derived_ensure_dir(derived_dir, err) != FR_OK) {
+            free(derived_dir);
+            return FR_ERR;
+        }
+
+        fr_resolved *resolved = NULL;
+        size_t resolved_count = 0;
+        if (fr_resolve_toolchain(node->toolchain, &session->manifest, session->manifest_dir,
+                                 session->registry, &resolved, &resolved_count, err) != FR_OK) {
+            free(derived_dir);
+            return FR_ERR;
+        }
+
+        char version[64];
+        snprintf(version, sizeof version, "%d.%d.%d", session->manifest.self.version.major,
+                 session->manifest.self.version.minor, session->manifest.self.version.patch);
+
+        fr_task_run_context context;
+        context.name = node->name;
+        context.toolchain = node->toolchain;
+        context.project = session->manifest.self.project;
+        context.version = version;
+        context.root = FR_DERIVED_ROOT_RELATIVE;
+        context.derived_dir = derived_dir;
+        context.resolved = resolved;
+        context.resolved_count = resolved_count;
+
+        int status = node->plugin->run(node->plugin->state, &context, err);
+        fr_resolved_free(resolved, resolved_count);
+        free(derived_dir);
+        if (status != FR_OK) {
+            char original[sizeof err->message];
+            memcpy(original, err->message, sizeof original);
+            fr_error_set(err, "task \"%s\": %s", node->name, original);
+            return FR_ERR;
+        }
+    }
+    return FR_OK;
 }

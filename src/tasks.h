@@ -2,6 +2,7 @@
 #define DAUKLE_TASKS_H
 
 #include "registry.h"
+#include "sync.h"
 #include "types.h"
 
 #include <stddef.h>
@@ -53,5 +54,10 @@ typedef struct {
    never leave half a build behind. */
 int fr_tasks_plan(const fr_task_set *set, const char *goal, fr_task_plan *out, fr_error *err);
 void fr_tasks_plan_free(fr_task_plan *plan);
+
+/* Runs a plan in order, creating each task's toolchain derived directory
+   before the first task that belongs to it. A task whose run raises stops the
+   run: tasks already run stay run, and nothing is undone. */
+int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *err);
 
 #endif

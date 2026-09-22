@@ -223,6 +223,18 @@ int fr_resolve_consumer(const fr_consumer *consumer, const fr_manifest *manifest
     return FR_OK;
 }
 
+int fr_resolve_toolchain(const fr_toolchain *toolchain, const fr_manifest *manifest,
+                         const char *manifest_dir, const fr_registry *registry,
+                         fr_resolved **out, size_t *out_count, fr_error *err) {
+    fr_consumer consumer;
+    memset(&consumer, 0, sizeof consumer);
+    consumer.id = toolchain->name;
+    consumer.language = toolchain->name;
+    consumer.dependencies = toolchain->dependencies;
+    consumer.dependency_count = toolchain->dependency_count;
+    return fr_resolve_consumer(&consumer, manifest, manifest_dir, registry, out, out_count, err);
+}
+
 void fr_resolved_free(fr_resolved *items, size_t count) {
     if (items == NULL) return;
     for (size_t index = 0; index < count; index++) {

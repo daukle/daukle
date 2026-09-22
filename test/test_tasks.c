@@ -2,7 +2,9 @@
 #include "tasks.h"
 
 #include "cJSON.h"
+#include "error.h"
 #include "manifest.h"
+#include "support.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +12,29 @@
 static int never_runs(void *state, const fr_task_run_context *context, fr_error *err) {
     (void) state; (void) context; (void) err;
     return FR_ERR;
+}
+
+static int counting_run(void *state, const fr_task_run_context *context, fr_error *err) {
+    (void) err;
+    char *log = state;
+    strncat(log, context->name, 64);
+    strncat(log, ";", 2);
+    return FR_OK;
+}
+
+static int failing_run(void *state, const fr_task_run_context *context, fr_error *err) {
+    (void) state; (void) context;
+    fr_error_set(err, "the compiler said no");
+    return FR_ERR;
+}
+
+static char scratch[512];
+
+static void make_scratch(const char *label) {
+    snprintf(scratch, sizeof scratch, "build/daukle_test_tasks_run_%s_%d", label,
+             fr_test_process_id());
+    fr_test_remove_tree(scratch);
+    fr_test_make_directory(scratch);
 }
 
 static fr_manifest manifest_of(const char *json) {
@@ -304,6 +329,80 @@ TEST a_goal_nothing_declares_is_refused(void) {
     PASS();
 }
 
+TEST a_plan_runs_its_tasks_in_order(void) {
+    make_scratch("order");
+    char log[128];
+    log[0] = '\0';
+
+    fr_registry *registry = fr_registry_create();
+    const char *depends_on_one[] = { "a:one" };
+    fr_task_plugin one = { "daukle.task/a:one", NULL, NULL, 0, counting_run, log };
+    fr_task_plugin two = { "daukle.task/a:two", NULL, depends_on_one, 1, counting_run, log };
+    fr_error err;
+    fr_registry_add_task(registry, &one, &err);
+    fr_registry_add_task(registry, &two, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"a\":\">=1.0\"}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "a:two", &plan, &err));
+
+    fr_session session;
+    memset(&session, 0, sizeof session);
+    session.registry = registry;
+    session.manifest = manifest;
+    session.manifest_dir = scratch;
+
+    ASSERT_EQ(FR_OK, fr_tasks_run(&plan, &session, &err));
+    ASSERT_STR_EQ("a:one;a:two;", log);
+
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_test_remove_tree(scratch);
+    PASS();
+}
+
+TEST a_failing_task_stops_the_run_naming_itself(void) {
+    make_scratch("fail");
+
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin one = { "daukle.task/a:one", NULL, NULL, 0, failing_run, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &one, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"a\":\">=1.0\"}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "a:one", &plan, &err));
+
+    fr_session session;
+    memset(&session, 0, sizeof session);
+    session.registry = registry;
+    session.manifest = manifest;
+    session.manifest_dir = scratch;
+
+    ASSERT_EQ(FR_ERR, fr_tasks_run(&plan, &session, &err));
+    ASSERT(strstr(err.message, "task \"") != NULL);
+    ASSERT(strstr(err.message, "the compiler said no") != NULL);
+
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_test_remove_tree(scratch);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -324,5 +423,7 @@ int main(int argc, char **argv) {
     RUN_TEST(an_aggregator_pulls_in_what_joined_it);
     RUN_TEST(the_same_graph_plans_the_same_order_twice);
     RUN_TEST(a_goal_nothing_declares_is_refused);
+    RUN_TEST(a_plan_runs_its_tasks_in_order);
+    RUN_TEST(a_failing_task_stops_the_run_naming_itself);
     GREATEST_MAIN_END();
 }

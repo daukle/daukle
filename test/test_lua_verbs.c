@@ -969,6 +969,15 @@ TEST parse_refuses_an_executable_config_format(void) {
     PASS();
 }
 
+TEST exec_defaults_its_cwd_to_the_running_task_directory(void) {
+    ASSERT(fr_lua_task_cwd() == NULL);
+    fr_lua_set_task_cwd("build/daukle/cmake");
+    ASSERT_STR_EQ("build/daukle/cmake", fr_lua_task_cwd());
+    fr_lua_set_task_cwd(NULL);
+    ASSERT(fr_lua_task_cwd() == NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -1021,5 +1030,6 @@ int main(int argc, char **argv) {
     RUN_TEST(json_parse_reads_what_parse_now_refuses);
     RUN_TEST(parse_reads_toml_through_the_config_table);
     RUN_TEST(parse_refuses_an_executable_config_format);
+    RUN_TEST(exec_defaults_its_cwd_to_the_running_task_directory);
     GREATEST_MAIN_END();
 }

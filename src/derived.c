@@ -8,6 +8,7 @@
 #include "sha256.h"
 #include "strbuf.h"
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -193,6 +194,16 @@ int fr_derived_ensure_root(const char *derived_root, fr_error *err) {
         return FR_ERR;
     }
     return FR_OK;
+}
+
+int fr_derived_ensure_dir(const char *derived_dir, fr_error *err) {
+#ifdef _WIN32
+    if (_mkdir(derived_dir) == 0 || errno == EEXIST) return FR_OK;
+#else
+    if (mkdir(derived_dir, 0777) == 0 || errno == EEXIST) return FR_OK;
+#endif
+    fr_error_set(err, "could not create \"%s\"", derived_dir);
+    return FR_ERR;
 }
 
 int fr_derived_apply(const char *derived_dir, const fr_generated_file *files, size_t count,

@@ -362,6 +362,16 @@ int fr_lua_generation_is_running(void) {
     return generation_is_running;
 }
 
+static const char *task_cwd;
+
+const char *fr_lua_task_cwd(void) {
+    return task_cwd;
+}
+
+void fr_lua_set_task_cwd(const char *directory) {
+    task_cwd = directory;
+}
+
 static int lua_toolchain_generate(void *state, const fr_toolchain *toolchain, const char *project,
                                   const char *version, const char *root,
                                   const fr_resolved *resolved, size_t count,
@@ -576,10 +586,98 @@ static void copy_toolchain_prefix(const char *name, const char *colon, char *out
     out[length] = '\0';
 }
 
+typedef struct {
+    fr_lua_plugin_slot *slot;
+    const fr_task_run_context *context;
+} lua_task_context;
+
+static lua_task_context *task_context;
+
+static int protected_task_run(lua_State *state) {
+    const lua_task_context *wrapper = task_context;
+    const fr_task_run_context *context = wrapper->context;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, wrapper->slot->callback);
+
+    lua_newtable(state);
+    lua_pushstring(state, context->name);
+    lua_setfield(state, -2, "name");
+    lua_pushstring(state, context->project);
+    lua_setfield(state, -2, "project");
+    lua_pushstring(state, context->version);
+    lua_setfield(state, -2, "version");
+    lua_pushstring(state, context->root);
+    lua_setfield(state, -2, "root");
+
+    lua_newtable(state);
+    lua_pushstring(state, host_os());
+    lua_setfield(state, -2, "os");
+    lua_pushstring(state, host_arch());
+    lua_setfield(state, -2, "arch");
+    lua_setfield(state, -2, "host");
+
+    lua_newtable(state);
+    lua_pushstring(state, context->toolchain->name);
+    lua_setfield(state, -2, "name");
+    if (context->toolchain->version != NULL) {
+        lua_pushstring(state, context->toolchain->version);
+        lua_setfield(state, -2, "version");
+    }
+    lua_newtable(state);
+    const cJSON *block = context->toolchain->block;
+    if (block != NULL) {
+        const cJSON *member = block->child;
+        while (member != NULL) {
+            if (strcmp(member->string, "version") != 0 &&
+                strcmp(member->string, "dependencies") != 0) {
+                fr_error push_err;
+                if (fr_lua_push_json(state, member, &push_err) != FR_OK) {
+                    return luaL_error(state, "%s", push_err.message);
+                }
+                lua_setfield(state, -2, member->string);
+            }
+            member = member->next;
+        }
+    }
+    lua_setfield(state, -2, "config");
+    lua_newtable(state);
+    for (size_t index = 0; index < context->resolved_count; index++) {
+        lua_newtable(state);
+        lua_pushstring(state, context->resolved[index].project);
+        lua_setfield(state, -2, "project");
+        lua_pushstring(state, context->resolved[index].module);
+        lua_setfield(state, -2, "module");
+        fr_error push_err;
+        if (fr_lua_push_json(state, context->resolved[index].block, &push_err) != FR_OK) {
+            return luaL_error(state, "%s", push_err.message);
+        }
+        lua_setfield(state, -2, "block");
+        lua_rawseti(state, -2, (lua_Integer) index + 1);
+    }
+    lua_setfield(state, -2, "dependencies");
+    lua_setfield(state, -2, "toolchain");
+
+    /* lua_call, not lua_pcall: see protected_language_apply above. */
+    lua_call(state, 1, 0);
+    return 0;
+}
+
 static int lua_task_run(void *state, const fr_task_run_context *context, fr_error *err) {
-    (void) state; (void) context;
-    fr_error_set(err, "running a task is not implemented yet");
-    return FR_ERR;
+    int top = lua_gettop(runtime_state);
+    lua_task_context wrapper = { state, context };
+    task_context = &wrapper;
+    fr_lua_set_task_cwd(context->derived_dir);
+    lua_pushcfunction(runtime_state, protected_task_run);
+    int status = lua_pcall(runtime_state, 0, 0, 0);
+    fr_lua_set_task_cwd(NULL);
+    task_context = NULL;
+
+    if (status != LUA_OK) {
+        fr_error_set(err, "%s", fr_lua_error_text(runtime_state));
+        lua_settop(runtime_state, top);
+        return FR_ERR;
+    }
+    lua_settop(runtime_state, top);
+    return FR_OK;
 }
 
 /* Reads table[index]'s field `key` without honoring a metatable, leaving the
