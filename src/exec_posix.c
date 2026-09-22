@@ -103,7 +103,7 @@ int fr_exec_run(const fr_exec_request *request, fr_exec_result *out, fr_error *e
     }
 
     int code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
-    if (code == 127 && request->capture == 0) {
+    if (code == 127) {
         /* execv failed in the child, which cannot report through errno across
            the fork, so 127 is the only signal available. */
         fr_exec_result_free(out);

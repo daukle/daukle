@@ -85,6 +85,7 @@ TEST every_argument_arrives_byte_identical(void) {
                            "a b", "a\"b", "C:\\path with space\\", "", "plain" };
     fr_exec_result result; fr_error err;
     ASSERT_EQ(FR_OK, run(argv, 7, 1, &result, &err));
+    ASSERT(result.stdout_text != NULL);
     ASSERT(strstr(result.stdout_text, "[a b]\n") != NULL);
     ASSERT(strstr(result.stdout_text, "[a\"b]\n") != NULL);
     ASSERT(strstr(result.stdout_text, "[C:\\path with space\\]\n") != NULL);
