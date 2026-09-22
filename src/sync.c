@@ -157,6 +157,7 @@ int fr_session_open(const char *manifest_path, int use_cache, fr_session *out, f
         fr_session_close(out);
         return FR_ERR;
     }
+    out->loaded = 1;
 
     out->manifest_dir = manifest_directory(manifest_path);
     out->manifest_path = fr_dup_string(manifest_path);
@@ -164,6 +165,7 @@ int fr_session_open(const char *manifest_path, int use_cache, fr_session *out, f
         fr_error_set(err, "out of memory deriving the manifest directory");
         fr_manifest_free(&out->manifest);
         memset(&out->manifest, 0, sizeof out->manifest);
+        out->loaded = 0;
         fr_session_close(out);
         return FR_ERR;
     }
@@ -172,12 +174,12 @@ int fr_session_open(const char *manifest_path, int use_cache, fr_session *out, f
 
 void fr_session_close(fr_session *session) {
     if (session == NULL) return;
-    if (session->manifest_path != NULL) fr_manifest_free(&session->manifest);
     fr_registry_destroy(session->registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     free(session->manifest_dir);
     free(session->manifest_path);
+    if (session->loaded) fr_manifest_free(&session->manifest);
     memset(session, 0, sizeof *session);
 }
 

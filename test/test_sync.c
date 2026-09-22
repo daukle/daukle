@@ -190,8 +190,7 @@ TEST a_session_survives_a_sync_and_closes_clean(void) {
 
     fr_sync_report report;
     ASSERT_EQ(FR_OK, fr_sync_session(&session, 0, &report, &err));
-    /* the runtime is still open here: a second pass over the same session
-       must work, which is exactly what a task run needs after a sync. */
+    /* the runtime is still open here, which is exactly what a task run needs after a sync. */
     fr_sync_report_free(&report);
     ASSERT_EQ(FR_OK, fr_sync_session(&session, 0, &report, &err));
     fr_sync_report_free(&report);

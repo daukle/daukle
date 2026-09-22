@@ -19,6 +19,9 @@ typedef struct {
     fr_manifest manifest;
     char *manifest_dir;
     char *manifest_path;
+    /* Records that fr_config_load_file populated `manifest`; fr_session_close
+       frees the manifest on this, not on a pointer that only correlates with it. */
+    int loaded;
 } fr_session;
 
 int fr_build_registry(fr_registry **out, fr_error *err);
