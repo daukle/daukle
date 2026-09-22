@@ -135,6 +135,21 @@ TEST a_malformed_task_name_is_refused(void) {
     PASS();
 }
 
+TEST a_task_capability_must_carry_the_task_prefix(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin plugin = { "daukle.other/x", NULL, NULL, 0, NULL, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &plugin, &err);
+
+    fr_manifest manifest = manifest_of("{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_ERR, fr_tasks_collect(registry, &manifest, &set, &err));
+    ASSERT(strstr(err.message, "is not a task capability") != NULL);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -146,5 +161,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_manifest_may_not_claim_a_toolchain_prefix);
     RUN_TEST(a_manifest_block_adds_edges_to_a_declared_task);
     RUN_TEST(a_malformed_task_name_is_refused);
+    RUN_TEST(a_task_capability_must_carry_the_task_prefix);
     GREATEST_MAIN_END();
 }

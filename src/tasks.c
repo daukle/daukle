@@ -111,6 +111,13 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
 
     for (size_t index = 0; index < fr_registry_task_count(registry); index++) {
         const fr_task_plugin *plugin = fr_registry_task_at(registry, index);
+        if (strncmp(plugin->capability, FR_TASK_CAPABILITY_PREFIX,
+                    strlen(FR_TASK_CAPABILITY_PREFIX)) != 0) {
+            fr_error_set(err, "\"%s\" is not a task capability: it does not start with \"%s\"",
+                        plugin->capability, FR_TASK_CAPABILITY_PREFIX);
+            fr_tasks_set_free(out);
+            return FR_ERR;
+        }
         const char *name = plugin->capability + strlen(FR_TASK_CAPABILITY_PREFIX);
         if (check_name(name, err) != FR_OK) {
             fr_tasks_set_free(out);
