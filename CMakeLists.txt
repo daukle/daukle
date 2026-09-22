@@ -75,7 +75,11 @@ foreach(test_file ${DAUKLE_TESTS})
     target_link_libraries(${test_name} PRIVATE daukle_core daukle_test_support)
     target_compile_options(${test_name} PRIVATE ${DAUKLE_TEST_WARNING_FLAGS})
     add_test(NAME ${test_name} COMMAND ${test_name})
-    set_tests_properties(${test_name} PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    # ctest's own default is 1500s, long enough that a reintroduced sequential
+    # drain would look like a hung run rather than the deadlock its test catches.
+    set_tests_properties(${test_name} PROPERTIES
+                         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                         TIMEOUT 120)
 endforeach()
 
 add_test(NAME agnostic_core COMMAND ${CMAKE_COMMAND}
