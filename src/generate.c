@@ -79,10 +79,25 @@ static int adopt_derived_paths(fr_sync_report *report, const fr_derived_report *
     return FR_OK;
 }
 
+static int refuse_if_declared_in_both_modes(const fr_toolchain *toolchain, const fr_manifest *manifest,
+                                            fr_error *err) {
+    for (size_t index = 0; index < manifest->consumer_count; index++) {
+        if (strcmp(manifest->consumers[index].language, toolchain->name) == 0) {
+            fr_error_set(err, "\"%s\" is declared as a toolchain and as a consumer's language; "
+                              "a tool is in managed mode or in adopted mode, never both",
+                        toolchain->name);
+            return FR_ERR;
+        }
+    }
+    return FR_OK;
+}
+
 static int generate_toolchain(const fr_toolchain *toolchain, const fr_manifest *manifest,
                               const char *manifest_path, const char *manifest_dir,
                               const fr_registry *registry, int write, const char *canonical_root,
                               fr_sync_report *report, fr_error *err) {
+    if (refuse_if_declared_in_both_modes(toolchain, manifest, err) != FR_OK) return FR_ERR;
+
     char capability[256];
     snprintf(capability, sizeof capability, "daukle.toolchain/%s", toolchain->name);
     const fr_toolchain_plugin *plugin = fr_registry_toolchain(registry, capability);

@@ -176,6 +176,25 @@ TEST a_generated_file_naming_the_project_root_is_refused(void) {
     PASS();
 }
 
+TEST a_toolchain_no_plugin_provides_is_refused_naming_it(void) {
+    char message[512];
+    int refused = generate_fails_with("test/fixtures/toolchain-unprovided/daukle.toml",
+                                      message, sizeof message);
+    ASSERT(refused);
+    ASSERT(strstr(message, "no plugin provides toolchain") != NULL);
+    ASSERT(strstr(message, "add it to [plugins]") != NULL);
+    PASS();
+}
+
+TEST one_name_in_both_modes_is_refused_naming_both(void) {
+    char message[512];
+    int refused = generate_fails_with("test/fixtures/both-modes/daukle.toml",
+                                      message, sizeof message);
+    ASSERT(refused);
+    ASSERT(strstr(message, "is declared as a toolchain and as a consumer's language") != NULL);
+    PASS();
+}
+
 TEST an_empty_generate_table_creates_no_directory(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest; fr_error err;
@@ -217,6 +236,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_generated_number_value_is_refused_naming_the_key);
     RUN_TEST(a_generated_file_over_the_size_limit_is_refused_naming_the_key);
     RUN_TEST(a_generated_file_naming_the_project_root_is_refused);
+    RUN_TEST(a_toolchain_no_plugin_provides_is_refused_naming_it);
+    RUN_TEST(one_name_in_both_modes_is_refused_naming_both);
     RUN_TEST(an_empty_generate_table_creates_no_directory);
     GREATEST_MAIN_END();
 }
