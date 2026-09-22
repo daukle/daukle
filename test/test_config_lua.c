@@ -769,6 +769,26 @@ TEST a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain(void) {
     PASS();
 }
 
+/* setmetatable is a reachable base global, so a plugin can pass daukle.task a
+   table whose __index raises on any miss. The declaration table here has no
+   raw "name" at all, so the field lookup must not dispatch through __index:
+   if it did, the load would fail with "boom" from the metamethod instead of
+   the ordinary "a task needs a name" refusal, and the raise would land after
+   an allocation with nothing yet freeing it. */
+TEST a_hostile_index_metatable_on_the_task_table_is_never_consulted(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *chunk =
+        "daukle.task(setmetatable({}, { __index = function() error('boom') end }))\n";
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, "hostile.lua", NULL, 0, &err));
+    ASSERT(strstr(err.message, "a task needs a name") != NULL);
+    ASSERT(strstr(err.message, "boom") == NULL);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -808,5 +828,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare);
     RUN_TEST(an_aggregator_needs_no_run);
     RUN_TEST(a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain);
+    RUN_TEST(a_hostile_index_metatable_on_the_task_table_is_never_consulted);
     GREATEST_MAIN_END();
 }

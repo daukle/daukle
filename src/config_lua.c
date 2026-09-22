@@ -582,10 +582,32 @@ static int lua_task_run(void *state, const fr_task_run_context *context, fr_erro
     return FR_ERR;
 }
 
+/* Reads table[index]'s field `key` without honoring a metatable, leaving the
+   value on the stack exactly as lua_getfield would. setmetatable is a
+   reachable base global in this sandbox, so a plugin's declaration table
+   could carry an __index that raises on an ordinary miss, and every field
+   lua_declare_task reads here is either optional (so a miss is the normal
+   case, not an adversarial one) or, for "name", read the same way so the
+   function has one rule with no exception to reintroduce later. The
+   depends_on walk applies the same reasoning to its own table: lua_rawlen
+   in place of luaL_len, because a raw length can report a hole
+   (lua_rawlen({1, nil, 3}) is 3) and a __len metamethod can itself raise;
+   lua_rawgeti in place of lua_geti, so reading that hole cannot dispatch to
+   an __index either. Every remaining raise point in lua_declare_task is
+   therefore one the function controls by name, not one a plugin-supplied
+   metatable can reach. */
+static void raw_getfield(lua_State *state, int index, const char *key) {
+    lua_pushstring(state, key);
+    lua_rawget(state, index);
+}
+
 /* Frees everything a task slot owns and zeroes it. This is needed only for a
    raise that happens before plugin_slot_count is incremented: the shutdown
    loop walks slots by that count, so a slot not yet counted has no other way
-   to be released. */
+   to be released. Every check in lua_declare_task between slot->capability's
+   allocation and that increment stands in for what would otherwise be a
+   luaL_check* call, specifically so it can call this before raising instead
+   of raising out from under an unfreed slot. */
 static void release_task_slot(fr_lua_plugin_slot *slot) {
     free(slot->capability);
     free(slot->part_of);
@@ -597,7 +619,7 @@ static void release_task_slot(fr_lua_plugin_slot *slot) {
 static int lua_declare_task(lua_State *state) {
     luaL_checktype(state, 1, LUA_TTABLE);
 
-    lua_getfield(state, 1, "name");
+    raw_getfield(state, 1, "name");
     const char *name = lua_tostring(state, -1);
     if (name == NULL) return luaL_error(state, "a task needs a name");
 
@@ -628,10 +650,7 @@ static int lua_declare_task(lua_State *state) {
     slot->capability = fr_dup_string(capability);
     if (slot->capability == NULL) return luaL_error(state, "out of memory");
 
-    /* Every check below stands in for a luaL_check* call, so that a rejection
-       can free the slot's allocations before it raises: plugin_slot_count has
-       not been incremented yet at any of these points (see release_task_slot). */
-    lua_getfield(state, 1, "partOf");
+    raw_getfield(state, 1, "partOf");
     if (!lua_isnil(state, -1)) {
         if (!lua_isstring(state, -1)) {
             release_task_slot(slot);
@@ -645,18 +664,12 @@ static int lua_declare_task(lua_State *state) {
     }
     lua_pop(state, 1);
 
-    lua_getfield(state, 1, "dependsOn");
+    raw_getfield(state, 1, "dependsOn");
     if (!lua_isnil(state, -1)) {
         if (!lua_istable(state, -1)) {
             release_task_slot(slot);
             return luaL_error(state, "\"%s\" needs dependsOn to be a table", capability);
         }
-        /* lua_rawlen, not luaL_len: a table's __len metamethod can raise (a
-           non-integer result). Paired below with lua_rawgeti, not lua_geti:
-           a raw length can report a hole (lua_rawlen({1, nil, 3}) is 3), and
-           reading a missing key with lua_geti would dispatch to __index,
-           which can also raise. Both reads staying raw means every raise
-           point in this loop is one release_task_slot runs ahead of. */
         lua_Integer length = (lua_Integer) lua_rawlen(state, -1);
         if (length > 0) {
             slot->depends_on = calloc((size_t) length, sizeof *slot->depends_on);
@@ -682,7 +695,7 @@ static int lua_declare_task(lua_State *state) {
     }
     lua_pop(state, 1);
 
-    lua_getfield(state, 1, "run");
+    raw_getfield(state, 1, "run");
     if (!lua_isnil(state, -1)) {
         if (!lua_isfunction(state, -1)) {
             release_task_slot(slot);
