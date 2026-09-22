@@ -37,11 +37,20 @@ fr_registry *fr_lua_registering_registry(void);
 /* True while a plugin chunk is running, which is exactly when daukle.exec must
    refuse: the checks in daukle.language and daukle.source fire only once a
    plugin declares its kind, and a plugin that execs at the top of its chunk has
-   already run the program by then. No plugin kind that may exec exists yet, so
-   the whole of a plugin chunk is refused; when toolchain plugins land this
-   narrows to the kinds that may not, and the declaration-time checks stay as
-   the place spec section 4.4's message is raised. */
+   already run the program by then. This refusal covers the whole chunk, for
+   every kind, and stays that way rather than narrowing to the kinds that may
+   not exec: that is a fail-open hole found and closed once already, and
+   narrowing it would reopen it for whichever kind was judged safe. Generation
+   opens a second, unrelated window where exec is refused: a toolchain's
+   generate callback must be a pure function of the manifest, so that
+   `daukle check` never starts a process; see fr_lua_generation_is_running. */
 int fr_lua_plugin_exec_is_refused(void);
+
+/* True only while a toolchain's generate callback is running inside
+   lua_pcall, so daukle.exec and daukle.tool can refuse there: generation
+   must stay a pure function of the manifest, or `daukle check` would run
+   the user's compiler. */
+int fr_lua_generation_is_running(void);
 
 /* Sets language, source, toolchain and plugin on the table on top of the
    stack, for lua_verbs.c to build a plugin environment around; the underlying

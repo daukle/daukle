@@ -350,6 +350,12 @@ static int protected_toolchain_generate(lua_State *state) {
     return 0;
 }
 
+static int generation_is_running;
+
+int fr_lua_generation_is_running(void) {
+    return generation_is_running;
+}
+
 static int lua_toolchain_generate(void *state, const fr_toolchain *toolchain, const char *project,
                                   const char *version, const char *root,
                                   const fr_resolved *resolved, size_t count,
@@ -359,7 +365,9 @@ static int lua_toolchain_generate(void *state, const fr_toolchain *toolchain, co
                                      resolved, count, out_files, out_count };
     generate_context = &context;
     lua_pushcfunction(runtime_state, protected_toolchain_generate);
+    generation_is_running = 1;
     int status = lua_pcall(runtime_state, 0, 0, 0);
+    generation_is_running = 0;
     generate_context = NULL;
 
     if (status != LUA_OK) {
