@@ -208,6 +208,9 @@ typedef struct {
     size_t depth;
 } plan_walk;
 
+/* check_every_edge refuses every dangling edge before the walk begins, which
+   makes the NULL branch below unreachable today; it stays so a later refactor
+   reaching this function by another route meets a refusal, not a NULL deref. */
 static int edge_target(const plan_walk *walk, const fr_task_node *node, const char *name,
                        const char *relation, const fr_task_node **out, fr_error *err) {
     const fr_task_node *found = fr_tasks_find(walk->set, name);
@@ -226,6 +229,19 @@ static int visit_dependency(plan_walk *walk, const fr_task_node *node, const cha
     const fr_task_node *target = NULL;
     if (edge_target(walk, node, name, relation, &target, err) != FR_OK) return FR_ERR;
     return visit(walk, target, err);
+}
+
+/* Anything that declared itself part of this task is a dependency of it. This
+   is the reverse edge of spec section 4, joined here rather than stored, so
+   that no plugin ever writes into another's declaration. */
+static int visit_joiners(plan_walk *walk, const fr_task_node *node, fr_error *err) {
+    for (size_t index = 0; index < walk->set->count; index++) {
+        const fr_task_node *other = &walk->set->nodes[index];
+        int joins = (other->part_of != NULL && strcmp(other->part_of, node->name) == 0)
+                    || (other->extra_part_of != NULL && strcmp(other->extra_part_of, node->name) == 0);
+        if (joins && visit(walk, other, err) != FR_OK) return FR_ERR;
+    }
+    return FR_OK;
 }
 
 static int report_cycle(plan_walk *walk, const fr_task_node *node, fr_error *err) {
@@ -257,15 +273,7 @@ static int visit(plan_walk *walk, const fr_task_node *node, fr_error *err) {
     for (size_t index = 0; index < node->extra_depends_on_count; index++) {
         if (visit_dependency(walk, node, node->extra_depends_on[index], "depends on", err) != FR_OK) return FR_ERR;
     }
-    /* Anything that declared itself part of this task is a dependency of it.
-       This is the reverse edge of spec section 4, joined here rather than
-       stored, so that no plugin ever writes into another's declaration. */
-    for (size_t index = 0; index < walk->set->count; index++) {
-        const fr_task_node *other = &walk->set->nodes[index];
-        int joins = (other->part_of != NULL && strcmp(other->part_of, node->name) == 0)
-                    || (other->extra_part_of != NULL && strcmp(other->extra_part_of, node->name) == 0);
-        if (joins && visit(walk, other, err) != FR_OK) return FR_ERR;
-    }
+    if (visit_joiners(walk, node, err) != FR_OK) return FR_ERR;
 
     walk->depth--;
     walk->state[position] = 2;

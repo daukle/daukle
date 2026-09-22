@@ -191,6 +191,23 @@ TEST a_cycle_names_its_members(void) {
     PASS();
 }
 
+TEST a_cycle_through_part_of_is_refused(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},\"tasks\":{"
+        "\"a\":{\"partOf\":\"b\"},\"b\":{\"partOf\":\"a\"}}}");
+    fr_task_set set; fr_error err;
+    fr_tasks_collect(registry, &manifest, &set, &err);
+
+    fr_task_plan plan;
+    ASSERT_EQ(FR_ERR, fr_tasks_plan(&set, "a", &plan, &err));
+    ASSERT(strstr(err.message, "depend on each other in a cycle") != NULL);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 TEST a_part_of_naming_nothing_is_refused(void) {
     fr_registry *registry = fr_registry_create();
     fr_manifest manifest = manifest_of(
@@ -301,6 +318,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_task_capability_must_carry_the_task_prefix);
     RUN_TEST(a_diamond_runs_its_shared_dependency_once);
     RUN_TEST(a_cycle_names_its_members);
+    RUN_TEST(a_cycle_through_part_of_is_refused);
     RUN_TEST(a_part_of_naming_nothing_is_refused);
     RUN_TEST(a_depends_on_naming_nothing_is_refused);
     RUN_TEST(an_aggregator_pulls_in_what_joined_it);
