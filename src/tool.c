@@ -10,6 +10,7 @@
 #define PATH_SEPARATOR ';'
 static const char *const EXTENSIONS[] = { ".exe", ".com", ".bat", ".cmd", "" };
 #else
+#include <sys/stat.h>
 #include <unistd.h>
 #define PATH_SEPARATOR ':'
 static const char *const EXTENSIONS[] = { "" };
@@ -22,8 +23,10 @@ static int is_executable_file(const char *path) {
     fclose(probe);
     return 1;
 #else
-    /* fopen succeeds on a directory here, and ignores the execute bit. */
-    return access(path, X_OK) == 0;
+    /* A permission check alone cannot tell a program from a directory: most
+       directories pass X_OK too, since it tests search permission there. */
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode) && access(path, X_OK) == 0;
 #endif
 }
 
