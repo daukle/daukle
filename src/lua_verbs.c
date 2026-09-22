@@ -298,8 +298,21 @@ void fr_lua_verbs_set_verbose(int enabled) {
     g_verbose = enabled;
 }
 
+/* A tool is named, not pathed: fr_lua_sandbox_climbs_out catches a leading
+   separator, a drive letter and ".." anywhere, the same rule a relative
+   include path is held to, and the interior-separator check on top of it is
+   this verb's own, since an include path may legitimately nest into a
+   subdirectory and a tool name never may. */
+static int tool_name_is_valid(const char *name) {
+    if (fr_lua_sandbox_climbs_out(name)) return 0;
+    return strpbrk(name, "/\\") == NULL;
+}
+
 static int verb_tool(lua_State *state) {
     const char *name = luaL_checkstring(state, 1);
+    if (!tool_name_is_valid(name)) {
+        return luaL_error(state, "\"%s\" is not a tool name: a tool is named, not pathed", name);
+    }
 
     char *path = NULL;
     fr_error err;
@@ -338,12 +351,30 @@ static int verb_exec(lua_State *state) {
     fr_lua_tool *handle = lua_touserdata(state, 1);
     luaL_checktype(state, 2, LUA_TTABLE);
 
+    int capture = option_flag(state, 3, "capture", 0);
+    int check = option_flag(state, 3, "check", 1);
+
+    /* Left unpopped below: a numeric cwd's Lua-converted string needs the same anchor argv does. */
+    int anchor_base = lua_gettop(state);
+    const char *cwd = NULL;
+    if (lua_type(state, 3) == LUA_TTABLE) {
+        lua_getfield(state, 3, "cwd");
+        if (!lua_isnil(state, -1)) {
+            if (lua_type(state, -1) != LUA_TSTRING) {
+                return luaL_error(state, "daukle.exec option \"cwd\" must be a string");
+            }
+            cwd = lua_tostring(state, -1);
+        }
+    }
+
     lua_Integer count = luaL_len(state, 2);
     if (count < 0 || count > FR_VERB_MAX_ARGV) {
         return luaL_error(state, "daukle.exec takes at most %d arguments", FR_VERB_MAX_ARGV);
     }
+    if (!lua_checkstack(state, (int) count + 4)) {
+        return luaL_error(state, "cannot grow the lua stack for %d arguments", (int) count);
+    }
 
-    int argv_base = lua_gettop(state);
     const char *argv[FR_VERB_MAX_ARGV];
     for (lua_Integer index = 1; index <= count; index++) {
         lua_geti(state, 2, index);
@@ -351,20 +382,8 @@ static int verb_exec(lua_State *state) {
             return luaL_error(state, "daukle.exec argument %d is not a string",
                               (int) index);
         }
-        /* Every value stays on the stack until fr_exec_run has read it: taking
-           the char * and popping here would let Lua collect the string while
-           argv still points at it. */
+        /* Left on the stack; argv[] points into these until fr_exec_run returns. */
         argv[index - 1] = lua_tostring(state, -1);
-    }
-
-    int capture = option_flag(state, 3, "capture", 0);
-    int check = option_flag(state, 3, "check", 1);
-
-    const char *cwd = NULL;
-    if (lua_type(state, 3) == LUA_TTABLE) {
-        lua_getfield(state, 3, "cwd");
-        if (!lua_isnil(state, -1)) cwd = luaL_checkstring(state, -1);
-        lua_pop(state, 1);
     }
 
     if (g_verbose) report_verbose_exec(handle, argv, count, cwd);
@@ -379,7 +398,7 @@ static int verb_exec(lua_State *state) {
     fr_exec_result result;
     fr_error err;
     int status = fr_exec_run(&request, &result, &err);
-    lua_settop(state, argv_base);
+    lua_settop(state, anchor_base);
     if (status != FR_OK) {
         return luaL_error(state, "%s", err.message);
     }
@@ -394,10 +413,17 @@ static int verb_exec(lua_State *state) {
     lua_pushinteger(state, result.code);
     lua_setfield(state, -2, "code");
     if (capture) {
+        /* Freed right after its own push, not batched, so a later raise cannot strand this one. */
         lua_pushstring(state, result.stdout_text != NULL ? result.stdout_text : "");
+        free(result.stdout_text);
+        result.stdout_text = NULL;
         lua_setfield(state, -2, "stdout");
+
         lua_pushstring(state, result.stderr_text != NULL ? result.stderr_text : "");
+        free(result.stderr_text);
+        result.stderr_text = NULL;
         lua_setfield(state, -2, "stderr");
+
         if (result.truncated) {
             lua_pushboolean(state, 1);
             lua_setfield(state, -2, "truncated");

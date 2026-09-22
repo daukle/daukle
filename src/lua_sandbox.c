@@ -41,9 +41,7 @@ static int removed_name(lua_State *state) {
     return 1;
 }
 
-/* Rejects any path containing "..", which also rejects a legitimate file named
-   "a..b.lua". A simple, auditable rule beats a clever normalisation here. */
-static int climbs_out(const char *relative_path) {
+int fr_lua_sandbox_climbs_out(const char *relative_path) {
     if (relative_path[0] == '/' || relative_path[0] == '\\') return 1;
     if (relative_path[0] != '\0' && relative_path[1] == ':') return 1;
     for (const char *cursor = relative_path; *cursor != '\0'; cursor++) {
@@ -131,7 +129,7 @@ static int within_base_dir(const char *canonical_base, const char *canonical_tar
 }
 
 int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_path, fr_error *err) {
-    if (climbs_out(relative)) {
+    if (fr_lua_sandbox_climbs_out(relative)) {
         fr_error_set(err, "\"%s\" is outside the project directory", relative);
         return FR_ERR;
     }

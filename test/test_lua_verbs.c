@@ -221,6 +221,102 @@ TEST tool_names_what_it_could_not_find(void) {
     PASS();
 }
 
+TEST tool_refuses_a_name_that_climbs_out(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.tool('../thing')", "=t", env, &err));
+    ASSERT(strstr(err.message, "named, not pathed") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST tool_refuses_an_absolute_looking_name(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.tool('/etc/passwd')", "=t", env, &err));
+    ASSERT(strstr(err.message, "named, not pathed") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST tool_refuses_a_name_with_an_interior_separator(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.tool('sub/tool')", "=t", env, &err));
+    ASSERT(strstr(err.message, "named, not pathed") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* Regression for the missing lua_checkstack this file's own json_set_array
+   already knew to call: an argv past LUA_MINSTACK (20) must not silently
+   overrun the Lua stack, so this pushes comfortably past it and checks the
+   whole vector, not just the exit code, arrived intact. */
+TEST exec_accepts_an_argv_well_past_the_guaranteed_lua_stack(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "local t = daukle.tool('test_lua_verbs')\n"
+        "local argv = { '--exec-child', '0' }\n"
+        "for i = 1, 254 do argv[#argv + 1] = 'a' .. i end\n"
+        "result = daukle.exec(t, argv, { capture = true })",
+        "=t", env, &err));
+
+    lua_getfield(state, env, "result");
+    lua_getfield(state, -1, "code");
+    ASSERT_EQ(0, (int) lua_tointeger(state, -1));
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "stdout");
+    const char *stdout_text = lua_tostring(state, -1);
+    ASSERT(strstr(stdout_text, "[a1]") != NULL);
+    ASSERT(strstr(stdout_text, "[a254]") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 TEST env_reads_a_variable_and_nil_for_an_absent_one(void) {
     fr_error err;
     fr_test_set_env("DAUKLE_TEST_VERB", "present");
@@ -727,6 +823,10 @@ int main(int argc, char **argv) {
     RUN_TEST(exec_returns_the_code_when_check_is_false);
     RUN_TEST(exec_refuses_anything_that_is_not_a_tool_handle);
     RUN_TEST(tool_names_what_it_could_not_find);
+    RUN_TEST(tool_refuses_a_name_that_climbs_out);
+    RUN_TEST(tool_refuses_an_absolute_looking_name);
+    RUN_TEST(tool_refuses_a_name_with_an_interior_separator);
+    RUN_TEST(exec_accepts_an_argv_well_past_the_guaranteed_lua_stack);
     RUN_TEST(env_reads_a_variable_and_nil_for_an_absent_one);
     RUN_TEST(read_refuses_a_path_outside_the_base_directory);
     RUN_TEST(read_returns_the_text_of_a_file_inside_the_base_directory);
