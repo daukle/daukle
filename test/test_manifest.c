@@ -186,6 +186,35 @@ TEST a_toolchain_written_as_a_string_is_a_version_constraint(void) {
     PASS();
 }
 
+TEST a_toolchain_entry_that_is_neither_a_table_nor_a_string_is_rejected(void) {
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_ERR, read_fixture("test/fixtures/toolchain-bad-entry/daukle.toml", &manifest, &err));
+    ASSERT(strstr(err.message, "must be a table or a version string") != NULL);
+    PASS();
+}
+
+TEST a_toolchain_version_that_is_not_a_string_is_rejected(void) {
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_ERR, read_fixture("test/fixtures/toolchain-bad-version/daukle.toml", &manifest, &err));
+    ASSERT(strstr(err.message, ".version must be a string") != NULL);
+    PASS();
+}
+
+TEST a_toolchain_dependencies_that_is_not_a_table_is_rejected(void) {
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_ERR, read_fixture("test/fixtures/toolchain-bad-dependencies/daukle.toml",
+                                   &manifest, &err));
+    ASSERT(strstr(err.message, ".dependencies must be a table") != NULL);
+    PASS();
+}
+
+TEST a_toolchains_table_that_is_not_a_table_is_rejected(void) {
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_ERR, read_fixture("test/fixtures/toolchain-not-a-table/daukle.toml", &manifest, &err));
+    ASSERT(strstr(err.message, ".toolchains must be a table") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -202,5 +231,9 @@ int main(int argc, char **argv) {
     RUN_TEST(reports_the_origin_of_a_bad_document);
     RUN_TEST(a_toolchain_block_is_read_with_its_own_keys);
     RUN_TEST(a_toolchain_written_as_a_string_is_a_version_constraint);
+    RUN_TEST(a_toolchain_entry_that_is_neither_a_table_nor_a_string_is_rejected);
+    RUN_TEST(a_toolchain_version_that_is_not_a_string_is_rejected);
+    RUN_TEST(a_toolchain_dependencies_that_is_not_a_table_is_rejected);
+    RUN_TEST(a_toolchains_table_that_is_not_a_table_is_rejected);
     GREATEST_MAIN_END();
 }
