@@ -409,27 +409,35 @@ static int verb_exec(lua_State *state) {
         return luaL_error(state, "%s exited with code %d", handle->name, code);
     }
 
+    /* Both buffers are pushed and freed before lua_newtable runs, so its own OOM raise cannot strand either. */
+    int stdout_index = 0;
+    int stderr_index = 0;
+    if (capture) {
+        lua_pushstring(state, result.stdout_text != NULL ? result.stdout_text : "");
+        stdout_index = lua_gettop(state);
+        free(result.stdout_text);
+        result.stdout_text = NULL;
+
+        lua_pushstring(state, result.stderr_text != NULL ? result.stderr_text : "");
+        stderr_index = lua_gettop(state);
+        free(result.stderr_text);
+        result.stderr_text = NULL;
+    }
+    fr_exec_result_free(&result);
+
     lua_newtable(state);
     lua_pushinteger(state, result.code);
     lua_setfield(state, -2, "code");
     if (capture) {
-        /* Freed right after its own push, not batched, so a later raise cannot strand this one. */
-        lua_pushstring(state, result.stdout_text != NULL ? result.stdout_text : "");
-        free(result.stdout_text);
-        result.stdout_text = NULL;
+        lua_pushvalue(state, stdout_index);
         lua_setfield(state, -2, "stdout");
-
-        lua_pushstring(state, result.stderr_text != NULL ? result.stderr_text : "");
-        free(result.stderr_text);
-        result.stderr_text = NULL;
+        lua_pushvalue(state, stderr_index);
         lua_setfield(state, -2, "stderr");
-
         if (result.truncated) {
             lua_pushboolean(state, 1);
             lua_setfield(state, -2, "truncated");
         }
     }
-    fr_exec_result_free(&result);
     return 1;
 }
 

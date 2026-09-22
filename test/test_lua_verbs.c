@@ -281,6 +281,50 @@ TEST tool_refuses_a_name_with_an_interior_separator(void) {
     PASS();
 }
 
+/* Contains no '/' or '\\' at all, so only the reused fr_lua_sandbox_climbs_out
+   rule can catch this; strpbrk alone would wave it through. */
+TEST tool_refuses_a_bare_climb(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.tool('..')", "=t", env, &err));
+    ASSERT(strstr(err.message, "named, not pathed") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* Also separator-free: only fr_lua_sandbox_climbs_out's drive-letter clause
+   catches this one, pinning that clause as load bearing for daukle.tool too. */
+TEST tool_refuses_a_drive_letter_prefix(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.tool('c:cmd')", "=t", env, &err));
+    ASSERT(strstr(err.message, "named, not pathed") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 /* Regression for the missing lua_checkstack this file's own json_set_array
    already knew to call: an argv past LUA_MINSTACK (20) must not silently
    overrun the Lua stack, so this pushes comfortably past it and checks the
@@ -826,6 +870,8 @@ int main(int argc, char **argv) {
     RUN_TEST(tool_refuses_a_name_that_climbs_out);
     RUN_TEST(tool_refuses_an_absolute_looking_name);
     RUN_TEST(tool_refuses_a_name_with_an_interior_separator);
+    RUN_TEST(tool_refuses_a_bare_climb);
+    RUN_TEST(tool_refuses_a_drive_letter_prefix);
     RUN_TEST(exec_accepts_an_argv_well_past_the_guaranteed_lua_stack);
     RUN_TEST(env_reads_a_variable_and_nil_for_an_absent_one);
     RUN_TEST(read_refuses_a_path_outside_the_base_directory);
