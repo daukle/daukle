@@ -652,8 +652,11 @@ static int lua_declare_task(lua_State *state) {
             return luaL_error(state, "\"%s\" needs dependsOn to be a table", capability);
         }
         /* lua_rawlen, not luaL_len: a table's __len metamethod can raise (a
-           non-integer result), and dependsOn needs a plain array length that
-           cannot raise, so the slot stays freeable up to this point. */
+           non-integer result). Paired below with lua_rawgeti, not lua_geti:
+           a raw length can report a hole (lua_rawlen({1, nil, 3}) is 3), and
+           reading a missing key with lua_geti would dispatch to __index,
+           which can also raise. Both reads staying raw means every raise
+           point in this loop is one release_task_slot runs ahead of. */
         lua_Integer length = (lua_Integer) lua_rawlen(state, -1);
         if (length > 0) {
             slot->depends_on = calloc((size_t) length, sizeof *slot->depends_on);
@@ -663,7 +666,7 @@ static int lua_declare_task(lua_State *state) {
             }
         }
         for (lua_Integer index = 1; index <= length; index++) {
-            lua_geti(state, -1, index);
+            lua_rawgeti(state, -1, index);
             if (!lua_isstring(state, -1)) {
                 release_task_slot(slot);
                 return luaL_error(state, "\"%s\" needs dependsOn to contain only strings", capability);
