@@ -16,6 +16,8 @@ struct fr_registry {
     size_t config_count;
     fr_toolchain_plugin toolchains[FR_REGISTRY_CAPACITY];
     size_t toolchain_count;
+    fr_task_plugin tasks[FR_REGISTRY_CAPACITY];
+    size_t task_count;
 };
 
 fr_registry *fr_registry_create(void) {
@@ -121,4 +123,35 @@ const fr_toolchain_plugin *fr_registry_toolchain(const fr_registry *registry, co
         if (strcmp(registry->toolchains[index].capability, capability) == 0) return &registry->toolchains[index];
     }
     return NULL;
+}
+
+int fr_registry_add_task(fr_registry *registry, const fr_task_plugin *plugin, fr_error *err) {
+    for (size_t index = 0; index < registry->task_count; index++) {
+        if (strcmp(registry->tasks[index].capability, plugin->capability) == 0) {
+            fr_error_set(err, "capability \"%s\" is already registered", plugin->capability);
+            return FR_ERR;
+        }
+    }
+    if (registry->task_count == FR_REGISTRY_CAPACITY) {
+        fr_error_set(err, "cannot register \"%s\": registry is full", plugin->capability);
+        return FR_ERR;
+    }
+    registry->tasks[registry->task_count++] = *plugin;
+    return FR_OK;
+}
+
+const fr_task_plugin *fr_registry_task(const fr_registry *registry, const char *capability) {
+    for (size_t index = 0; index < registry->task_count; index++) {
+        if (strcmp(registry->tasks[index].capability, capability) == 0) return &registry->tasks[index];
+    }
+    return NULL;
+}
+
+size_t fr_registry_task_count(const fr_registry *registry) {
+    return registry->task_count;
+}
+
+const fr_task_plugin *fr_registry_task_at(const fr_registry *registry, size_t index) {
+    if (index >= registry->task_count) return NULL;
+    return &registry->tasks[index];
 }

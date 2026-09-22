@@ -180,6 +180,51 @@ TEST a_toolchain_and_a_language_may_share_a_name(void) {
     PASS();
 }
 
+static int never_runs(void *state, const fr_task_run_context *context, fr_error *err) {
+    (void) state; (void) context; (void) err;
+    return FR_ERR;
+}
+
+TEST a_task_is_found_by_its_capability(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin plugin = { "daukle.task/cmake:build", "build", NULL, 0, never_runs, NULL };
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_registry_add_task(registry, &plugin, &err));
+
+    const fr_task_plugin *found = fr_registry_task(registry, "daukle.task/cmake:build");
+    ASSERT(found != NULL);
+    ASSERT_STR_EQ("build", found->part_of);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST a_task_capability_cannot_be_registered_twice(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin plugin = { "daukle.task/build", NULL, NULL, 0, NULL, NULL };
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_registry_add_task(registry, &plugin, &err));
+    ASSERT_EQ(FR_ERR, fr_registry_add_task(registry, &plugin, &err));
+    ASSERT(strstr(err.message, "already registered") != NULL);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST every_registered_task_is_walkable(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin first = { "daukle.task/build", NULL, NULL, 0, NULL, NULL };
+    fr_task_plugin second = { "daukle.task/cmake:build", "build", NULL, 0, never_runs, NULL };
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_registry_add_task(registry, &first, &err));
+    ASSERT_EQ(FR_OK, fr_registry_add_task(registry, &second, &err));
+
+    ASSERT_EQ(2u, fr_registry_task_count(registry));
+    ASSERT_STR_EQ("daukle.task/build", fr_registry_task_at(registry, 0)->capability);
+    ASSERT_STR_EQ("daukle.task/cmake:build", fr_registry_task_at(registry, 1)->capability);
+    ASSERT(fr_registry_task_at(registry, 2) == NULL);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -195,5 +240,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_toolchain_is_found_by_its_capability);
     RUN_TEST(a_toolchain_capability_cannot_be_registered_twice);
     RUN_TEST(a_toolchain_and_a_language_may_share_a_name);
+    RUN_TEST(a_task_is_found_by_its_capability);
+    RUN_TEST(a_task_capability_cannot_be_registered_twice);
+    RUN_TEST(every_registered_task_is_walkable);
     GREATEST_MAIN_END();
 }
