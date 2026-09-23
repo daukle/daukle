@@ -39,6 +39,14 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
 void fr_tasks_set_free(fr_task_set *set);
 const fr_task_node *fr_tasks_find(const fr_task_set *set, const char *name);
 
+/* Every task pointing at name, by either kind of edge: what declared itself
+   part of it, and what depends on it. This is the inbound half of the graph,
+   which a plugin's own source cannot show, and it is why "daukle tasks" is a
+   complete view rather than another partial one. Writes at most capacity
+   names and returns how many it wrote. */
+size_t fr_tasks_joiners(const fr_task_set *set, const char *name,
+                        const char **out_names, size_t capacity);
+
 /* The built-in command names. A task may not take one, because the command
    wins at dispatch and the task would exist, list, and never run. */
 int fr_tasks_name_is_reserved(const char *name);

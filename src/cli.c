@@ -106,6 +106,9 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
         if (word_count > 2) return;
         out->command = FR_CLI_CLEAN;
         if (word_count == 2) out->manifest_path = words[1];
+    } else if (strcmp(command, "tasks") == 0) {
+        if (word_count > 1) return;
+        out->command = FR_CLI_TASKS;
     } else {
         if (word_count != 1) return;
         out->command = FR_CLI_TASK;

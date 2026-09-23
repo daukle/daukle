@@ -191,6 +191,27 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
     return FR_OK;
 }
 
+static int names_one(const char *const *list, size_t count, const char *name) {
+    for (size_t index = 0; index < count; index++) {
+        if (strcmp(list[index], name) == 0) return 1;
+    }
+    return 0;
+}
+
+size_t fr_tasks_joiners(const fr_task_set *set, const char *name,
+                        const char **out_names, size_t capacity) {
+    size_t written = 0;
+    for (size_t index = 0; index < set->count && written < capacity; index++) {
+        const fr_task_node *node = &set->nodes[index];
+        int points = (node->part_of != NULL && strcmp(node->part_of, name) == 0)
+                     || (node->extra_part_of != NULL && strcmp(node->extra_part_of, name) == 0)
+                     || names_one(node->depends_on, node->depends_on_count, name)
+                     || names_one(node->extra_depends_on, node->extra_depends_on_count, name);
+        if (points) out_names[written++] = node->name;
+    }
+    return written;
+}
+
 void fr_tasks_set_free(fr_task_set *set) {
     if (set == NULL) return;
     free(set->nodes);

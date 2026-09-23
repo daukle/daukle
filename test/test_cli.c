@@ -223,6 +223,15 @@ TEST a_task_takes_no_second_word(void) {
     PASS();
 }
 
+TEST tasks_is_a_command_not_a_task(void) {
+    char *argv[] = { "daukle", "tasks" };
+    fr_cli_options options;
+    fr_cli_parse(2, argv, &options);
+    ASSERT_EQ(FR_CLI_TASKS, options.command);
+    ASSERT(options.task_name == NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -254,5 +263,6 @@ int main(int argc, char **argv) {
     RUN_TEST(an_unknown_first_word_is_a_task);
     RUN_TEST(a_built_in_command_wins_over_a_task_of_the_same_name);
     RUN_TEST(a_task_takes_no_second_word);
+    RUN_TEST(tasks_is_a_command_not_a_task);
     GREATEST_MAIN_END();
 }

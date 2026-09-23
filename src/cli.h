@@ -12,6 +12,7 @@ typedef enum {
     FR_CLI_CLEAN,
     FR_CLI_VERSION,
     FR_CLI_TASK,
+    FR_CLI_TASKS,
     FR_CLI_USAGE
 } fr_cli_command;
 

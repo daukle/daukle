@@ -474,6 +474,25 @@ TEST a_run_publishes_the_base_relative_derived_directory(void) {
     PASS();
 }
 
+TEST a_task_lists_what_joined_it(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},\"tasks\":{"
+        "\"build\":{},\"mine\":{\"partOf\":\"build\"},\"other\":{\"dependsOn\":[\"build\"]}}}");
+    fr_task_set set; fr_error err;
+    fr_tasks_collect(registry, &manifest, &set, &err);
+
+    const char *names[8];
+    size_t count = fr_tasks_joiners(&set, "build", names, 8);
+    ASSERT_EQ(2u, count);
+    ASSERT_STR_EQ("mine", names[0]);
+    ASSERT_STR_EQ("other", names[1]);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -497,5 +516,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plan_runs_its_tasks_in_order);
     RUN_TEST(a_failing_task_stops_the_run_naming_itself);
     RUN_TEST(a_run_publishes_the_base_relative_derived_directory);
+    RUN_TEST(a_task_lists_what_joined_it);
     GREATEST_MAIN_END();
 }

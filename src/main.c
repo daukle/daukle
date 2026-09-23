@@ -539,6 +539,57 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
     return 0;
 }
 
+static int list_tasks(int use_cache, int verbose) {
+    fr_error err;
+    char *resolved = NULL;
+    if (resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+    fr_session session;
+    int opened = fr_session_open(resolved, use_cache, &session, &err);
+    free(resolved);
+    if (opened != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    fr_task_set set;
+    if (fr_tasks_collect(session.registry, &session.manifest, &set, &err) != FR_OK) {
+        fr_session_close(&session);
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    if (set.count == 0) {
+        printf("daukle: this project has no tasks\n");
+    }
+    for (size_t index = 0; index < set.count; index++) {
+        const fr_task_node *node = &set.nodes[index];
+        printf("%s%s\n", node->name, node->plugin == NULL ? " (from the manifest)" : "");
+        printf("  runs: %s\n", (node->plugin != NULL && node->plugin->run != NULL)
+                                   ? "a program" : "nothing of its own");
+        for (size_t edge = 0; edge < node->depends_on_count; edge++) {
+            printf("  after: %s\n", node->depends_on[edge]);
+        }
+        for (size_t edge = 0; edge < node->extra_depends_on_count; edge++) {
+            printf("  after: %s (from the manifest)\n", node->extra_depends_on[edge]);
+        }
+        if (node->part_of != NULL) printf("  part of: %s\n", node->part_of);
+        if (node->extra_part_of != NULL) printf("  part of: %s (from the manifest)\n", node->extra_part_of);
+
+        const char *joiners[32];
+        size_t joiner_count = fr_tasks_joiners(&set, node->name, joiners, 32);
+        for (size_t edge = 0; edge < joiner_count; edge++) {
+            printf("  pulled in by: %s\n", joiners[edge]);
+        }
+    }
+
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     fr_cli_options options;
     fr_cli_parse(argc, argv, &options);
@@ -565,6 +616,8 @@ int main(int argc, char **argv) {
             return clean_derived(options.manifest_path, options.verbose);
         case FR_CLI_TASK:
             return run_task(options.task_name, options.use_cache, options.verbose);
+        case FR_CLI_TASKS:
+            return list_tasks(options.use_cache, options.verbose);
         case FR_CLI_USAGE:
             break;
     }
@@ -577,7 +630,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "usage: daukle [--version | sync [manifest] | check [manifest]"
                     " | add <project>@<range> --to <consumer> [--modules a,b]"
                     " | config print | plugin update [label] | clean [manifest]"
-                    " | <task>]"
+                    " | tasks | <task>]"
                     " [--no-cache] [--verbose]\n");
     return 2;
 }
