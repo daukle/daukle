@@ -6,8 +6,10 @@
 #include "error.h"
 #include "http.h"
 #include "plugins.h"
+#include "registry.h"
 #include "sha256.h"
 #include "support.h"
+#include "sync.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +24,8 @@ GREATEST_MAIN_DEFS();
 static char JAVA_DIGEST[65];
 static char FOO_DIGEST[65];
 
-static const char JAVA_CHUNK[] = "daukle.plugin{ api = 1, exports = { \"lib/coords\" } }\n";
+static const char JAVA_CHUNK[] =
+    "daukle.plugin{ api = 1, exports = { \"lib/coords\", \"lib/paths\" } }\n";
 static const char FOO_CHUNK[]  = "daukle.plugin{ api = 1 }\n";
 
 static const char ZERO_DIGEST[] =
@@ -109,8 +112,10 @@ static void dependent_source(char *out, size_t size, const char *alias, const ch
 }
 
 /* Reads a dependent's declaration and acquires its graph, reporting the message
-   rather than the status. */
-static int acquire_for(const char *source, fr_plugin_deps **out_deps, char *message, size_t size) {
+   rather than the status. registry is what the runtime registers into, which
+   only the test asking whether a dependency's chunk ran needs. */
+static int acquire_into(const char *source, fr_registry *registry, fr_plugin_deps **out_deps,
+                        char *message, size_t size) {
     fr_error err;
     fr_plugin_declaration declaration;
     memset(&declaration, 0, sizeof declaration);
@@ -121,7 +126,7 @@ static int acquire_for(const char *source, fr_plugin_deps **out_deps, char *mess
     fr_cache_set_enabled(0);
     fr_http_fn previous = fr_http_set_backend(serve_stub);
 
-    int status = fr_lua_runtime_begin(".", NULL, &err);
+    int status = fr_lua_runtime_begin(".", registry, &err);
     if (status == FR_OK) {
         status = fr_plugins_read_declaration(source, strlen(source), "@test", "plugin", "gradle",
                                              &declaration, &err);
@@ -135,6 +140,10 @@ static int acquire_for(const char *source, fr_plugin_deps **out_deps, char *mess
     fr_http_set_backend(previous);
     fr_cache_set_enabled(cache_was_enabled);
     return status;
+}
+
+static int acquire_for(const char *source, fr_plugin_deps **out_deps, char *message, size_t size) {
+    return acquire_into(source, NULL, out_deps, message, size);
 }
 
 TEST a_declared_dependency_is_acquired(void) {
@@ -198,6 +207,7 @@ static size_t JAVA_ARCHIVE_LENGTH;
 static char JAVA_ARCHIVE_DIGEST[65];
 
 static const char COORDS_MODULE[] = "return { parse = function(text) return text end }\n";
+static const char PATHS_MODULE[] = "return { join = function(a, b) return a .. b end }\n";
 static const char SCRATCH_MODULE[] = "return { secret = true }\n";
 
 static void serve_java_archive(void) {
@@ -207,6 +217,8 @@ static void serve_java_archive(void) {
                                        sizeof JAVA_CHUNK - 1);
     offset = fr_test_tar_append(JAVA_ARCHIVE, offset, "lib/coords.lua", '0', COORDS_MODULE,
                                 sizeof COORDS_MODULE - 1);
+    offset = fr_test_tar_append(JAVA_ARCHIVE, offset, "lib/paths.lua", '0', PATHS_MODULE,
+                                sizeof PATHS_MODULE - 1);
     offset = fr_test_tar_append(JAVA_ARCHIVE, offset, "internal/scratch.lua", '0', SCRATCH_MODULE,
                                 sizeof SCRATCH_MODULE - 1);
     JAVA_ARCHIVE_LENGTH = fr_test_tar_end(JAVA_ARCHIVE, offset);
@@ -261,7 +273,9 @@ TEST an_exported_member_is_served_and_an_unexported_one_is_not(void) {
     ASSERTm("an exported member names the artifact's own deps and label", named_its_owner);
     ASSERT_EQ(FR_ERR, refused_status);
     ASSERTm(refused_message, strstr(refused_message, "does not export") != NULL);
-    ASSERTm(refused_message, strstr(refused_message, "lib/coords") != NULL);
+    /* The whole list, not its first entry: an implementation naming only
+       exports[0] would satisfy a one-element assertion. */
+    ASSERTm(refused_message, strstr(refused_message, "lib/coords, lib/paths") != NULL);
     PASS();
 }
 
@@ -269,9 +283,14 @@ TEST an_unknown_alias_is_refused_naming_the_aliases_that_exist(void) {
     static char acquire_message[512];
     static char message[512];
     char source[512];
+    char first[256];
+    char second[256];
     acquire_message[0] = message[0] = '\0';
-    serve_java_archive();
-    dependent_source(source, sizeof source, "java", "https://x/java.lua", JAVA_ARCHIVE_DIGEST);
+    serve_two_plugins();
+    requirement_entry(first, sizeof first, "java", "https://x/java.lua", JAVA_DIGEST);
+    requirement_entry(second, sizeof second, "foo", "https://x/foo.lua", FOO_DIGEST);
+    snprintf(source, sizeof source, "daukle.plugin{ api = 1, requires = { %s, %s } }\n", first,
+             second);
 
     fr_plugin_deps *deps = NULL;
     int status = acquire_for(source, &deps, acquire_message, sizeof acquire_message);
@@ -292,7 +311,91 @@ TEST an_unknown_alias_is_refused_naming_the_aliases_that_exist(void) {
 
     ASSERT_EQm(acquire_message, FR_OK, status);
     ASSERT_EQ(FR_ERR, member_status);
-    ASSERTm(message, strstr(message, "it requires java") != NULL);
+    ASSERTm(message, strstr(message, "it requires") != NULL);
+    /* Both aliases, in whichever order the declaration's table yielded them:
+       naming only the first binding would satisfy a one-element assertion. */
+    ASSERTm(message, strstr(message, "java") != NULL);
+    ASSERTm(message, strstr(message, "foo") != NULL);
+    PASS();
+}
+
+static char DISAGREEING_BODY[512];
+static char DISAGREEING_DIGEST[65];
+
+/* The second pin is reached through a SECOND artifact rather than a second
+   alias of the dependent: a requires table yields its entries in whatever
+   order lua chooses, so two aliases of one dependent decide by coin toss
+   whether the wrong pin arrives first (an ordinary mismatch) or second (the
+   memo). Acquisition finishes the dependent's own requires before walking any
+   artifact's, so putting the wrong pin one level down makes the memo hit the
+   only reachable path. */
+static void serve_a_pin_disagreement(void) {
+    serve_two_plugins();
+    dependent_source(DISAGREEING_BODY, sizeof DISAGREEING_BODY, "jvm", "https://x/java.lua",
+                     ZERO_DIGEST);
+    fr_sha256_hex(DISAGREEING_BODY, strlen(DISAGREEING_BODY), DISAGREEING_DIGEST);
+    stub_serve("https://x/mid.lua", DISAGREEING_BODY, strlen(DISAGREEING_BODY));
+}
+
+TEST one_url_pinned_to_two_digests_is_refused_naming_both(void) {
+    static char message[512];
+    char source[512];
+    char first[256];
+    char second[256];
+    serve_a_pin_disagreement();
+    requirement_entry(first, sizeof first, "java", "https://x/java.lua", JAVA_DIGEST);
+    requirement_entry(second, sizeof second, "mid", "https://x/mid.lua", DISAGREEING_DIGEST);
+    snprintf(source, sizeof source, "daukle.plugin{ api = 1, requires = { %s, %s } }\n", first,
+             second);
+
+    fr_plugin_deps *deps = NULL;
+    int status = acquire_for(source, &deps, message, sizeof message);
+    fr_plugin_deps_close(deps);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "already pinned to") != NULL);
+    ASSERTm(message, strstr(message, JAVA_DIGEST) != NULL);
+    ASSERTm(message, strstr(message, ZERO_DIGEST) != NULL);
+    ASSERTm(message, strstr(message, "alias \"mid\"") != NULL);
+    PASS();
+}
+
+static const char WOULD_REGISTER_CHUNK[] =
+    "daukle.plugin{ api = 1, uses = {} }\n"
+    "daukle.language{ name = 'never-run',\n"
+    "                 apply = function(consumer, resolved, text) return text end }\n";
+static char WOULD_REGISTER_DIGEST[65];
+
+/* The invariant the whole design rests on, and the one a grep cannot prove: a
+   dependency is acquired and read, never loaded. Its chunk registers a
+   language after the declaration, so a loader hiding anywhere in acquisition
+   shows up as that language reaching the registry. */
+TEST a_dependencys_entry_chunk_is_never_run(void) {
+    static char message[512];
+    char source[512];
+    fr_error err;
+    stub_reset();
+    fr_sha256_hex(WOULD_REGISTER_CHUNK, strlen(WOULD_REGISTER_CHUNK), WOULD_REGISTER_DIGEST);
+    stub_serve("https://x/runs.lua", WOULD_REGISTER_CHUNK, strlen(WOULD_REGISTER_CHUNK));
+    dependent_source(source, sizeof source, "runs", "https://x/runs.lua", WOULD_REGISTER_DIGEST);
+
+    fr_registry *registry = NULL;
+    int built = fr_build_registry(&registry, &err);
+    fr_plugin_deps *deps = NULL;
+    int status = FR_ERR;
+    int registered = 1;
+    if (built == FR_OK) {
+        status = acquire_into(source, registry, &deps, message, sizeof message);
+        registered = fr_registry_language(registry, "daukle.language/never-run") != NULL;
+    }
+    fr_plugin_deps_close(deps);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQ(FR_OK, built);
+    ASSERT_EQm(message, FR_OK, status);
+    ASSERTm("the dependency's entry chunk did not run", !registered);
     PASS();
 }
 
@@ -445,23 +548,33 @@ TEST a_graph_wider_than_the_node_limit_is_refused(void) {
 static char MANY_ALIASES_BODY[4096];
 static char MANY_ALIASES_DIGEST[65];
 
+/* One alias past FR_PLUGIN_MAX_REQUIRES. Appends are bounds-checked so that a
+   body outgrowing its buffer fails as a short declaration rather than as
+   pointer arithmetic past the end. */
 static void serve_too_many_aliases(void) {
     stub_reset();
-    size_t filled = (size_t) snprintf(MANY_ALIASES_BODY, sizeof MANY_ALIASES_BODY,
-                                      "daukle.plugin{ api = 1, requires = {");
+    size_t filled = 0;
+    int written = snprintf(MANY_ALIASES_BODY, sizeof MANY_ALIASES_BODY,
+                           "daukle.plugin{ api = 1, requires = {");
+    if (written > 0 && (size_t) written < sizeof MANY_ALIASES_BODY) filled = (size_t) written;
     for (int index = 0; index <= FR_PLUGIN_MAX_REQUIRES; index++) {
         char alias[32];
         char entry[256];
         snprintf(alias, sizeof alias, "dep%d", index);
         requirement_entry(entry, sizeof entry, alias, "https://x/leaf.lua", ZERO_DIGEST);
-        filled += (size_t) snprintf(MANY_ALIASES_BODY + filled, sizeof MANY_ALIASES_BODY - filled,
-                                    " %s,", entry);
+        written = snprintf(MANY_ALIASES_BODY + filled, sizeof MANY_ALIASES_BODY - filled, " %s,",
+                           entry);
+        if (written < 0 || (size_t) written >= sizeof MANY_ALIASES_BODY - filled) break;
+        filled += (size_t) written;
     }
     snprintf(MANY_ALIASES_BODY + filled, sizeof MANY_ALIASES_BODY - filled, " } }\n");
     fr_sha256_hex(MANY_ALIASES_BODY, strlen(MANY_ALIASES_BODY), MANY_ALIASES_DIGEST);
     stub_serve("https://x/many.lua", MANY_ALIASES_BODY, strlen(MANY_ALIASES_BODY));
 }
 
+/* The refusal is the declaration reader's, not this module's: requires is a
+   fixed FR_PLUGIN_MAX_REQUIRES array, so a seventeenth alias never reaches
+   acquisition. What this pins is that acquiring a dependency propagates it. */
 TEST a_dependency_naming_more_aliases_than_the_limit_is_refused(void) {
     static char message[512];
     char source[512];
@@ -485,6 +598,8 @@ int main(int argc, char **argv) {
     RUN_TEST(the_same_artifact_under_two_aliases_is_fetched_once);
     RUN_TEST(an_exported_member_is_served_and_an_unexported_one_is_not);
     RUN_TEST(an_unknown_alias_is_refused_naming_the_aliases_that_exist);
+    RUN_TEST(one_url_pinned_to_two_digests_is_refused_naming_both);
+    RUN_TEST(a_dependencys_entry_chunk_is_never_run);
     RUN_TEST(a_cycle_between_two_artifacts_is_refused);
     RUN_TEST(a_graph_at_the_depth_limit_is_acquired);
     RUN_TEST(a_graph_deeper_than_the_limit_is_refused);

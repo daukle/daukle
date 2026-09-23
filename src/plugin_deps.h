@@ -27,7 +27,9 @@ int fr_plugin_deps_acquire(const fr_plugin_declaration *declaration,
 /* The bytes of member, if alias names a required artifact and that artifact
    exports member. out_owner is the artifact's own dependency set, which is what
    a require inside that module resolves against, and out_owner_label names it
-   in a message. */
+   in a message. All three are borrowed from the acquisition and are invalid
+   after fr_plugin_deps_close: the caller copies whatever it needs to outlive
+   the load, and never closes what out_owner points at. */
 int fr_plugin_deps_member(fr_plugin_deps *deps, const char *alias, const char *member,
                           const char **out_text, size_t *out_length,
                           fr_plugin_deps **out_owner, const char **out_owner_label,

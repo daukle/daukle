@@ -20,12 +20,13 @@ typedef struct {
 } deps_binding;
 
 /* One dependent's view of the graph: which artifact each of ITS aliases names.
-   The root view owns the graph, a node's view does not, which is what lets
-   fr_plugin_deps_member hand a node's own view out as the set a require inside
-   that artifact resolves against. */
+   The root view owns the graph and its label, a node's view owns neither, which
+   is what lets fr_plugin_deps_member hand a node's own view out as the set a
+   require inside that artifact resolves against. */
 struct fr_plugin_deps {
     deps_graph *graph;
     char *label;
+    int label_is_alias;       /* a node is known by the alias that named it, not by a plugin label */
     deps_binding bindings[FR_PLUGIN_MAX_REQUIRES];
     size_t binding_count;
     int owns_graph;
@@ -34,6 +35,9 @@ struct fr_plugin_deps {
 typedef struct {
     char *url;
     char *label;              /* the alias it was first named by, for messages */
+    char *required_by;        /* and who named it, for a disagreement over its pin */
+    const char *required_by_kind;
+    char digest[65];
     char *text;
     size_t length;
     fr_plugin_source *source;
@@ -49,8 +53,16 @@ struct deps_graph {
     size_t count;
 };
 
-static int out_of_memory(const char *label, fr_error *err) {
-    fr_error_set(err, "plugin \"%s\": out of memory acquiring its dependencies", label);
+/* Every refusal below names who asked, and the root is a plugin while every
+   other requester is one plugin's alias for another. Calling an alias a plugin
+   sends a reader looking for a [plugins] entry that does not exist. */
+static const char *requester(const fr_plugin_deps *view) {
+    return view->label_is_alias ? "alias" : "plugin";
+}
+
+static int out_of_memory(const fr_plugin_deps *view, fr_error *err) {
+    fr_error_set(err, "%s \"%s\": out of memory acquiring its dependencies", requester(view),
+                 view->label);
     return FR_ERR;
 }
 
@@ -76,9 +88,9 @@ static void free_node(deps_node *node) {
     fr_plugin_source_close(node->source);
     fr_plugins_free_declaration(&node->declaration);
     free_bindings(&node->view);
-    free(node->view.label);
     free(node->text);
     free(node->label);
+    free(node->required_by);
     free(node->url);
     memset(node, 0, sizeof *node);
 }
@@ -90,14 +102,12 @@ static size_t node_with_url(const deps_graph *graph, const char *url) {
     return DEPS_NONE;
 }
 
+/* The bindings array is FR_PLUGIN_MAX_REQUIRES and the requires it is filled
+   from is an array of the same bound, so the capacity is a type-level invariant
+   and a runtime check on it would be a second copy of one fact. */
 static int bind_alias(fr_plugin_deps *view, const char *alias, size_t node, fr_error *err) {
-    if (view->binding_count == FR_PLUGIN_MAX_REQUIRES) {
-        fr_error_set(err, "plugin \"%s\": requires names more than %d plugins", view->label,
-                     FR_PLUGIN_MAX_REQUIRES);
-        return FR_ERR;
-    }
     char *copy = fr_dup_string(alias);
-    if (copy == NULL) return out_of_memory(view->label, err);
+    if (copy == NULL) return out_of_memory(view, err);
     view->bindings[view->binding_count].alias = copy;
     view->bindings[view->binding_count].node = node;
     view->binding_count++;
@@ -112,9 +122,12 @@ static int url_on_path(const deps_graph *graph, size_t parent, const char *url) 
 }
 
 /* Names the chain rather than only the artifact that closed it, in the manner
-   of config_lua.c's report_module_cycle. */
-static int report_cycle(const deps_graph *graph, const char *label, size_t parent, const char *url,
-                        fr_error *err) {
+   of config_lua.c's report_module_cycle. The url that closed the cycle is
+   written twice: once before the chain, where no length of chain can push it
+   out of the message, and once as the chain's last hop, which is what makes the
+   chain readable and is the part a long one truncates. */
+static int report_cycle(const deps_graph *graph, const fr_plugin_deps *view, size_t parent,
+                        const char *url, fr_error *err) {
     size_t chain[FR_PLUGIN_DEPS_MAX_DEPTH + 1];
     size_t chain_length = 0;
     for (size_t at = parent; at != DEPS_NONE && chain_length < sizeof chain / sizeof *chain;
@@ -133,8 +146,10 @@ static int report_cycle(const deps_graph *graph, const char *label, size_t paren
         if (written < 0 || (size_t) written >= sizeof trail - filled) break;
         filled += (size_t) written;
     }
-    fr_error_set(err, "plugin \"%s\": requiring \"%s\" is a cycle: %s -> %s", label, url, trail,
-                 url);
+    snprintf(trail + filled, sizeof trail - filled, "%s%s", filled == 0 ? "" : " -> ", url);
+
+    fr_error_set(err, "%s \"%s\": requiring \"%s\" is a cycle: %s", requester(view), view->label,
+                 url, trail);
     return FR_ERR;
 }
 
@@ -154,6 +169,11 @@ static int open_node(deps_node *node, fr_error *err) {
                                        &node->declaration, err);
 }
 
+/* @implNote the cycle check must stay ahead of the digest check. An artifact's
+   bytes carry the digest of what it requires, so no two artifacts requiring
+   each other can both carry a correct pin: verify first and every real cycle
+   reports as a mismatched pin instead, and the cycle refusal becomes
+   unreachable. */
 static int acquire_one(deps_graph *graph, fr_plugin_deps *view, size_t parent, size_t depth,
                        const fr_plugin_requirement *requirement, const struct cJSON *overrides,
                        fr_error *err) {
@@ -164,20 +184,32 @@ static int acquire_one(deps_graph *graph, fr_plugin_deps *view, size_t parent, s
     const char *sha256 = requirement->sha256;
 
     if (depth >= FR_PLUGIN_DEPS_MAX_DEPTH) {
-        fr_error_set(err, "plugin \"%s\": the dependency graph is deeper than %d, reaching \"%s\"",
-                     view->label, FR_PLUGIN_DEPS_MAX_DEPTH, url);
+        fr_error_set(err, "%s \"%s\": the dependency graph is deeper than %d, reaching \"%s\"",
+                     requester(view), view->label, FR_PLUGIN_DEPS_MAX_DEPTH, url);
         return FR_ERR;
     }
-    if (url_on_path(graph, parent, url)) {
-        return report_cycle(graph, view->label, parent, url, err);
-    }
+    if (url_on_path(graph, parent, url)) return report_cycle(graph, view, parent, url, err);
 
     size_t existing = node_with_url(graph, url);
-    if (existing != DEPS_NONE) return bind_alias(view, requirement->alias, existing, err);
+    if (existing != DEPS_NONE) {
+        const deps_node *held = &graph->nodes[existing];
+        /* A second requester's pin is checked against what was already
+           fetched, not skipped: whoever asked first would otherwise decide
+           which bytes everyone gets, and the attestation the later author
+           wrote would never be compared to anything. */
+        if (!digest_matches(held->digest, sha256)) {
+            fr_error_set(err, "%s \"%s\": requires[\"%s\"] expected sha256 %s but \"%s\" is"
+                              " already pinned to %s by %s \"%s\"",
+                         requester(view), view->label, requirement->alias, sha256, url,
+                         held->digest, held->required_by_kind, held->required_by);
+            return FR_ERR;
+        }
+        return bind_alias(view, requirement->alias, existing, err);
+    }
 
     if (graph->count == FR_PLUGIN_DEPS_MAX_NODES) {
-        fr_error_set(err, "plugin \"%s\": the dependency graph names more than %d artifacts",
-                     view->label, FR_PLUGIN_DEPS_MAX_NODES);
+        fr_error_set(err, "%s \"%s\": the dependency graph names more than %d artifacts",
+                     requester(view), view->label, FR_PLUGIN_DEPS_MAX_NODES);
         return FR_ERR;
     }
 
@@ -191,8 +223,8 @@ static int acquire_one(deps_graph *graph, fr_plugin_deps *view, size_t parent, s
     char digest[65];
     fr_sha256_hex(text, length, digest);
     if (!digest_matches(digest, sha256)) {
-        fr_error_set(err, "plugin \"%s\": requires[\"%s\"] expected sha256 %s but the file is %s",
-                     view->label, requirement->alias, sha256, digest);
+        fr_error_set(err, "%s \"%s\": requires[\"%s\"] expected sha256 %s but the file is %s",
+                     requester(view), view->label, requirement->alias, sha256, digest);
         fr_plugin_fetch_discard(url);
         free(text);
         return FR_ERR;
@@ -204,14 +236,18 @@ static int acquire_one(deps_graph *graph, fr_plugin_deps *view, size_t parent, s
     node->length = length;
     node->parent = parent;
     node->depth = depth;
+    snprintf(node->digest, sizeof node->digest, "%s", digest);
     node->url = fr_dup_string(url);
     node->label = fr_dup_string(requirement->alias);
+    node->required_by = fr_dup_string(view->label);
+    node->required_by_kind = requester(view);
     node->view.graph = graph;
-    node->view.label = fr_dup_string(requirement->alias);
-    if (node->url == NULL || node->label == NULL || node->view.label == NULL) {
+    node->view.label_is_alias = 1;
+    if (node->url == NULL || node->label == NULL || node->required_by == NULL) {
         free_node(node);
-        return out_of_memory(view->label, err);
+        return out_of_memory(view, err);
     }
+    node->view.label = node->label;
 
     if (open_node(node, err) != FR_OK) {
         free_node(node);
@@ -269,28 +305,30 @@ int fr_plugin_deps_acquire(const fr_plugin_declaration *declaration,
     return FR_OK;
 }
 
-static void list_aliases(char *out, size_t size, const fr_plugin_deps *deps) {
+/* The "nothing" fallback is on an empty list and not on an empty buffer: a list
+   too long for out has already had its truncated head written there, and saying
+   "nothing" instead would report the opposite of what is true. */
+static void list_names(char *out, size_t size, const char *const *names, size_t count) {
     size_t filled = 0;
     out[0] = '\0';
-    for (size_t index = 0; index < deps->binding_count; index++) {
+    if (count == 0) {
+        snprintf(out, size, "nothing");
+        return;
+    }
+    for (size_t index = 0; index < count; index++) {
         int written = snprintf(out + filled, size - filled, "%s%s", filled == 0 ? "" : ", ",
-                               deps->bindings[index].alias);
+                               names[index]);
         if (written < 0 || (size_t) written >= size - filled) break;
         filled += (size_t) written;
     }
-    if (filled == 0) snprintf(out, size, "nothing");
 }
 
-static void list_exports(char *out, size_t size, const deps_node *node) {
-    size_t filled = 0;
-    out[0] = '\0';
-    for (size_t index = 0; index < node->declaration.exports_count; index++) {
-        int written = snprintf(out + filled, size - filled, "%s%s", filled == 0 ? "" : ", ",
-                               node->declaration.exports[index]);
-        if (written < 0 || (size_t) written >= size - filled) break;
-        filled += (size_t) written;
+static void list_aliases(char *out, size_t size, const fr_plugin_deps *deps) {
+    const char *names[FR_PLUGIN_MAX_REQUIRES];
+    for (size_t index = 0; index < deps->binding_count; index++) {
+        names[index] = deps->bindings[index].alias;
     }
-    if (filled == 0) snprintf(out, size, "nothing");
+    list_names(out, size, names, deps->binding_count);
 }
 
 static int exports_member(const deps_node *node, const char *member) {
@@ -323,18 +361,19 @@ int fr_plugin_deps_member(fr_plugin_deps *deps, const char *alias, const char *m
     if (binding == NULL) {
         char aliases[256];
         list_aliases(aliases, sizeof aliases, deps);
-        fr_error_set(err, "plugin \"%s\": no dependency is required under the alias \"%s\"; it"
+        fr_error_set(err, "%s \"%s\": no dependency is required under the alias \"%s\"; it"
                           " requires %s",
-                     deps->label, alias, aliases);
+                     requester(deps), deps->label, alias, aliases);
         return FR_ERR;
     }
 
     deps_node *node = &deps->graph->nodes[binding->node];
     if (!exports_member(node, member)) {
         char exported[256];
-        list_exports(exported, sizeof exported, node);
-        fr_error_set(err, "plugin \"%s\": \"%s\" does not export \"%s\"; it exports %s",
-                     deps->label, alias, member, exported);
+        list_names(exported, sizeof exported, (const char *const *) node->declaration.exports,
+                   node->declaration.exports_count);
+        fr_error_set(err, "%s \"%s\": \"%s\" does not export \"%s\"; it exports %s",
+                     requester(deps), deps->label, alias, member, exported);
         return FR_ERR;
     }
     if (fr_plugin_source_member(node->source, member, out_text, out_length, err) != FR_OK) {
