@@ -728,14 +728,19 @@ TEST a_resolved_entry_loads_what_its_resolver_names(void) {
     PASS();
 }
 
-/* Three releases, two of them in range for "^1.0.0": o.lua (1.1.0, in range
-   but not the highest), p.lua (1.2.0, in range and the highest), and q.lua
-   (2.0.0, out of range). Listing them out of numeric order (1.1.0, 2.0.0,
-   1.2.0) means neither "take the first in-range entry" nor "take the last
-   entry in the array" would accidentally land on the right answer; only
-   comparing every in-range candidate with greater() does. Each registers a
-   differently named language so the test can tell which one was fetched
-   rather than only that loading succeeded. */
+/* Four releases: o.lua (1.1.0, in range but not the highest), q.lua (2.0.0,
+   out of range), p.lua (1.2.0, in range and the true highest), and p2.lua (a
+   second "1.2.0" tag, in range and tied with p.lua). The true highest is
+   listed neither first nor last among the in-range entries, so "keep the
+   first in-range entry seen" and "keep the last in-range entry seen" cannot
+   degenerate into the right answer by coincidence; only comparing every
+   in-range candidate with greater() lands on p.lua. The tied duplicate is
+   synthetic (a real repository cannot have two releases sharing one tag) and
+   exists only so a comparison weakened from strict "greater than" to
+   non-strict "greater than or equal" has something to expose: it would pull
+   in p2.lua, the later of the tied pair, instead of leaving p.lua's earlier
+   win alone. Each tag registers a differently named language so the test can
+   tell exactly which asset was fetched. */
 static int stub_releases_index(const char *url, const fr_http_header *headers, size_t header_count,
                                char **out_body, size_t *out_length, fr_error *err) {
     (void) headers; (void) header_count; (void) err;
@@ -746,11 +751,17 @@ static int stub_releases_index(const char *url, const fr_http_header *headers, s
                               "{\"tag_name\":\"2.0.0\",\"assets\":"
                               "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/q.lua\"}]},"
                               "{\"tag_name\":\"1.2.0\",\"assets\":"
-                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/p.lua\"}]}]",
+                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/p.lua\"}]},"
+                              "{\"tag_name\":\"1.2.0\",\"assets\":"
+                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/p2.lua\"}]}]",
                               out_length);
     } else if (strstr(url, "/o.lua") != NULL) {
         *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
                               "daukle.language{ name = 'remote-1-1-0', apply = function() return '' end }\n",
+                              out_length);
+    } else if (strstr(url, "/p2.lua") != NULL) {
+        *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
+                              "daukle.language{ name = 'remote-1-2-0-again', apply = function() return '' end }\n",
                               out_length);
     } else if (strstr(url, "/p.lua") != NULL) {
         *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
@@ -792,6 +803,7 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     int highest_in_range = fr_registry_language(registry, "daukle.language/remote-1-2-0") != NULL;
     int lower_in_range = fr_registry_language(registry, "daukle.language/remote-1-1-0") != NULL;
     int out_of_range = fr_registry_language(registry, "daukle.language/remote-2-0-0") != NULL;
+    int tied_duplicate = fr_registry_language(registry, "daukle.language/remote-1-2-0-again") != NULL;
     int requests = release_requests;
 
     cJSON_Delete(document);
@@ -808,6 +820,7 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     ASSERT(highest_in_range);
     ASSERT_FALSE(lower_in_range);
     ASSERT_FALSE(out_of_range);
+    ASSERT_FALSE(tied_duplicate);
     ASSERT_EQ(2, requests);
     PASS();
 }
