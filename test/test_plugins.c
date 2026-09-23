@@ -490,21 +490,127 @@ TEST a_verb_used_before_the_declaration_says_so(void) {
 }
 
 /* read_declaration's first line touches the lua_State it is given, so a caller
-   reaching fr_plugins_read_uses with no runtime open (resolvers.c's acquire,
-   before fr_lua_plugin_load, is the one that matters) needs a real error back,
-   not a crash. No runtime is open here between tests, so this needs no setup. */
-TEST fr_plugins_read_uses_rejects_a_closed_runtime(void) {
+   reaching fr_plugins_read_declaration with no runtime open (resolvers.c's
+   acquire, before fr_lua_plugin_load, is the one that matters) needs a real
+   error back, not a crash. No runtime is open here between tests, so this
+   needs no setup. */
+TEST fr_plugins_read_declaration_rejects_a_closed_runtime(void) {
     fr_error err;
-    char **uses = NULL;
-    size_t uses_count = 0;
+    fr_plugin_declaration declaration;
+    memset(&declaration, 0, sizeof declaration);
     static const char chunk[] = "daukle.plugin{ api = 1 }";
-    int status = fr_plugins_read_uses(chunk, sizeof chunk - 1, "test.lua", "resolver", "t",
-                                      &uses, &uses_count, &err);
+    int status = fr_plugins_read_declaration(chunk, sizeof chunk - 1, "test.lua", "resolver", "t",
+                                             &declaration, &err);
 
     ASSERT_EQ(FR_ERR, status);
     ASSERT(strstr(err.message, "no lua runtime is open") != NULL);
-    ASSERT(uses == NULL);
-    ASSERT_EQ(0u, uses_count);
+    ASSERT_EQ(0u, declaration.uses_count);
+    ASSERT_EQ(0u, declaration.requires_count);
+    PASS();
+}
+
+/* Reads one chunk's declaration and reports the message rather than the status,
+   because every refusal below is about which clause came back. */
+static int read_declaration_of(const char *source, fr_plugin_declaration *out, char *message,
+                               size_t size) {
+    fr_error err;
+    message[0] = '\0';
+    memset(out, 0, sizeof *out);
+    fr_registry *registry = NULL;
+    int began = fr_build_registry(&registry, &err) == FR_OK
+              && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = began ? fr_plugins_read_declaration(source, strlen(source), "@test", "plugin",
+                                                     "p", out, &err)
+                       : FR_ERR;
+    if (status != FR_OK) snprintf(message, size, "%s", err.message);
+    fr_lua_runtime_shutdown();
+    return status;
+}
+
+TEST a_declaration_records_its_requires(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { java = { url = \"https://x/java.tar\","
+        " sha256 = \"9f86d0\" } } }",
+        &declaration, message, sizeof message);
+    size_t count = declaration.requires_count;
+    char alias[32] = "";
+    char url[64] = "";
+    if (count == 1) {
+        snprintf(alias, sizeof alias, "%s", declaration.requires[0].alias);
+        snprintf(url, sizeof url, "%s", declaration.requires[0].url);
+    }
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQm(message, FR_OK, status);
+    ASSERT_EQ(1, (int) count);
+    ASSERT_STR_EQ("java", alias);
+    ASSERT_STR_EQ("https://x/java.tar", url);
+    PASS();
+}
+
+TEST a_requires_entry_without_a_sha256_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { java = { url = \"https://x/java.tar\" } } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "is always pinned") != NULL);
+    PASS();
+}
+
+TEST a_requires_entry_naming_a_path_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { java = { path = \"./java.lua\" } } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "acquired by url") != NULL);
+    ASSERTm(message, strstr(message, "requires") != NULL);
+    PASS();
+}
+
+TEST an_alias_with_a_reserved_character_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { [\"ja.va\"] = { url = \"https://x/j.tar\","
+        " sha256 = \"9f86d0\" } } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "letters, digits") != NULL);
+    PASS();
+}
+
+TEST a_resolver_may_not_require_a_plugin(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    fr_error err;
+    memset(&declaration, 0, sizeof declaration);
+    const char *source = "daukle.plugin{ api = 1, requires = { java = { url = \"https://x/j.tar\","
+                         " sha256 = \"9f86d0\" } } }";
+    fr_registry *registry = NULL;
+    int began = fr_build_registry(&registry, &err) == FR_OK
+              && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = began ? fr_plugins_read_declaration(source, strlen(source), "@test", "resolver",
+                                                     "gh", &declaration, &err)
+                       : FR_ERR;
+    if (status != FR_OK) snprintf(message, sizeof message, "%s", err.message);
+    fr_lua_runtime_shutdown();
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "acquired by the floor only") != NULL);
     PASS();
 }
 
@@ -2106,7 +2212,12 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_written_against_a_later_api_says_which);
     RUN_TEST(a_uses_entry_that_is_not_a_string_is_refused);
     RUN_TEST(a_verb_used_before_the_declaration_says_so);
-    RUN_TEST(fr_plugins_read_uses_rejects_a_closed_runtime);
+    RUN_TEST(fr_plugins_read_declaration_rejects_a_closed_runtime);
+    RUN_TEST(a_declaration_records_its_requires);
+    RUN_TEST(a_requires_entry_without_a_sha256_is_refused);
+    RUN_TEST(a_requires_entry_naming_a_path_is_refused);
+    RUN_TEST(an_alias_with_a_reserved_character_is_refused);
+    RUN_TEST(a_resolver_may_not_require_a_plugin);
     RUN_TEST(the_github_plugin_authenticates_from_either_token_variable);
     RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
     RUN_TEST(a_url_entry_fetches_and_loads);

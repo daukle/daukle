@@ -49,21 +49,48 @@ typedef struct {
 char *fr_dup_string(const char *text);
 char *fr_dup_prefix(const char *text, size_t length);
 
-/* Runs only as much of text as its daukle.plugin{...} call, the same
-   protected read fr_plugins_load uses before installing verbs, and reports
-   what it declared "uses" as a freshly allocated array. kind ("plugin" or
-   "resolver") and label name the chunk in any error text, so a resolver's
-   malformed uses is never reported as a plugin's; origin is what a parse
-   error is reported against. *out_uses is NULL when uses is empty or absent,
-   not an error. A lua runtime must already be open. Shared with resolvers.c,
-   whose chunks are acquired the same way a plugin's is. */
-int fr_plugins_read_uses(const char *text, size_t length, const char *origin, const char *kind,
-                         const char *label, char ***out_uses, size_t *out_uses_count,
-                         fr_error *err);
+#define FR_PLUGIN_MAX_USES 16
+#define FR_PLUGIN_MAX_REQUIRES 16
+#define FR_PLUGIN_MAX_EXPORTS 64
+#define FR_PLUGIN_MAX_ALIAS 64
 
-/* Frees an array fr_plugins_read_uses returned. Tolerates a NULL array paired
-   with a zero count. */
-void fr_plugins_free_uses(char **uses, size_t count);
+typedef struct {
+    char *alias;
+    char *url;
+    char *sha256;
+} fr_plugin_requirement;
+
+/* What one daukle.plugin{...} call declared: task 3 fills exports and task 4
+   consumes requires, but the reader below is one struct for both rather than
+   a second walk over the same table per key. */
+typedef struct {
+    const char *kind;    /* "plugin" or "resolver" */
+    const char *label;
+    char *uses[FR_PLUGIN_MAX_USES];
+    size_t uses_count;
+    char *exports[FR_PLUGIN_MAX_EXPORTS];
+    size_t exports_count;
+    fr_plugin_requirement requires[FR_PLUGIN_MAX_REQUIRES];
+    size_t requires_count;
+} fr_plugin_declaration;
+
+/* Runs only as much of text as its daukle.plugin{...} call, the same
+   protected read fr_plugins_load uses before installing verbs, and fills out
+   with what it declared. kind ("plugin" or "resolver") and label name the
+   chunk in any error text, so a resolver's malformed declaration is never
+   reported as a plugin's; origin is what a parse error is reported against.
+   out is zeroed on entry and left zeroed, safe to pass to
+   fr_plugins_free_declaration, whether this returns FR_OK or FR_ERR. A lua
+   runtime must already be open. Shared with resolvers.c, whose chunks are
+   acquired the same way a plugin's is. */
+int fr_plugins_read_declaration(const char *text, size_t length, const char *origin,
+                                const char *kind, const char *label,
+                                fr_plugin_declaration *out, fr_error *err);
+
+/* Frees every string a declaration fr_plugins_read_declaration filled owns,
+   then zeroes its counts. Safe to call again on an already-freed
+   declaration. */
+void fr_plugins_free_declaration(fr_plugin_declaration *declaration);
 
 /* Reads the manifest's `[plugins]` table into a freshly allocated array.
    An absent table yields *out_count == 0 and FR_OK, not an error.

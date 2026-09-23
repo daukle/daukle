@@ -243,19 +243,20 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
     size_t chunk_length = 0;
     int status = fr_plugin_source_entry(source, &chunk, &chunk_length, err);
 
-    char **uses = NULL;
-    size_t uses_count = 0;
+    fr_plugin_declaration declaration;
+    memset(&declaration, 0, sizeof declaration);
     if (status == FR_OK) {
-        status = fr_plugins_read_uses(chunk, chunk_length, origin, "resolver", entry->label, &uses,
-                                      &uses_count, err);
+        status = fr_plugins_read_declaration(chunk, chunk_length, origin, "resolver", entry->label,
+                                             &declaration, err);
     }
     if (status == FR_OK) {
         fr_lua_set_acquiring_resolver(1);
-        status = fr_lua_plugin_load(chunk, chunk_length, origin, (const char *const *) uses,
-                                    uses_count, source, err);
+        status = fr_lua_plugin_load(chunk, chunk_length, origin,
+                                    (const char *const *) declaration.uses, declaration.uses_count,
+                                    source, err);
         fr_lua_set_acquiring_resolver(0);
     }
-    fr_plugins_free_uses(uses, uses_count);
+    fr_plugins_free_declaration(&declaration);
     fr_plugin_source_close(source);
     free(text);
     free(path);
