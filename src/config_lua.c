@@ -120,7 +120,7 @@ static void restore_empty_arrays(const cJSON *original, cJSON *converted) {
     }
 }
 
-#define FR_LUA_MAX_PLUGINS 32
+#define FR_LUA_MAX_PLUGINS 128
 
 typedef struct {
     char *capability;
@@ -451,6 +451,23 @@ static int lua_source_load(void *state, const char *project, const cJSON *block,
     return parse_status;
 }
 
+/* Reads table[index]'s field `key` without honoring a metatable, leaving the
+   value on the stack exactly as lua_getfield would. setmetatable is a
+   reachable base global in this sandbox, so a plugin's declaration table
+   could carry an __index that raises on an ordinary miss, or that answers
+   inconsistently across two reads of the same key; lua_declare_task and
+   lua_declare_toolchain each use this for every field whose value the rest
+   of the function depends on, so nothing they decide can be answered by a
+   plugin-supplied metatable. lua_declare_task's depends_on walk applies the
+   same reasoning to its own table: lua_rawlen in place of luaL_len, because
+   a raw length can report a hole (lua_rawlen({1, nil, 3}) is 3) and a __len
+   metamethod can itself raise; lua_rawgeti in place of lua_geti, so reading
+   that hole cannot dispatch to an __index either. */
+static void raw_getfield(lua_State *state, int index, const char *key) {
+    lua_pushstring(state, key);
+    lua_rawget(state, index);
+}
+
 /* Returns 0 with *out set, or does not return at all: every failure below is
    raised, not reported. Callers still check, because the 0-on-success return
    would otherwise invite a dereference that only longjmp keeps safe. */
@@ -461,7 +478,8 @@ static int take_slot(lua_State *state, const char *prefix, const char *field,
     if (name == NULL) return luaL_error(state, "a %s needs a name", prefix);
 
     if (plugin_slot_count == FR_LUA_MAX_PLUGINS) {
-        return luaL_error(state, "too many plugins declared in one configuration");
+        return luaL_error(state, "too many declarations in one configuration;"
+                          " at most %d are allowed", FR_LUA_MAX_PLUGINS);
     }
 
     char capability[128];
@@ -558,13 +576,24 @@ static int lua_declare_toolchain(lua_State *state) {
         return luaL_error(state, "a toolchain plugin could not be declared");
     }
 
-    if (chunk_toolchain_count < FR_LUA_MAX_CHUNK_TOOLCHAINS) {
-        lua_getfield(state, 1, "name");
-        chunk_toolchains[chunk_toolchain_count] = fr_dup_string(lua_tostring(state, -1));
-        lua_pop(state, 1);
-        if (chunk_toolchains[chunk_toolchain_count] == NULL) return luaL_error(state, "out of memory");
-        chunk_toolchain_count++;
+    if (chunk_toolchain_count == FR_LUA_MAX_CHUNK_TOOLCHAINS) {
+        return luaL_error(state, "a plugin chunk may declare at most %d toolchains",
+                          FR_LUA_MAX_CHUNK_TOOLCHAINS);
     }
+
+    /* raw_getfield, not lua_getfield: this read is the sole record of which
+       toolchain this chunk may declare tasks for, and take_slot above already
+       read the same table's "name" once to build the registered capability. A
+       hostile __index could answer those two reads differently (or answer
+       this one differently on a second call), letting a chunk record a
+       toolchain here that it never actually registered above. */
+    raw_getfield(state, 1, "name");
+    const char *toolchain_name = lua_tostring(state, -1);
+    if (toolchain_name == NULL) return luaL_error(state, "a toolchain needs a name");
+    chunk_toolchains[chunk_toolchain_count] = fr_dup_string(toolchain_name);
+    lua_pop(state, 1);
+    if (chunk_toolchains[chunk_toolchain_count] == NULL) return luaL_error(state, "out of memory");
+    chunk_toolchain_count++;
 
     fr_toolchain_plugin plugin = { slot->capability, lua_toolchain_generate, slot };
     fr_error err;
@@ -680,25 +709,6 @@ static int lua_task_run(void *state, const fr_task_run_context *context, fr_erro
     return FR_OK;
 }
 
-/* Reads table[index]'s field `key` without honoring a metatable, leaving the
-   value on the stack exactly as lua_getfield would. setmetatable is a
-   reachable base global in this sandbox, so a plugin's declaration table
-   could carry an __index that raises on an ordinary miss, and every field
-   lua_declare_task reads here is either optional (so a miss is the normal
-   case, not an adversarial one) or, for "name", read the same way so the
-   function has one rule with no exception to reintroduce later. The
-   depends_on walk applies the same reasoning to its own table: lua_rawlen
-   in place of luaL_len, because a raw length can report a hole
-   (lua_rawlen({1, nil, 3}) is 3) and a __len metamethod can itself raise;
-   lua_rawgeti in place of lua_geti, so reading that hole cannot dispatch to
-   an __index either. Every remaining raise point in lua_declare_task is
-   therefore one the function controls by name, not one a plugin-supplied
-   metatable can reach. */
-static void raw_getfield(lua_State *state, int index, const char *key) {
-    lua_pushstring(state, key);
-    lua_rawget(state, index);
-}
-
 /* Frees everything a task slot owns and zeroes it. This is needed only for a
    raise that happens before plugin_slot_count is incremented: the shutdown
    loop walks slots by that count, so a slot not yet counted has no other way
@@ -740,7 +750,8 @@ static int lua_declare_task(lua_State *state) {
         return luaL_error(state, "\"%s\" is declared twice", capability);
     }
     if (plugin_slot_count == FR_LUA_MAX_PLUGINS) {
-        return luaL_error(state, "too many plugins declared in one configuration");
+        return luaL_error(state, "too many declarations in one configuration;"
+                          " at most %d are allowed", FR_LUA_MAX_PLUGINS);
     }
 
     fr_lua_plugin_slot *slot = &plugin_slots[plugin_slot_count];

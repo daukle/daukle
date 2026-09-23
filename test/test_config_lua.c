@@ -789,6 +789,40 @@ TEST a_hostile_index_metatable_on_the_task_table_is_never_consulted(void) {
     PASS();
 }
 
+/* daukle.toolchain's own "name" and "generate" both come from take_slot's
+   ordinary (metamethod-honouring) reads, so an __index that raises
+   unconditionally would already fail there, before reaching the read this
+   test actually targets. A table with "generate" present but "name" absent
+   forces both take_slot's read of "name" and lua_declare_toolchain's own
+   second read of it (the one that records which toolchain this chunk may
+   declare tasks for) through the same __index; a stateful metamethod that
+   answers the first of those and raises on the second is exactly the attack
+   the fix closes, and the only way to reach the targeted read at all. With
+   raw_getfield in place, that second read never consults __index, so it
+   simply finds no raw "name" and refuses plainly; reverting to lua_getfield
+   lets the metamethod's second call fire and "boom" leaks into err.message
+   instead. */
+TEST a_hostile_index_metatable_on_the_toolchain_table_is_never_consulted(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *chunk =
+        "local seen = false\n"
+        "local mt = { __index = function(t, k)\n"
+        "  if k ~= 'name' then return nil end\n"
+        "  if seen then error('boom') end\n"
+        "  seen = true\n"
+        "  return 'cmake'\n"
+        "end }\n"
+        "daukle.toolchain(setmetatable({ generate = function() return {} end }, mt))\n";
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, "hostile-toolchain.lua", NULL, 0, &err));
+    ASSERT(strstr(err.message, "a toolchain needs a name") != NULL);
+    ASSERT(strstr(err.message, "boom") == NULL);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -829,5 +863,6 @@ int main(int argc, char **argv) {
     RUN_TEST(an_aggregator_needs_no_run);
     RUN_TEST(a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain);
     RUN_TEST(a_hostile_index_metatable_on_the_task_table_is_never_consulted);
+    RUN_TEST(a_hostile_index_metatable_on_the_toolchain_table_is_never_consulted);
     GREATEST_MAIN_END();
 }
