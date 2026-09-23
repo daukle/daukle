@@ -2,21 +2,23 @@
 #define DAUKLE_PLUGINS_H
 
 #include "registry.h"
+#include "resolvers.h"
 #include "types.h"
 
 #include <stddef.h>
 
 struct cJSON;
 
-typedef enum { FR_PLUGIN_LOCAL, FR_PLUGIN_REMOTE } fr_plugin_kind;
+typedef enum { FR_PLUGIN_PATH, FR_PLUGIN_URL, FR_PLUGIN_RESOLVED } fr_plugin_kind;
 
 typedef struct {
     char *label;
     fr_plugin_kind kind;
-    char *path;     /* FR_PLUGIN_LOCAL */
-    char *repo;     /* FR_PLUGIN_REMOTE, "owner/name" */
-    char *version;  /* FR_PLUGIN_REMOTE, a range */
-    char *sha256;   /* optional, NULL when unpinned */
+    char *path;        /* FR_PLUGIN_PATH */
+    char *url;         /* FR_PLUGIN_URL */
+    char *resolver;    /* FR_PLUGIN_RESOLVED, a [resolvers] label */
+    char *coordinate;  /* FR_PLUGIN_RESOLVED, opaque to core */
+    char *sha256;      /* optional on every kind */
 } fr_plugin_entry;
 
 /* One reported plugin, holding copies of everything an fr_plugin_entry held:
@@ -25,7 +27,7 @@ typedef struct {
 typedef struct {
     char *label;
     fr_plugin_kind kind;
-    char *resolved;    /* FR_PLUGIN_REMOTE: the version resolved; FR_PLUGIN_LOCAL: the path used */
+    char *resolved;    /* what the resolver answered, or the url or path used */
     char **uses;
     size_t uses_count;
     char sha256[65];   /* always computed, pinned or not: this is what makes adopting a
@@ -38,14 +40,18 @@ typedef struct {
 } fr_plugin_report;
 
 /* strdup is not C11 and strndup is absent on MSVC, so plugins.c and
-   plugins_remote.c share these rather than each keeping a copy. Defined in
+   resolvers.c share these rather than each keeping a copy. Defined in
    plugins.c, the original owner of both. */
 char *fr_dup_string(const char *text);
 char *fr_dup_prefix(const char *text, size_t length);
 
 /* Reads the manifest's `[plugins]` table into a freshly allocated array.
-   An absent table yields *out_count == 0 and FR_OK, not an error. */
-int fr_plugins_parse(const struct cJSON *document, fr_plugin_entry **out, size_t *out_count,
+   An absent table yields *out_count == 0 and FR_OK, not an error.
+   resolvers is the manifest's `[resolvers]` table, used only to list the
+   declared labels when a value names no resolver; whether a named resolver
+   exists is decided when the entry loads, not here. */
+int fr_plugins_parse(const struct cJSON *document, const fr_resolver_entry *resolvers,
+                     size_t resolver_count, fr_plugin_entry **out, size_t *out_count,
                      fr_error *err);
 
 /* A fetched dependency's manifest may not declare plugins: otherwise adding a
@@ -74,17 +80,19 @@ const fr_plugin_report *fr_plugins_report(void);
 void fr_plugins_report_clear(void);
 
 /* "daukle plugin update [label]"'s scoping rule, over entries already parsed
-   from ONE manifest: label NULL removes the cache of every FR_PLUGIN_REMOTE
-   entry in entries, and nothing outside it, so a label-less update in one
-   project can never reach another project's cache. A label removes only the
-   entry it names (a local match has nothing cached, so this is a no-op, not
-   an error); a label that entries does not declare is an error naming it.
-   *out_removed_count is how many entries actually had a cache removed (0 or 1
-   with a label, otherwise the count of remote entries touched), so a caller
-   can report a local no-op honestly rather than claiming a removal that never
-   happened. Calls plugins_remote.c's fr_plugins_remove_cache, declared in
-   plugins_remote.h, once per matched remote entry. */
-int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count, const char *label,
-                            size_t *out_removed_count, fr_error *err);
+   from ONE manifest: label NULL discards the fetched artifact of every
+   FR_PLUGIN_URL entry in entries, and nothing outside it, so a label-less
+   update in one project can never reach another project's cache. A label
+   discards only the entry it names (a path match has nothing cached, so this
+   is a no-op, not an error); a label that entries does not declare is an error
+   naming it. *out_removed_count is how many entries actually had an artifact
+   discarded, so a caller can report a no-op honestly rather than claiming a
+   removal that never happened.
+   Incomplete: an FR_PLUGIN_RESOLVED entry is still skipped, because reaching
+   its artifact means re-running the resolver that named it, which is what
+   resolvers takes here. */
+int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
+                            const fr_resolver_entry *resolvers, size_t resolver_count,
+                            const char *label, size_t *out_removed_count, fr_error *err);
 
 #endif

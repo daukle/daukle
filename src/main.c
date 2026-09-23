@@ -367,8 +367,27 @@ static int add_dependency(const fr_cli_options *options) {
    it is trying to discard. The load call therefore passes no registry, and an
    overlay format is refused outright, since executing one is precisely what
    dispatching on its extension would do. */
-static int read_manifest_plugins(const char *manifest_path, fr_plugin_entry **out_entries,
-                                 size_t *out_count, fr_error *err) {
+/* The document outlives the entries parsed from it because
+   fr_resolver_entry.block borrows from it, and a resolver reached after it was
+   freed would read freed memory. */
+typedef struct {
+    cJSON *document;
+    fr_plugin_entry *entries;
+    size_t count;
+    fr_resolver_entry *resolvers;
+    size_t resolver_count;
+} manifest_plugins;
+
+static void manifest_plugins_free(manifest_plugins *plugins) {
+    fr_plugins_free(plugins->entries, plugins->count);
+    fr_resolvers_free(plugins->resolvers, plugins->resolver_count);
+    cJSON_Delete(plugins->document);
+    memset(plugins, 0, sizeof *plugins);
+}
+
+static int read_manifest_plugins(const char *manifest_path, manifest_plugins *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+
     fr_registry *registry = NULL;
     if (fr_build_registry(&registry, err) != FR_OK) return FR_ERR;
 
@@ -390,15 +409,19 @@ static int read_manifest_plugins(const char *manifest_path, fr_plugin_entry **ou
         return FR_ERR;
     }
 
-    cJSON *document = NULL;
-    int status = plugin->load(plugin->state, text, manifest_path, ".", NULL, NULL, &document, err);
+    int status = plugin->load(plugin->state, text, manifest_path, ".", NULL, NULL,
+                              &out->document, err);
     free(text);
     fr_registry_destroy(registry);
     if (status != FR_OK) return FR_ERR;
 
-    status = fr_plugins_parse(document, out_entries, out_count, err);
-    cJSON_Delete(document);
-    return status;
+    if (fr_resolvers_parse(out->document, &out->resolvers, &out->resolver_count, err) != FR_OK
+        || fr_plugins_parse(out->document, out->resolvers, out->resolver_count, &out->entries,
+                            &out->count, err) != FR_OK) {
+        manifest_plugins_free(out);
+        return FR_ERR;
+    }
+    return FR_OK;
 }
 
 /* "update which plugins?" has no answer without a manifest in scope, so every
@@ -419,9 +442,8 @@ static int plugin_update(const char *label, int use_cache, int verbose) {
         return 1;
     }
 
-    fr_plugin_entry *entries = NULL;
-    size_t count = 0;
-    int status = read_manifest_plugins(resolved, &entries, &count, &err);
+    manifest_plugins plugins;
+    int status = read_manifest_plugins(resolved, &plugins, &err);
     free(resolved);
     if (status != FR_OK) {
         report_error(&err, verbose);
@@ -429,8 +451,9 @@ static int plugin_update(const char *label, int use_cache, int verbose) {
     }
 
     size_t removed_count = 0;
-    status = fr_plugins_update_cache(entries, count, label, &removed_count, &err);
-    fr_plugins_free(entries, count);
+    status = fr_plugins_update_cache(plugins.entries, plugins.count, plugins.resolvers,
+                                     plugins.resolver_count, label, &removed_count, &err);
+    manifest_plugins_free(&plugins);
     if (status != FR_OK) {
         report_error(&err, verbose);
         return 1;
@@ -444,7 +467,7 @@ static int plugin_update(const char *label, int use_cache, int verbose) {
                    removed_count == 1 ? "" : "s");
         }
     } else if (removed_count == 0) {
-        printf("daukle: plugin \"%s\" loads from a local file; it has no cache to clear\n", label);
+        printf("daukle: plugin \"%s\" has no fetched artifact to clear\n", label);
     } else {
         printf("daukle: cleared the cache for \"%s\"\n", label);
     }
