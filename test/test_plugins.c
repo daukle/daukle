@@ -912,6 +912,13 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     int tied_duplicate = fr_registry_language(registry, "daukle.language/remote-1-2-0-again") != NULL;
     int requests = release_requests;
 
+    /* Every other fixture resolves a coordinate to itself, so this is the one
+       place that separates "resolved holds the resolver's answer" from
+       "resolved echoes the coordinate back". */
+    const fr_plugin_report *report = fr_plugins_report();
+    char resolved[64] = "";
+    if (report->count == 1) snprintf(resolved, sizeof resolved, "%s", report->entries[0].resolved);
+
     cJSON_Delete(document);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
@@ -928,6 +935,7 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     ASSERT_FALSE(out_of_range);
     ASSERT_FALSE(tied_duplicate);
     ASSERT_EQ(2, requests);
+    ASSERT_STR_EQ("1.2.0", resolved);
     PASS();
 }
 
@@ -1050,7 +1058,9 @@ TEST the_report_names_a_plugins_declared_verbs(void) {
 /* The report is read only after the entries fr_plugins_load parsed, the
    manifest built from them, the registry and the lua runtime are all freed:
    under a sanitizer this is exactly the sequence that would surface a report
-   holding borrowed pointers rather than its own copies. */
+   holding borrowed pointers rather than its own copies. The resolved form is
+   loaded as well as the local one because resolver and url are NULL for a
+   path entry, so a path-only fixture leaves half the strings untested. */
 TEST the_report_survives_the_entries_it_describes_being_freed(void) {
     fr_error err;
     fr_registry *registry = NULL;
@@ -1069,6 +1079,32 @@ TEST the_report_survives_the_entries_it_describes_being_freed(void) {
     ASSERT_STR_EQ("hello", report->entries[0].label);
     ASSERT(report->entries[0].resolved != NULL);
     ASSERT_EQ(64, (int) strlen(report->entries[0].sha256));
+    fr_plugins_report_clear();
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    fr_http_fn previous = fr_http_set_backend(stub_inline);
+    fr_registry *resolved_registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&resolved_registry, &err));
+    cJSON *document = cJSON_Parse(
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"}},"
+        "\"plugins\":{\"p\":\"t:a/b\"}}");
+    int began = fr_lua_runtime_begin(".", resolved_registry, &err) == FR_OK;
+    int loaded = fr_plugins_load(resolved_registry, document, ".", &err) == FR_OK;
+
+    cJSON_Delete(document);
+    fr_registry_destroy(resolved_registry);
+    fr_lua_runtime_shutdown();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+
+    report = fr_plugins_report();
+    ASSERT(began && loaded);
+    ASSERT_EQ(1, (int) report->count);
+    ASSERT_STR_EQ("t", report->entries[0].resolver);
+    ASSERT_STR_EQ("https://example.invalid/a/b.lua", report->entries[0].url);
+    ASSERT_STR_EQ("a/b", report->entries[0].resolved);
 
     fr_plugins_report_clear();
     PASS();

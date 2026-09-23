@@ -1186,6 +1186,32 @@ int fr_lua_plugin_exec_is_refused(void) {
     return plugin_chunk_running;
 }
 
+/* A second registry reference to the same value, under a key nothing else can
+   reuse. Holding the reference rather than the slot number is what makes a
+   rollback restore the right closure: by the time one is needed the original
+   slot may already have been freed and handed to an unrelated luaL_ref. */
+static int hold_second_reference(lua_State *state, int reference) {
+    if (reference == LUA_NOREF) return LUA_NOREF;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, reference);
+    return luaL_ref(state, LUA_REGISTRYINDEX);
+}
+
+static void release_reference(lua_State *state, int reference) {
+    if (reference != LUA_NOREF) luaL_unref(state, LUA_REGISTRYINDEX, reference);
+}
+
+/* lua_declare_resolver replaces resolver_callback while the chunk is still
+   running, so a chunk that declared one and then failed has to put back what
+   it displaced; every other outcome just drops the spare reference. */
+static void settle_resolver_callback(lua_State *state, int chunk_succeeded, int backup) {
+    if (!chunk_succeeded && chunk_declared_resolver) {
+        release_reference(state, resolver_callback);
+        resolver_callback = backup;
+        return;
+    }
+    release_reference(state, backup);
+}
+
 int fr_lua_plugin_load(const char *text, const char *origin, const char *const *verbs,
                        size_t verb_count, fr_error *err) {
     lua_State *state = fr_lua_runtime_state();
@@ -1198,41 +1224,15 @@ int fr_lua_plugin_load(const char *text, const char *origin, const char *const *
     if (fr_lua_verbs_push_env(state, verbs, verb_count, err) != FR_OK) return FR_ERR;
     int env = lua_gettop(state);
 
-    /* A second, independent reference to whatever resolver was live before
-       this chunk runs. lua_declare_resolver unrefs and replaces
-       resolver_callback itself while the chunk is still running, so a later,
-       successful resolver chunk never leaks the one it displaces; if this
-       chunk then fails, that replacement must be undone, but by then the
-       original registry slot may already have been freed and handed to some
-       unrelated luaL_ref call earlier in the same chunk. Holding a second
-       reference to the same function value keeps it alive under a key
-       nothing else can reuse, so the rollback below restores the right
-       closure rather than whatever now occupies the old slot. */
-    int backup_resolver_callback = LUA_NOREF;
-    if (resolver_callback != LUA_NOREF) {
-        lua_rawgeti(state, LUA_REGISTRYINDEX, resolver_callback);
-        backup_resolver_callback = luaL_ref(state, LUA_REGISTRYINDEX);
-    }
+    int backup_resolver_callback = hold_second_reference(state, resolver_callback);
 
     chunk_state_clear();
     plugin_chunk_running = 1;
     int status = fr_lua_run_in_env(state, text, origin, env, err);
     plugin_chunk_running = 0;
 
-    if (status == FR_OK) {
-        resolver_declared = chunk_declared_resolver;
-        if (backup_resolver_callback != LUA_NOREF) {
-            luaL_unref(state, LUA_REGISTRYINDEX, backup_resolver_callback);
-        }
-    } else {
-        resolver_declared = 0;
-        if (chunk_declared_resolver) {
-            luaL_unref(state, LUA_REGISTRYINDEX, resolver_callback);
-            resolver_callback = backup_resolver_callback;
-        } else if (backup_resolver_callback != LUA_NOREF) {
-            luaL_unref(state, LUA_REGISTRYINDEX, backup_resolver_callback);
-        }
-    }
+    resolver_declared = status == FR_OK ? chunk_declared_resolver : 0;
+    settle_resolver_callback(state, status == FR_OK, backup_resolver_callback);
 
     chunk_state_clear();
     lua_settop(state, top);

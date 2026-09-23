@@ -211,20 +211,26 @@ TEST a_resolver_is_acquired_through_the_floor_and_invoked(void) {
    begin a runtime, act, capture into locals, release everything, then assert.
    Asserting before the shutdown would leave the shared runtime open and turn
    one failure into a cascade through the rest of the file. */
+/* The parse() helper above deletes the document, and fr_resolver_entry.block
+   borrows from it, so this returns the document for the caller to delete once
+   the resolver has run: handing a freed block to Lua is a use-after-free. */
+static cJSON *parse_keeping_the_document(const char *document_json, fr_resolver_entry **out,
+                                         size_t *out_count, fr_error *err) {
+    cJSON *document = cJSON_Parse(document_json);
+    if (fr_resolvers_parse(document, out, out_count, err) != FR_OK || *out_count != 1) {
+        fr_resolvers_free(*out, *out_count);
+        cJSON_Delete(document);
+        return NULL;
+    }
+    return document;
+}
+
 static int use_resolver(const char *document_json, const char *coordinate,
                         char **out_url, char **out_resolved, fr_error *err) {
-    /* Parses inline rather than through the parse() helper above, because that
-       helper deletes the document and fr_resolver_entry.block borrows from it.
-       Handing a freed block to a resolver is a use-after-free, and this is the
-       one test helper whose whole subject is the block reaching Lua. */
-    cJSON *document = cJSON_Parse(document_json);
     fr_resolver_entry *entries = NULL;
     size_t count = 0;
-    if (fr_resolvers_parse(document, &entries, &count, err) != FR_OK || count != 1) {
-        fr_resolvers_free(entries, count);
-        cJSON_Delete(document);
-        return FR_ERR;
-    }
+    cJSON *document = parse_keeping_the_document(document_json, &entries, &count, err);
+    if (document == NULL) return FR_ERR;
 
     fr_registry *registry = fr_registry_create();
     fr_http_headers headers = { { { NULL, NULL } }, 0 };
@@ -437,7 +443,7 @@ TEST fr_resolvers_use_rejects_a_null_entry(void) {
     int status = fr_resolvers_use(NULL, "a/b", &url, &resolved, &headers, &err);
 
     ASSERT_EQ(FR_ERR, status);
-    ASSERT(strstr(err.message, "resolver") != NULL);
+    ASSERT_STR_EQ("no resolver to use", err.message);
     ASSERT(url == NULL);
     ASSERT(resolved == NULL);
     PASS();
