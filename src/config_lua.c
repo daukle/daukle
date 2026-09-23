@@ -1212,8 +1212,8 @@ static void settle_resolver_callback(lua_State *state, int chunk_succeeded, int 
     release_reference(state, backup);
 }
 
-int fr_lua_plugin_load(const char *text, const char *origin, const char *const *verbs,
-                       size_t verb_count, fr_error *err) {
+int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
+                       const char *const *verbs, size_t verb_count, fr_error *err) {
     lua_State *state = fr_lua_runtime_state();
     if (state == NULL) {
         fr_error_set(err, "no lua runtime is open for \"%s\"", origin);
@@ -1228,7 +1228,7 @@ int fr_lua_plugin_load(const char *text, const char *origin, const char *const *
 
     chunk_state_clear();
     plugin_chunk_running = 1;
-    int status = fr_lua_run_in_env(state, text, origin, env, err);
+    int status = fr_lua_run_in_env_bytes(state, text, length, origin, env, err);
     plugin_chunk_running = 0;
 
     resolver_declared = status == FR_OK ? chunk_declared_resolver : 0;

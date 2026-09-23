@@ -16,8 +16,13 @@ int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_er
 /* Runs text with the table at env_index as its _ENV rather than the state's
    globals, so one state can host several chunks that each see a different set
    of names. env_index must be an absolute index. */
-int fr_lua_run_in_env(lua_State *state, const char *text, const char *chunk_name,
-                      int env_index, fr_error *err);
+int fr_lua_run_in_env(lua_State *state, const char *text, const char *chunk_name, int env_index,
+                      fr_error *err);
+
+/* fr_lua_run_in_env for content whose length strlen cannot re-derive, which is
+   every plugin artifact once one may be a tar archive. */
+int fr_lua_run_in_env_bytes(lua_State *state, const char *text, size_t length,
+                            const char *chunk_name, int env_index, fr_error *err);
 
 /* Pushes exactly one value on success and none on failure, leaving the stack as
    it found it either way. Fails rather than overrunning the lua stack when the

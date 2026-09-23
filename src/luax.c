@@ -157,10 +157,15 @@ int fr_lua_run(lua_State *state, const char *text, const char *chunk_name, fr_er
     return FR_OK;
 }
 
-int fr_lua_run_in_env(lua_State *state, const char *text, const char *chunk_name,
-                      int env_index, fr_error *err) {
+int fr_lua_run_in_env(lua_State *state, const char *text, const char *chunk_name, int env_index,
+                      fr_error *err) {
+    return fr_lua_run_in_env_bytes(state, text, strlen(text), chunk_name, env_index, err);
+}
+
+int fr_lua_run_in_env_bytes(lua_State *state, const char *text, size_t length,
+                            const char *chunk_name, int env_index, fr_error *err) {
     int top = lua_gettop(state);
-    if (fr_lua_load_named(state, text, strlen(text), chunk_name) != LUA_OK) {
+    if (fr_lua_load_named(state, text, length, chunk_name) != LUA_OK) {
         fr_error_set(err, "%s", fr_lua_error_text(state));
         has_traceback = 0;
         lua_settop(state, top);

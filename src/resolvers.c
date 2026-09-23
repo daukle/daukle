@@ -206,18 +206,19 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
 
     char *path = NULL;
     char *text = NULL;
+    size_t length = 0;
     if (entry->path != NULL) {
         if (fr_lua_sandbox_resolve(state, entry->path, &path, err) != FR_OK) return FR_ERR;
-        if (fr_file_read_text(path, &text, err) != FR_OK) {
+        if (fr_file_read_bytes(path, &text, &length, err) != FR_OK) {
             free(path);
             return FR_ERR;
         }
     } else {
-        if (fr_plugin_fetch(entry->url, NULL, 0, &text, err) != FR_OK) return FR_ERR;
+        if (fr_plugin_fetch(entry->url, NULL, 0, &text, &length, err) != FR_OK) return FR_ERR;
     }
 
     char digest[65];
-    fr_sha256_hex(text, strlen(text), digest);
+    fr_sha256_hex(text, length, digest);
     if (entry->sha256 != NULL && !digest_matches(digest, entry->sha256)) {
         fr_error_set(err, "resolver \"%s\": expected sha256 %s but the file is %s",
                     entry->label, entry->sha256, digest);
@@ -231,11 +232,12 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
 
     char **uses = NULL;
     size_t uses_count = 0;
-    int status = fr_plugins_read_uses(text, origin, "resolver", entry->label, &uses, &uses_count,
-                                      err);
+    int status = fr_plugins_read_uses(text, length, origin, "resolver", entry->label, &uses,
+                                      &uses_count, err);
     if (status == FR_OK) {
         fr_lua_set_acquiring_resolver(1);
-        status = fr_lua_plugin_load(text, origin, (const char *const *) uses, uses_count, err);
+        status = fr_lua_plugin_load(text, length, origin, (const char *const *) uses, uses_count,
+                                    err);
         fr_lua_set_acquiring_resolver(0);
     }
     fr_plugins_free_uses(uses, uses_count);

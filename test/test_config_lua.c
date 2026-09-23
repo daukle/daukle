@@ -709,7 +709,7 @@ TEST a_task_is_declared_and_registered(void) {
         "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n"
         "daukle.task{ name = 'cmake:build', partOf = 'build', dependsOn = { 'cmake:configure' },"
         " run = function() end }\n";
-    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, "cmake.lua", uses, 1, &err));
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", uses, 1, &err));
 
     const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/cmake:build");
     ASSERT(task != NULL);
@@ -727,7 +727,7 @@ TEST a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare(void) {
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, "squatter.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "squatter.lua", NULL, 0, &err));
     ASSERT(strstr(err.message, "declares no toolchain \"cmake\"") != NULL);
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
@@ -739,7 +739,7 @@ TEST an_aggregator_needs_no_run(void) {
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk = "daukle.task{ name = 'build' }\n";
-    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, "lifecycle.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, strlen(chunk), "lifecycle.lua", NULL, 0, &err));
 
     const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/build");
     ASSERT(task != NULL);
@@ -758,10 +758,10 @@ TEST a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain(void) {
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *first_chunk =
         "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n";
-    ASSERT_EQ(FR_OK, fr_lua_plugin_load(first_chunk, "cmake.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(first_chunk, strlen(first_chunk), "cmake.lua", NULL, 0, &err));
 
     const char *second_chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(second_chunk, "squatter.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(second_chunk, strlen(second_chunk), "squatter.lua", NULL, 0, &err));
     ASSERT(strstr(err.message, "declares no toolchain \"cmake\"") != NULL);
 
     fr_lua_runtime_shutdown();
@@ -781,7 +781,7 @@ TEST a_hostile_index_metatable_on_the_task_table_is_never_consulted(void) {
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk =
         "daukle.task(setmetatable({}, { __index = function() error('boom') end }))\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, "hostile.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "hostile.lua", NULL, 0, &err));
     ASSERT(strstr(err.message, "a task needs a name") != NULL);
     ASSERT(strstr(err.message, "boom") == NULL);
     fr_lua_runtime_shutdown();
@@ -815,7 +815,7 @@ TEST a_hostile_index_metatable_on_the_toolchain_table_is_never_consulted(void) {
         "  return 'cmake'\n"
         "end }\n"
         "daukle.toolchain(setmetatable({ generate = function() return {} end }, mt))\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, "hostile-toolchain.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "hostile-toolchain.lua", NULL, 0, &err));
     ASSERT(strstr(err.message, "a toolchain needs a name") != NULL);
     ASSERT(strstr(err.message, "boom") == NULL);
     fr_lua_runtime_shutdown();
@@ -830,7 +830,7 @@ static int load_resolver_chunk(const char *text, const char *origin,
                                const char *const *verbs, size_t verb_count,
                                fr_error *err) {
     fr_lua_set_acquiring_resolver(1);
-    int status = fr_lua_plugin_load(text, origin, verbs, verb_count, err);
+    int status = fr_lua_plugin_load(text, strlen(text), origin, verbs, verb_count, err);
     fr_lua_set_acquiring_resolver(0);
     return status;
 }
@@ -845,7 +845,7 @@ TEST a_chunk_not_acquired_as_a_resolver_may_not_declare_one(void) {
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
         "daukle.resolver{ resolve = function(c) return { url = c } end }\n";
-    int status = fr_lua_plugin_load(chunk, "ordinary.lua", NULL, 0, &err);
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "ordinary.lua", NULL, 0, &err);
     int declared = fr_lua_resolver_declared();
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
@@ -1041,7 +1041,7 @@ TEST a_chunk_declaring_no_resolver_reports_none_declared(void) {
     const char *second_chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
         "daukle.language{ name = 'x', apply = function() return '' end }\n";
-    int second_loaded = fr_lua_plugin_load(second_chunk, "second.lua", NULL, 0, &err) == FR_OK;
+    int second_loaded = fr_lua_plugin_load(second_chunk, strlen(second_chunk), "second.lua", NULL, 0, &err) == FR_OK;
     int declared = fr_lua_resolver_declared();
 
     fr_registry_destroy(registry);

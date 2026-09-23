@@ -109,7 +109,12 @@ int fr_region_replace(const char *original, const char *begin_marker, const char
 }
 
 int fr_file_read_text(const char *path, char **out, fr_error *err) {
+    return fr_file_read_bytes(path, out, NULL, err);
+}
+
+int fr_file_read_bytes(const char *path, char **out, size_t *out_length, fr_error *err) {
     *out = NULL;
+    if (out_length != NULL) *out_length = 0;
     FILE *file = fopen(path, "rb");
     if (file == NULL) {
         fr_error_set(err, "cannot open \"%s\"", path);
@@ -140,6 +145,7 @@ int fr_file_read_text(const char *path, char **out, fr_error *err) {
     buffer[read] = '\0';
 
     *out = buffer;
+    if (out_length != NULL) *out_length = read;
     return FR_OK;
 }
 

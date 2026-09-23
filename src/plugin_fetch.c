@@ -17,7 +17,7 @@ static int entry_path(const char *url, char *out, size_t out_size, fr_error *err
     char digest[65];
     fr_sha256_hex(url, strlen(url), digest);
 
-    int written = snprintf(out, out_size, "%s/plugins/%s/plugin.lua", root, digest);
+    int written = snprintf(out, out_size, "%s/plugins/%s/artifact", root, digest);
     if (written < 0 || (size_t) written >= out_size) {
         fr_error_set(err, "the plugin cache path for \"%s\" is too long", url);
         return FR_ERR;
@@ -26,8 +26,9 @@ static int entry_path(const char *url, char *out, size_t out_size, fr_error *err
 }
 
 int fr_plugin_fetch(const char *url, const fr_http_header *headers, size_t header_count,
-                    char **out_text, fr_error *err) {
+                    char **out_text, size_t *out_length, fr_error *err) {
     *out_text = NULL;
+    *out_length = 0;
 
     char path[1024];
     int have_path = entry_path(url, path, sizeof path, err) == FR_OK;
@@ -36,7 +37,7 @@ int fr_plugin_fetch(const char *url, const fr_http_header *headers, size_t heade
         FILE *probe = fopen(path, "rb");
         if (probe != NULL) {
             fclose(probe);
-            return fr_file_read_text(path, out_text, err);
+            return fr_file_read_bytes(path, out_text, out_length, err);
         }
     }
 
@@ -47,6 +48,7 @@ int fr_plugin_fetch(const char *url, const fr_http_header *headers, size_t heade
     if (have_path && fr_cache_enabled()) fr_cache_write_atomic(path, body, length);
 
     *out_text = body;
+    *out_length = length;
     return FR_OK;
 }
 

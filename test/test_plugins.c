@@ -497,7 +497,8 @@ TEST fr_plugins_read_uses_rejects_a_closed_runtime(void) {
     fr_error err;
     char **uses = NULL;
     size_t uses_count = 0;
-    int status = fr_plugins_read_uses("daukle.plugin{ api = 1 }", "test.lua", "resolver", "t",
+    static const char chunk[] = "daukle.plugin{ api = 1 }";
+    int status = fr_plugins_read_uses(chunk, sizeof chunk - 1, "test.lua", "resolver", "t",
                                       &uses, &uses_count, &err);
 
     ASSERT_EQ(FR_ERR, status);
@@ -1192,7 +1193,8 @@ TEST a_failed_pin_discards_the_cached_artifact(void) {
 
     fr_http_fn previous = fr_http_set_backend(stub_refuses_every_request);
     char *after = NULL;
-    int served_from_cache = fr_plugin_fetch(url, NULL, 0, &after, &err) == FR_OK;
+    size_t after_length = 0;
+    int served_from_cache = fr_plugin_fetch(url, NULL, 0, &after, &after_length, &err) == FR_OK;
     free(after);
 
     fr_http_set_backend(previous);
@@ -1226,7 +1228,8 @@ static int stub_named_artifacts(const char *url, const fr_http_header *headers,
 static int seed_cached_artifact(const char *url) {
     fr_error err;
     char *text = NULL;
-    int status = fr_plugin_fetch(url, NULL, 0, &text, &err) == FR_OK;
+    size_t length = 0;
+    int status = fr_plugin_fetch(url, NULL, 0, &text, &length, &err) == FR_OK;
     free(text);
     return status;
 }
@@ -1238,7 +1241,8 @@ static int artifact_survived(const char *url, fr_http_fn restore) {
     fr_error err;
     fr_http_set_backend(stub_refuses_every_request);
     char *text = NULL;
-    int served = fr_plugin_fetch(url, NULL, 0, &text, &err) == FR_OK;
+    size_t length = 0;
+    int served = fr_plugin_fetch(url, NULL, 0, &text, &length, &err) == FR_OK;
     free(text);
     fr_http_set_backend(restore);
     return served;
@@ -1731,6 +1735,52 @@ TEST a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_
     PASS();
 }
 
+/* Serves bytes carrying a NUL, which is what every tar archive does. The body
+   is built here rather than taken from a literal so the length is the thing
+   under test rather than something strlen could re-derive. */
+static int stub_body_with_a_nul(const char *url, const fr_http_header *headers,
+                                size_t header_count, char **out_body, size_t *out_length,
+                                fr_error *err) {
+    (void) url; (void) headers; (void) header_count; (void) err;
+    static const char body[] = "daukle.plugin{ api = 1 }\n\0 trailing";
+    size_t length = sizeof body - 1;
+    char *copy = malloc(length + 1);
+    if (copy == NULL) return FR_ERR;
+    memcpy(copy, body, length + 1);
+    *out_body = copy;
+    *out_length = length;
+    return FR_OK;
+}
+
+TEST fetched_bytes_carry_their_length_past_an_embedded_nul(void) {
+    static const char body[] = "daukle.plugin{ api = 1 }\n\0 trailing";
+    size_t body_length = sizeof body - 1;
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    fr_http_fn previous = fr_http_set_backend(stub_body_with_a_nul);
+
+    char *text = NULL;
+    size_t length = 0;
+    fr_error err;
+    int status = fr_plugin_fetch("https://x/artifact", NULL, 0, &text, &length, &err);
+
+    char expected[65];
+    fr_sha256_hex(body, body_length, expected);
+    char actual[65];
+    actual[0] = '\0';
+    if (status == FR_OK) fr_sha256_hex(text, length, actual);
+
+    free(text);
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+
+    ASSERT_EQm(err.message, FR_OK, status);
+    ASSERT_EQ(body_length, length);
+    ASSERT_STR_EQ(expected, actual);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -1769,6 +1819,7 @@ int main(int argc, char **argv) {
     RUN_TEST(the_github_plugin_authenticates_from_either_token_variable);
     RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
     RUN_TEST(a_url_entry_fetches_and_loads);
+    RUN_TEST(fetched_bytes_carry_their_length_past_an_embedded_nul);
     RUN_TEST(a_resolved_entry_loads_what_its_resolver_names);
     RUN_TEST(a_plugin_chunk_may_not_declare_a_resolver);
     RUN_TEST(the_headers_a_resolver_returns_reach_the_artifact_fetch);

@@ -357,7 +357,7 @@ static int protected_declaration_env(lua_State *state) {
     return 0;
 }
 
-static int read_declaration(lua_State *state, const char *text, const char *origin,
+static int read_declaration(lua_State *state, const char *text, size_t length, const char *origin,
                             fr_plugin_declaration *declaration, fr_error *err) {
     int top = lua_gettop(state);
     if (fr_lua_verbs_push_env(state, NULL, 0, err) != FR_OK) return FR_ERR;
@@ -372,7 +372,7 @@ static int read_declaration(lua_State *state, const char *text, const char *orig
     }
 
     declaration_in_progress = declaration;
-    int status = fr_lua_run_in_env(state, text, origin, env, err);
+    int status = fr_lua_run_in_env_bytes(state, text, length, origin, env, err);
     declaration_in_progress = NULL;
     lua_settop(state, top);
 
@@ -390,7 +390,7 @@ static int read_declaration(lua_State *state, const char *text, const char *orig
    below, so a resolver's malformed uses is reported as a resolver, not a
    plugin. A NULL runtime state is a real error here, not a crash:
    read_declaration's first line touches it. */
-int fr_plugins_read_uses(const char *text, const char *origin, const char *kind,
+int fr_plugins_read_uses(const char *text, size_t length, const char *origin, const char *kind,
                          const char *label, char ***out_uses, size_t *out_uses_count,
                          fr_error *err) {
     *out_uses = NULL;
@@ -403,7 +403,7 @@ int fr_plugins_read_uses(const char *text, const char *origin, const char *kind,
     }
 
     fr_plugin_declaration declaration = { kind, label, { NULL }, 0 };
-    if (read_declaration(state, text, origin, &declaration, err) != FR_OK) {
+    if (read_declaration(state, text, length, origin, &declaration, err) != FR_OK) {
         free_declaration(&declaration);
         return FR_ERR;
     }
@@ -543,16 +543,17 @@ static int unknown_resolver(const fr_plugin_entry *entry, const fr_resolver_entr
    the resolver's own answer and stays NULL for the two kinds core names
    itself. */
 static int acquire(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
-                   size_t resolver_count, char **out_text, char **out_origin, char **out_resolved,
-                   fr_error *err) {
+                   size_t resolver_count, char **out_text, size_t *out_length, char **out_origin,
+                   char **out_resolved, fr_error *err) {
     *out_text = NULL;
+    *out_length = 0;
     *out_origin = NULL;
     *out_resolved = NULL;
 
     if (entry->kind == FR_PLUGIN_PATH) {
         lua_State *state = fr_lua_runtime_state();
         if (fr_lua_sandbox_resolve(state, entry->path, out_origin, err) != FR_OK) return FR_ERR;
-        if (fr_file_read_text(*out_origin, out_text, err) != FR_OK) {
+        if (fr_file_read_bytes(*out_origin, out_text, out_length, err) != FR_OK) {
             free(*out_origin);
             *out_origin = NULL;
             return FR_ERR;
@@ -576,7 +577,7 @@ static int acquire(const fr_plugin_entry *entry, const fr_resolver_entry *resolv
 
     fr_http_header sent[FR_HTTP_MAX_HEADERS];
     size_t sent_count = fr_http_headers_borrow(&headers, sent);
-    int status = fr_plugin_fetch(*out_origin, sent, sent_count, out_text, err);
+    int status = fr_plugin_fetch(*out_origin, sent, sent_count, out_text, out_length, err);
     fr_http_headers_free(&headers);
     if (status != FR_OK) {
         free(*out_origin);
@@ -593,7 +594,9 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
     char *origin = NULL;
     char *text = NULL;
     char *resolved = NULL;
-    if (acquire(entry, resolvers, resolver_count, &text, &origin, &resolved, err) != FR_OK) {
+    size_t length = 0;
+    if (acquire(entry, resolvers, resolver_count, &text, &length, &origin, &resolved, err)
+        != FR_OK) {
         return FR_ERR;
     }
 
@@ -602,7 +605,7 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
        before read_declaration, which already runs the chunk: verifying after would
        mean the mismatched code had already executed. */
     char digest[65];
-    fr_sha256_hex(text, strlen(text), digest);
+    fr_sha256_hex(text, length, digest);
     if (entry->sha256 != NULL && !digest_matches(digest, entry->sha256)) {
         fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
                     entry->label, entry->sha256, digest);
@@ -615,9 +618,9 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
 
     lua_State *state = fr_lua_runtime_state();
     fr_plugin_declaration declaration = { "plugin", entry->label, { NULL }, 0 };
-    int status = read_declaration(state, text, origin, &declaration, err);
+    int status = read_declaration(state, text, length, origin, &declaration, err);
     if (status == FR_OK) {
-        status = fr_lua_plugin_load(text, origin, (const char *const *) declaration.uses,
+        status = fr_lua_plugin_load(text, length, origin, (const char *const *) declaration.uses,
                                     declaration.uses_count, err);
     }
     if (status == FR_OK) {
