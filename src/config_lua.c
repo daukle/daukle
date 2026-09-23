@@ -620,9 +620,50 @@ typedef struct {
     const cJSON *block;
     char **out_url;
     char **out_resolved;
+    fr_http_headers *out_headers;
 } lua_resolver_context;
 
 static lua_resolver_context *resolver_context;
+
+/* lua_next is itself raw, so an __index or __pairs on the returned table is
+   never consulted here either. A number key would be coerced to a string by
+   reading it, which breaks the traversal, so a non-string key is refused
+   rather than read. */
+static int read_resolver_headers(lua_State *state, int result, fr_http_headers *out) {
+    raw_getfield(state, result, "headers");
+    if (lua_isnil(state, -1)) {
+        lua_pop(state, 1);
+        return 0;
+    }
+    if (!lua_istable(state, -1)) {
+        return luaL_error(state, "the resolver returned %s headers, expected a table",
+                          luaL_typename(state, -1));
+    }
+
+    int table = lua_gettop(state);
+    lua_pushnil(state);
+    while (lua_next(state, table) != 0) {
+        if (lua_type(state, -2) != LUA_TSTRING) {
+            return luaL_error(state, "a header name must be a string, not %s",
+                              luaL_typename(state, -2));
+        }
+        if (lua_type(state, -1) != LUA_TSTRING) {
+            return luaL_error(state, "the \"%s\" header value must be a string, not %s",
+                              lua_tostring(state, -2), luaL_typename(state, -1));
+        }
+        size_t name_length = 0;
+        size_t value_length = 0;
+        const char *name = lua_tolstring(state, -2, &name_length);
+        const char *value = lua_tolstring(state, -1, &value_length);
+        fr_error add_err;
+        if (fr_http_headers_add(out, name, name_length, value, value_length, &add_err) != FR_OK) {
+            return luaL_error(state, "%s", add_err.message);
+        }
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+    return 0;
+}
 
 static int protected_resolver_call(lua_State *state) {
     const lua_resolver_context *context = resolver_context;
@@ -655,13 +696,15 @@ static int protected_resolver_call(lua_State *state) {
         if (*context->out_resolved == NULL) return luaL_error(state, "out of memory");
     }
     lua_pop(state, 1);
-    return 0;
+
+    return read_resolver_headers(state, result, context->out_headers);
 }
 
 int fr_lua_resolver_call(const char *coordinate, const cJSON *block, char **out_url,
-                         char **out_resolved, fr_error *err) {
+                         char **out_resolved, fr_http_headers *out_headers, fr_error *err) {
     *out_url = NULL;
     *out_resolved = NULL;
+    out_headers->count = 0;
     if (runtime_state == NULL) {
         fr_error_set(err, "no lua runtime is open to call a resolver");
         return FR_ERR;
@@ -671,7 +714,7 @@ int fr_lua_resolver_call(const char *coordinate, const cJSON *block, char **out_
         return FR_ERR;
     }
     int top = lua_gettop(runtime_state);
-    lua_resolver_context context = { coordinate, block, out_url, out_resolved };
+    lua_resolver_context context = { coordinate, block, out_url, out_resolved, out_headers };
     resolver_context = &context;
     lua_pushcfunction(runtime_state, protected_resolver_call);
     int status = lua_pcall(runtime_state, 0, 0, 0);
@@ -684,6 +727,7 @@ int fr_lua_resolver_call(const char *coordinate, const cJSON *block, char **out_
         *out_url = NULL;
         free(*out_resolved);
         *out_resolved = NULL;
+        fr_http_headers_free(out_headers);
         return FR_ERR;
     }
     lua_settop(runtime_state, top);
@@ -691,6 +735,7 @@ int fr_lua_resolver_call(const char *coordinate, const cJSON *block, char **out_
     if (*out_url == NULL) {
         free(*out_resolved);
         *out_resolved = NULL;
+        fr_http_headers_free(out_headers);
         fr_error_set(err, "the resolver returned no url");
         return FR_ERR;
     }

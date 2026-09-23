@@ -129,6 +129,13 @@ daukle.resolver{
             .. " of \"" .. repo .. "\" has no " .. asset .. " asset")
     end
 
-    return { url = url, resolved = best.major .. "." .. best.minor .. "." .. best.patch }
+    --- The asset carries the same headers the index did: a private repository
+    --- serves neither without them, and core forwards whatever a resolver
+    --- returns here without reading it.
+    return {
+      url = url,
+      resolved = best.major .. "." .. best.minor .. "." .. best.patch,
+      headers = authorization(),
+    }
   end,
 }

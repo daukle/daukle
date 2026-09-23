@@ -1,6 +1,7 @@
 #ifndef DAUKLE_CONFIG_LUA_H
 #define DAUKLE_CONFIG_LUA_H
 
+#include "http.h"
 #include "registry.h"
 
 #include "lua.h"
@@ -64,11 +65,15 @@ int fr_lua_resolver_declared(void);
 void fr_lua_set_acquiring_resolver(int acquiring);
 
 /* Calls the most recently declared resolver's resolve function with
-   coordinate and block, and reads url and resolved (if present) from the
-   table it returns. The caller adds the label and coordinate to any error
+   coordinate and block, and reads url, resolved and headers (if present) from
+   the table it returns. Every read of that table is raw, because a plugin
+   keeps setmetatable and an __index could otherwise answer for a key the
+   resolver never wrote. headers are copied out as opaque strings for the
+   fetch to send verbatim; the caller owns them and frees them with
+   fr_http_headers_free. The caller adds the label and coordinate to any error
    this raises. */
 int fr_lua_resolver_call(const char *coordinate, const struct cJSON *block, char **out_url,
-                         char **out_resolved, fr_error *err);
+                         char **out_resolved, fr_http_headers *out_headers, fr_error *err);
 
 /* The directory a running task's exec defaults to, or NULL when no task is
    running. This is what discharges the exec verb's cwd default: child spec 2

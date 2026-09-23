@@ -25,7 +25,8 @@ static int entry_path(const char *url, char *out, size_t out_size, fr_error *err
     return FR_OK;
 }
 
-int fr_plugin_fetch(const char *url, char **out_text, fr_error *err) {
+int fr_plugin_fetch(const char *url, const fr_http_header *headers, size_t header_count,
+                    char **out_text, fr_error *err) {
     *out_text = NULL;
 
     char path[1024];
@@ -41,7 +42,7 @@ int fr_plugin_fetch(const char *url, char **out_text, fr_error *err) {
 
     char *body = NULL;
     size_t length = 0;
-    if (fr_http_get(url, NULL, 0, &body, &length, err) != FR_OK) return FR_ERR;
+    if (fr_http_get(url, headers, header_count, &body, &length, err) != FR_OK) return FR_ERR;
 
     if (have_path && fr_cache_enabled()) fr_cache_write_atomic(path, body, length);
 

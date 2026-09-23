@@ -213,7 +213,7 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
             return FR_ERR;
         }
     } else {
-        if (fr_plugin_fetch(entry->url, &text, err) != FR_OK) return FR_ERR;
+        if (fr_plugin_fetch(entry->url, NULL, 0, &text, err) != FR_OK) return FR_ERR;
     }
 
     char digest[65];
@@ -251,7 +251,8 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
 }
 
 int fr_resolvers_use(const fr_resolver_entry *entry, const char *coordinate, char **out_url,
-                     char **out_resolved, fr_error *err) {
+                     char **out_resolved, fr_http_headers *out_headers, fr_error *err) {
+    out_headers->count = 0;
     if (entry == NULL) {
         fr_error_set(err, "no resolver to use");
         return FR_ERR;
@@ -262,7 +263,8 @@ int fr_resolvers_use(const fr_resolver_entry *entry, const char *coordinate, cha
         if (remember_loaded(entry, err) != FR_OK) return FR_ERR;
     }
 
-    if (fr_lua_resolver_call(coordinate, entry->block, out_url, out_resolved, err) == FR_OK) {
+    if (fr_lua_resolver_call(coordinate, entry->block, out_url, out_resolved, out_headers, err)
+        == FR_OK) {
         return FR_OK;
     }
 

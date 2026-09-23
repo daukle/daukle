@@ -188,7 +188,10 @@ TEST a_resolver_is_acquired_through_the_floor_and_invoked(void) {
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     char *url = NULL;
     char *resolved = NULL;
-    int status = fr_resolvers_use(&entries[0], "daukle/npm@^1.0.0", &url, &resolved, &err);
+    fr_http_headers headers = { { { NULL, NULL } }, 0 };
+    int status = fr_resolvers_use(&entries[0], "daukle/npm@^1.0.0", &url, &resolved,
+                                  &headers, &err);
+    fr_http_headers_free(&headers);
     int matched = status == FR_OK && url != NULL
                && strcmp(url, "https://example.invalid/daukle/npm@^1.0.0.lua") == 0;
 
@@ -224,10 +227,13 @@ static int use_resolver(const char *document_json, const char *coordinate,
     }
 
     fr_registry *registry = fr_registry_create();
+    fr_http_headers headers = { { { NULL, NULL } }, 0 };
     int status = FR_ERR;
     if (fr_lua_runtime_begin(".", registry, err) == FR_OK) {
-        status = fr_resolvers_use(&entries[0], coordinate, out_url, out_resolved, err);
+        status = fr_resolvers_use(&entries[0], coordinate, out_url, out_resolved, &headers,
+                                  err);
     }
+    fr_http_headers_free(&headers);
 
     fr_resolvers_free(entries, count);
     cJSON_Delete(document);
@@ -287,6 +293,68 @@ TEST a_resolver_returning_no_url_is_refused(void) {
     PASS();
 }
 
+/* Core forwards a resolver's headers to the request verbatim, so a value
+   carrying a line break would let a plugin append a header of its own or split
+   the request outright. This is the one place in the headers channel where a
+   defect is an injection rather than a wrong answer. */
+TEST a_header_value_holding_a_line_break_is_refused(void) {
+    fr_error err;
+    char *url = NULL;
+    char *resolved = NULL;
+    int status = use_resolver(
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/header-injection.lua\"}}}",
+        "a/b", &url, &resolved, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+    free(url);
+    free(resolved);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "line break") != NULL);
+    PASS();
+}
+
+TEST more_headers_than_the_bound_are_refused(void) {
+    fr_error err;
+    char *url = NULL;
+    char *resolved = NULL;
+    int status = use_resolver(
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/too-many-headers.lua\"}}}",
+        "a/b", &url, &resolved, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+    free(url);
+    free(resolved);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "more than 16 headers") != NULL);
+    PASS();
+}
+
+/* setmetatable is a base global a plugin keeps, so the table resolve RETURNS
+   can carry an __index that answers for keys it does not hold. Every read of
+   that table is raw, so the metamethod is never consulted and the answer is
+   the absent one: swapping any of those reads to lua_getfield makes this
+   resolver succeed with a url core never saw written down. */
+TEST a_hostile_metatable_on_the_returned_table_is_never_consulted(void) {
+    fr_error err;
+    char *url = NULL;
+    char *resolved = NULL;
+    int status = use_resolver(
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/hostile-result.lua\"}}}",
+        "a/b", &url, &resolved, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+    int url_taken = url != NULL;
+    free(url);
+    free(resolved);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT_FALSE(url_taken);
+    ASSERTm(message, strstr(message, "returned no url") != NULL);
+    PASS();
+}
+
 TEST a_chunk_that_declares_no_resolver_is_refused(void) {
     fr_error err;
     char *url = NULL;
@@ -327,12 +395,18 @@ TEST one_resolver_named_twice_is_acquired_once(void) {
 
     char *first_url = NULL;
     char *first_resolved = NULL;
-    int first = fr_resolvers_use(&entries[0], "a/b", &first_url, &first_resolved, &err);
+    fr_http_headers first_headers = { { { NULL, NULL } }, 0 };
+    int first = fr_resolvers_use(&entries[0], "a/b", &first_url, &first_resolved,
+                                 &first_headers, &err);
+    fr_http_headers_free(&first_headers);
 
     fr_http_set_backend(stub_refuses);
     char *second_url = NULL;
     char *second_resolved = NULL;
-    int second = fr_resolvers_use(&entries[0], "c/d", &second_url, &second_resolved, &err);
+    fr_http_headers second_headers = { { { NULL, NULL } }, 0 };
+    int second = fr_resolvers_use(&entries[0], "c/d", &second_url, &second_resolved,
+                                  &second_headers, &err);
+    fr_http_headers_free(&second_headers);
     int matched = second == FR_OK && second_url != NULL
                && strcmp(second_url, "https://example.invalid/c/d.lua") == 0;
 
@@ -359,7 +433,8 @@ TEST fr_resolvers_use_rejects_a_null_entry(void) {
     fr_error err;
     char *url = NULL;
     char *resolved = NULL;
-    int status = fr_resolvers_use(NULL, "a/b", &url, &resolved, &err);
+    fr_http_headers headers = { { { NULL, NULL } }, 0 };
+    int status = fr_resolvers_use(NULL, "a/b", &url, &resolved, &headers, &err);
 
     ASSERT_EQ(FR_ERR, status);
     ASSERT(strstr(err.message, "resolver") != NULL);
@@ -382,6 +457,9 @@ SUITE(resolvers_suite) {
     RUN_TEST(a_resolver_receives_its_own_block);
     RUN_TEST(a_resolver_that_raises_is_reported_with_its_own_message);
     RUN_TEST(a_resolver_returning_no_url_is_refused);
+    RUN_TEST(a_header_value_holding_a_line_break_is_refused);
+    RUN_TEST(more_headers_than_the_bound_are_refused);
+    RUN_TEST(a_hostile_metatable_on_the_returned_table_is_never_consulted);
     RUN_TEST(a_chunk_that_declares_no_resolver_is_refused);
     RUN_TEST(one_resolver_named_twice_is_acquired_once);
     RUN_TEST(fr_resolvers_use_rejects_a_null_entry);

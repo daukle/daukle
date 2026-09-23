@@ -783,6 +783,57 @@ TEST a_plugin_chunk_may_not_declare_a_resolver(void) {
     PASS();
 }
 
+static char ARTIFACT_AUTHORIZATION[128];
+
+static int stub_records_authorization(const char *url, const fr_http_header *headers,
+                                      size_t header_count, char **out_body, size_t *out_length,
+                                      fr_error *err) {
+    (void) url; (void) err;
+    ARTIFACT_AUTHORIZATION[0] = '\0';
+    for (size_t index = 0; index < header_count; index++) {
+        if (strcmp(headers[index].name, "Authorization") != 0) continue;
+        snprintf(ARTIFACT_AUTHORIZATION, sizeof ARTIFACT_AUTHORIZATION, "%s",
+                 headers[index].value);
+    }
+    *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n", out_length);
+    return FR_OK;
+}
+
+/* A private artifact needs the same credential its index did, and core names
+   no authentication scheme of its own: what reaches the request is whatever
+   opaque strings the resolver returned beside the url. */
+TEST the_headers_a_resolver_returns_reach_the_artifact_fetch(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/with-headers.lua\"}},"
+        "\"plugins\":{\"p\":\"t:a/b\"}}";
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    ARTIFACT_AUTHORIZATION[0] = '\0';
+    fr_http_fn previous = fr_http_set_backend(stub_records_authorization);
+    fr_registry *registry = NULL;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = fr_plugins_load(registry, document, ".", &err);
+    char seen[128];
+    snprintf(seen, sizeof seen, "%s", ARTIFACT_AUTHORIZATION);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+
+    ASSERT(built && began);
+    ASSERT_EQm(err.message, FR_OK, status);
+    ASSERT_STR_EQ("Bearer secret", seen);
+    PASS();
+}
+
 /* Four releases: o.lua (1.1.0, in range but not the highest), q.lua (2.0.0,
    out of range), p.lua (1.2.0, in range and the true highest), and p2.lua (a
    second "1.2.0" tag, in range and tied with p.lua). The true highest is
@@ -1105,7 +1156,7 @@ TEST a_failed_pin_discards_the_cached_artifact(void) {
 
     fr_http_fn previous = fr_http_set_backend(stub_refuses_every_request);
     char *after = NULL;
-    int served_from_cache = fr_plugin_fetch(url, &after, &err) == FR_OK;
+    int served_from_cache = fr_plugin_fetch(url, NULL, 0, &after, &err) == FR_OK;
     free(after);
 
     fr_http_set_backend(previous);
@@ -1139,7 +1190,7 @@ static int stub_named_artifacts(const char *url, const fr_http_header *headers,
 static int seed_cached_artifact(const char *url) {
     fr_error err;
     char *text = NULL;
-    int status = fr_plugin_fetch(url, &text, &err) == FR_OK;
+    int status = fr_plugin_fetch(url, NULL, 0, &text, &err) == FR_OK;
     free(text);
     return status;
 }
@@ -1151,7 +1202,7 @@ static int artifact_survived(const char *url, fr_http_fn restore) {
     fr_error err;
     fr_http_set_backend(stub_refuses_every_request);
     char *text = NULL;
-    int served = fr_plugin_fetch(url, &text, &err) == FR_OK;
+    int served = fr_plugin_fetch(url, NULL, 0, &text, &err) == FR_OK;
     free(text);
     fr_http_set_backend(restore);
     return served;
@@ -1576,6 +1627,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_url_entry_fetches_and_loads);
     RUN_TEST(a_resolved_entry_loads_what_its_resolver_names);
     RUN_TEST(a_plugin_chunk_may_not_declare_a_resolver);
+    RUN_TEST(the_headers_a_resolver_returns_reach_the_artifact_fetch);
     RUN_TEST(the_github_resolver_picks_the_highest_release_in_range);
     RUN_TEST(an_undeclared_resolver_is_refused_naming_it);
     RUN_TEST(a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests);

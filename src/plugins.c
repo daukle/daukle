@@ -560,6 +560,7 @@ static int acquire(const fr_plugin_entry *entry, const fr_resolver_entry *resolv
         return FR_OK;
     }
 
+    fr_http_headers headers = { { { NULL, NULL } }, 0 };
     if (entry->kind == FR_PLUGIN_URL) {
         *out_origin = fr_dup_string(entry->url);
         if (*out_origin == NULL) return out_of_memory(entry->label, err);
@@ -567,12 +568,17 @@ static int acquire(const fr_plugin_entry *entry, const fr_resolver_entry *resolv
         const fr_resolver_entry *resolver =
             fr_resolvers_find(resolvers, resolver_count, entry->resolver);
         if (resolver == NULL) return unknown_resolver(entry, resolvers, resolver_count, err);
-        if (fr_resolvers_use(resolver, entry->coordinate, out_origin, out_resolved, err) != FR_OK) {
+        if (fr_resolvers_use(resolver, entry->coordinate, out_origin, out_resolved, &headers, err)
+            != FR_OK) {
             return FR_ERR;
         }
     }
 
-    if (fr_plugin_fetch(*out_origin, out_text, err) != FR_OK) {
+    fr_http_header sent[FR_HTTP_MAX_HEADERS];
+    size_t sent_count = fr_http_headers_borrow(&headers, sent);
+    int status = fr_plugin_fetch(*out_origin, sent, sent_count, out_text, err);
+    fr_http_headers_free(&headers);
+    if (status != FR_OK) {
         free(*out_origin);
         free(*out_resolved);
         *out_origin = NULL;
@@ -724,11 +730,14 @@ int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
             } else {
                 char *url = NULL;
                 char *resolved = NULL;
-                status = fr_resolvers_use(resolver, entry->coordinate, &url, &resolved, err);
+                fr_http_headers headers = { { { NULL, NULL } }, 0 };
+                status = fr_resolvers_use(resolver, entry->coordinate, &url, &resolved, &headers,
+                                          err);
                 if (status == FR_OK) {
                     fr_plugin_fetch_discard(url);
                     (*out_removed_count)++;
                 }
+                fr_http_headers_free(&headers);
                 free(url);
                 free(resolved);
             }

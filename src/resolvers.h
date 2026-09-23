@@ -1,6 +1,7 @@
 #ifndef DAUKLE_RESOLVERS_H
 #define DAUKLE_RESOLVERS_H
 
+#include "http.h"
 #include "types.h"
 
 #include <stddef.h>
@@ -33,9 +34,12 @@ const fr_resolver_entry *fr_resolvers_find(const fr_resolver_entry *entries, siz
    sha256 before the chunk runs, and honours whatever verbs its own
    daukle.plugin{ uses = {...} } declares, the same as a plugin's chunk does. A
    NULL entry is a real daukle error, not a crash: entry->label is the first
-   thing this function would otherwise read. */
+   thing this function would otherwise read.
+   out_headers receives whatever headers the resolver returned beside the url,
+   for the caller to hand to the fetch unread; the caller frees them with
+   fr_http_headers_free. */
 int fr_resolvers_use(const fr_resolver_entry *entry, const char *coordinate, char **out_url,
-                     char **out_resolved, fr_error *err);
+                     char **out_resolved, fr_http_headers *out_headers, fr_error *err);
 
 /* Resets the loaded-resolver memo, so a later fr_resolvers_use acquires again
    rather than assuming a resolver from an earlier, now-shut-down runtime is
