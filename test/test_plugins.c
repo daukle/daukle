@@ -501,7 +501,7 @@ TEST fr_plugins_read_uses_rejects_a_closed_runtime(void) {
                                       &uses, &uses_count, &err);
 
     ASSERT_EQ(FR_ERR, status);
-    ASSERT(strstr(err.message, "test.lua") != NULL);
+    ASSERT(strstr(err.message, "no lua runtime is open") != NULL);
     ASSERT(uses == NULL);
     ASSERT_EQ(0u, uses_count);
     PASS();
@@ -725,6 +725,65 @@ TEST a_resolved_entry_loads_what_its_resolver_names(void) {
     ASSERT_EQm(err.message, FR_OK, status);
     ASSERT(registered);
     ASSERT_STR_EQ("https://x/a/b.lua", LAST_FETCHED_URL);
+    PASS();
+}
+
+/* p.lua is the 1.2.0 asset, in range for "^1.0.0"; q.lua is the 2.0.0 asset,
+   out of range. They register differently named languages so the test can tell
+   which one was fetched rather than only that loading succeeded. A resolver
+   that ignored the range and took the highest tag registers remote-2-0-0,
+   which the positive assertion alone would not catch. This is the same stub
+   shape the deleted C's test used, kept because the property is the same. */
+static int stub_releases_index(const char *url, const fr_http_header *headers, size_t header_count,
+                               char **out_body, size_t *out_length, fr_error *err) {
+    (void) headers; (void) header_count; (void) err;
+    release_requests++;
+    if (strstr(url, "/releases") != NULL) {
+        *out_body = copy_body("[{\"tag_name\":\"1.2.0\",\"assets\":"
+                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/p.lua\"}]},"
+                              "{\"tag_name\":\"2.0.0\",\"assets\":"
+                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/q.lua\"}]}]",
+                              out_length);
+    } else if (strstr(url, "/p.lua") != NULL) {
+        *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
+                              "daukle.language{ name = 'remote-1-2-0', apply = function() return '' end }\n",
+                              out_length);
+    } else {
+        *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
+                              "daukle.language{ name = 'remote-2-0-0', apply = function() return '' end }\n",
+                              out_length);
+    }
+    return FR_OK;
+}
+
+TEST the_github_resolver_picks_the_highest_release_in_range(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"gh\":{\"path\":\"./github-releases.lua\"}},"
+        "\"plugins\":{\"r\":\"gh:daukle/remote@^1.0.0\"}}";
+
+    fr_http_fn previous = fr_http_set_backend(stub_releases_index);
+    fr_registry *registry = NULL;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
+
+    int began = fr_lua_runtime_begin("test/fixtures/github-resolver", registry, &err) == FR_OK;
+    int loaded = fr_plugins_load(registry, document, "test/fixtures/github-resolver", &err) == FR_OK;
+    int in_range = fr_registry_language(registry, "daukle.language/remote-1-2-0") != NULL;
+    int out_of_range = fr_registry_language(registry, "daukle.language/remote-2-0-0") != NULL;
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+
+    ASSERT(built);
+    ASSERT(began);
+    ASSERT(loaded);
+    ASSERT(in_range);
+    ASSERT_FALSE(out_of_range);
     PASS();
 }
 
@@ -1344,6 +1403,7 @@ int main(int argc, char **argv) {
     RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
     RUN_TEST(a_url_entry_fetches_and_loads);
     RUN_TEST(a_resolved_entry_loads_what_its_resolver_names);
+    RUN_TEST(the_github_resolver_picks_the_highest_release_in_range);
     RUN_TEST(an_undeclared_resolver_is_refused_naming_it);
     RUN_TEST(a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests);
     RUN_TEST(an_uppercase_pin_still_matches_the_lowercase_digest);
