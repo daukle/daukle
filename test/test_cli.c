@@ -1,5 +1,6 @@
 #include "greatest.h"
 #include "cli.h"
+#include "tasks.h"
 
 static fr_cli_options parse(int argc, const char **argv) {
     fr_cli_options options;
@@ -232,6 +233,54 @@ TEST tasks_is_a_command_not_a_task(void) {
     PASS();
 }
 
+/* fr_tasks_name_is_reserved's own list and the strcmp chain above it exist
+   only because nothing ties them together; a name added to one and
+   forgotten in the other would exist, list, and never run without either
+   side noticing. Driving fr_cli_parse with each of the words the chain
+   above dispatches on, with whatever follows it needs to reach its own
+   command, pins both halves of that contract at once: the command must not
+   be FR_CLI_TASK (a task of the same name would never run), and the same
+   word must be reserved (a task of that name would never be offered
+   either). */
+TEST every_built_in_command_word_is_also_a_reserved_task_name(void) {
+    const char *sync_argv[] = { "daukle", "sync" };
+    fr_cli_options sync_options = parse(2, sync_argv);
+    ASSERT_EQ(FR_CLI_SYNC, sync_options.command);
+    ASSERT(fr_tasks_name_is_reserved("sync"));
+
+    const char *check_argv[] = { "daukle", "check" };
+    fr_cli_options check_options = parse(2, check_argv);
+    ASSERT_EQ(FR_CLI_CHECK, check_options.command);
+    ASSERT(fr_tasks_name_is_reserved("check"));
+
+    const char *add_argv[] = { "daukle", "add", "me/app@1.0.0", "--to", "consumer" };
+    fr_cli_options add_options = parse(5, add_argv);
+    ASSERT_EQ(FR_CLI_ADD, add_options.command);
+    ASSERT(fr_tasks_name_is_reserved("add"));
+
+    const char *config_argv[] = { "daukle", "config", "print" };
+    fr_cli_options config_options = parse(3, config_argv);
+    ASSERT_EQ(FR_CLI_CONFIG_PRINT, config_options.command);
+    ASSERT(fr_tasks_name_is_reserved("config"));
+
+    const char *plugin_argv[] = { "daukle", "plugin", "update" };
+    fr_cli_options plugin_options = parse(3, plugin_argv);
+    ASSERT_EQ(FR_CLI_PLUGIN_UPDATE, plugin_options.command);
+    ASSERT(fr_tasks_name_is_reserved("plugin"));
+
+    const char *clean_argv[] = { "daukle", "clean" };
+    fr_cli_options clean_options = parse(2, clean_argv);
+    ASSERT_EQ(FR_CLI_CLEAN, clean_options.command);
+    ASSERT(fr_tasks_name_is_reserved("clean"));
+
+    const char *tasks_argv[] = { "daukle", "tasks" };
+    fr_cli_options tasks_options = parse(2, tasks_argv);
+    ASSERT_EQ(FR_CLI_TASKS, tasks_options.command);
+    ASSERT(fr_tasks_name_is_reserved("tasks"));
+
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -264,5 +313,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_built_in_command_wins_over_a_task_of_the_same_name);
     RUN_TEST(a_task_takes_no_second_word);
     RUN_TEST(tasks_is_a_command_not_a_task);
+    RUN_TEST(every_built_in_command_word_is_also_a_reserved_task_name);
     GREATEST_MAIN_END();
 }
