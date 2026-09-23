@@ -202,31 +202,35 @@ static int open_node(deps_node *node, fr_error *err) {
    Only ever reached at depth 0 (parent == DEPS_NONE): an override is written
    on the dependent's own [plugins] entry and names one of ITS aliases, so it
    has no meaning for an alias belonging to something the dependent itself
-   requires, and acquire_one enforces that before calling this. Node reuse
-   (node_with_url) and cycle detection are both skipped: they exist to make a
-   shared pin meaningless-order-independent, and an override's pin (if any) is
-   never compared against another requester's, by design (see
-   validate_overrides and the module doc). */
+   requires, and acquire_one enforces that before calling this. That is also
+   why this carries no depth or node-count guard of its own: depth is always 0
+   here, under FR_PLUGIN_DEPS_MAX_DEPTH by construction, and this only ever
+   runs from fr_plugin_deps_acquire's first loop, before graph->count can
+   exceed FR_PLUGIN_MAX_REQUIRES, itself well under FR_PLUGIN_DEPS_MAX_NODES.
+   A runtime check on either would be a second copy of an invariant nothing
+   here could ever violate. Node reuse (node_with_url) and cycle detection are
+   both skipped too: they exist to make a shared pin meaningless-order-
+   independent, and an override's pin (if any) is never compared against
+   another requester's, by design (see validate_overrides and the module
+   doc). */
 static int acquire_override(deps_graph *graph, fr_plugin_deps *view, size_t depth,
                             const fr_plugin_requirement *requirement, const struct cJSON *value,
                             const fr_resolver_entry *resolvers, size_t resolver_count,
                             fr_error *err) {
-    if (depth >= FR_PLUGIN_DEPS_MAX_DEPTH) {
-        fr_error_set(err, "%s \"%s\": the dependency graph is deeper than %d, reaching \"%s\"",
-                     requester(view), view->label, FR_PLUGIN_DEPS_MAX_DEPTH, requirement->alias);
-        return FR_ERR;
-    }
-    if (graph->count == FR_PLUGIN_DEPS_MAX_NODES) {
-        fr_error_set(err, "%s \"%s\": the dependency graph names more than %d artifacts",
-                     requester(view), view->label, FR_PLUGIN_DEPS_MAX_NODES);
-        return FR_ERR;
-    }
+    /* Labelled as the override it is, not as the bare alias: plugins.c's
+       shared messages (fr_plugins_parse_entry, fr_plugins_acquire_source) all
+       read "plugin \"%s\": ...", and a bare alias there would send the reader
+       looking for a [plugins.<alias>] entry that does not exist, the exact
+       trap requester() exists to avoid everywhere else in this module. */
+    char override_label[FR_PLUGIN_MAX_ALIAS + 96];
+    snprintf(override_label, sizeof override_label, "%s's override for %s", view->label,
+            requirement->alias);
 
     fr_plugin_entry entry;
     memset(&entry, 0, sizeof entry);
-    entry.label = fr_dup_string(requirement->alias);
+    entry.label = fr_dup_string(override_label);
     if (entry.label == NULL) return out_of_memory(view, err);
-    if (fr_plugins_parse_entry(requirement->alias, value, resolvers, resolver_count, &entry, err)
+    if (fr_plugins_parse_entry(override_label, value, resolvers, resolver_count, &entry, err)
         != FR_OK) {
         fr_plugins_free_entry(&entry);
         return FR_ERR;
@@ -282,10 +286,7 @@ static int acquire_override(deps_graph *graph, fr_plugin_deps *view, size_t dept
 static int acquire_one(deps_graph *graph, fr_plugin_deps *view, size_t parent, size_t depth,
                        const fr_plugin_requirement *requirement, const struct cJSON *overrides,
                        const fr_resolver_entry *resolvers, size_t resolver_count, fr_error *err) {
-    /* Scoped to the dependent's own requires (parent == DEPS_NONE): an alias
-       is author-chosen and the override table is keyed by that same alias, so
-       applying it below depth 0 would mean one artifact's override reaching
-       into an unrelated artifact's alias namespace by spelling coincidence. */
+    /* Scoped to depth 0 only; acquire_override's own doc says why. */
     if (parent == DEPS_NONE && overrides != NULL) {
         const cJSON *value = cJSON_GetObjectItemCaseSensitive(overrides, requirement->alias);
         if (value != NULL) {
@@ -411,9 +412,9 @@ static int validate_overrides(const fr_plugin_declaration *declaration, const cJ
         }
         if (cJSON_IsObject(entry) && cJSON_GetObjectItemCaseSensitive(entry, "requires") != NULL) {
             fr_error_set(err, "plugin \"%s\": requires[\"%s\"] names its own requires, which is"
-                              " reserved: an override replaces one alias and may not nest another"
-                              " override inside it",
-                         label, alias);
+                              " reserved: [plugins.%s.requires.%s.requires] is not a supported"
+                              " form, and an override may not nest another override inside it",
+                         label, alias, label, alias);
             return FR_ERR;
         }
     }

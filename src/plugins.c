@@ -117,13 +117,9 @@ static int parse_string_form(const char *label, const char *value,
    of them may also carry a "sha256" pin. */
 static int parse_table_form(const char *label, const cJSON *member, fr_plugin_entry *out,
                             fr_error *err) {
-    /* Borrowed, not copied: the document outlives every entry parsed from it
-       (fr_plugins_load holds it for the whole load), and plugin_deps.c is the
-       only reader, scoped to this entry's own aliases. Whether it is even
-       valid as a table of alias to artifact is plugin_deps.c's question to
-       ask, not this parse's: a [plugins] entry with no requires at all is the
-       overwhelmingly common case and must not pay for validating a table that
-       is not there. */
+    /* Not validated here: plugin_deps.c is the sole reader, and validating an
+       absent table would tax the common case (no requires at all) for
+       nothing. */
     out->overrides = cJSON_GetObjectItemCaseSensitive(member, "requires");
 
     if (cJSON_GetObjectItemCaseSensitive(member, "sha256") != NULL) {

@@ -76,6 +76,38 @@ TEST parses_the_table_form_naming_a_resolver_and_a_coordinate(void) {
     PASS();
 }
 
+TEST a_table_entrys_requires_key_becomes_its_overrides(void) {
+    cJSON *document = document_from(
+        "{\"plugins\":{\"gradle\":{\"resolver\":\"github\",\"coordinate\":\"daukle/gradle@^2.0.0\","
+        "\"requires\":{\"java\":\"./plugins/java\"}}}}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERT_EQ(1, (int) count);
+    ASSERT(entries[0].overrides != NULL);
+    const cJSON *java = cJSON_GetObjectItemCaseSensitive(entries[0].overrides, "java");
+    ASSERT(java != NULL);
+    ASSERT(cJSON_IsString(java));
+    ASSERT_STR_EQ("./plugins/java", java->valuestring);
+
+    fr_plugins_free(entries, count);
+    cJSON_Delete(document);
+    PASS();
+}
+
+TEST a_table_entry_without_requires_has_no_overrides(void) {
+    cJSON *document = document_from("{\"plugins\":{\"gradle\":{\"url\":\"https://example.invalid/g.lua\"}}}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERT_EQ(1, (int) count);
+    ASSERT(entries[0].overrides == NULL);
+
+    fr_plugins_free(entries, count);
+    cJSON_Delete(document);
+    PASS();
+}
+
 TEST parses_a_local_path(void) {
     cJSON *document = document_from("{\"plugins\":{\"mine\":\"./plugins/mine.lua\"}}");
     fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
@@ -2301,6 +2333,8 @@ int main(int argc, char **argv) {
     RUN_TEST(parses_the_string_url_form);
     RUN_TEST(parses_the_table_form_with_a_pin);
     RUN_TEST(parses_the_table_form_naming_a_resolver_and_a_coordinate);
+    RUN_TEST(a_table_entrys_requires_key_becomes_its_overrides);
+    RUN_TEST(a_table_entry_without_requires_has_no_overrides);
     RUN_TEST(parses_a_local_path);
     RUN_TEST(a_table_entry_naming_two_forms_is_refused);
     RUN_TEST(a_table_entry_naming_no_form_is_refused);

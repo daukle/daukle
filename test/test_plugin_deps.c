@@ -149,9 +149,13 @@ static int acquire_for(const char *source, fr_plugin_deps **out_deps, char *mess
 
 /* Like acquire_for, but with a manifest override: overrides is the borrowed
    cJSON "requires" table a [plugins.<label>] entry's own "requires" key would
-   carry, exactly as plugin_deps.c receives it from fr_plugin_entry.overrides. */
-static int acquire_with_overrides(const char *source, const cJSON *overrides,
-                                  fr_plugin_deps **out_deps, char *message, size_t size) {
+   carry, exactly as plugin_deps.c receives it from fr_plugin_entry.overrides.
+   base_dir is the sandbox root a path-form override resolves against; every
+   caller but the directory-override test passes "." and never writes a path
+   override, so the sandbox is never actually consulted for them. */
+static int acquire_with_overrides(const char *base_dir, const char *source,
+                                  const cJSON *overrides, fr_plugin_deps **out_deps,
+                                  char *message, size_t size) {
     fr_error err;
     fr_plugin_declaration declaration;
     memset(&declaration, 0, sizeof declaration);
@@ -162,7 +166,7 @@ static int acquire_with_overrides(const char *source, const cJSON *overrides,
     fr_cache_set_enabled(0);
     fr_http_fn previous = fr_http_set_backend(serve_stub);
 
-    int status = fr_lua_runtime_begin(".", NULL, &err);
+    int status = fr_lua_runtime_begin(base_dir, NULL, &err);
     if (status == FR_OK) {
         status = fr_plugins_read_declaration(source, strlen(source), "@test", "plugin", "gradle",
                                              &declaration, &err);
@@ -677,7 +681,7 @@ TEST a_manifest_override_replaces_what_the_author_named(void) {
     cJSON *overrides = cJSON_Parse(overrides_json);
 
     fr_plugin_deps *deps = NULL;
-    int status = acquire_with_overrides(source, overrides, &deps, acquire_message,
+    int status = acquire_with_overrides(".", source, overrides, &deps, acquire_message,
                                         sizeof acquire_message);
     int requests = stub_requests;
 
@@ -720,7 +724,7 @@ TEST an_override_naming_an_alias_the_dependent_does_not_declare_is_refused(void)
     cJSON *overrides = cJSON_Parse(overrides_json);
 
     fr_plugin_deps *deps = NULL;
-    int status = acquire_with_overrides(source, overrides, &deps, message, sizeof message);
+    int status = acquire_with_overrides(".", source, overrides, &deps, message, sizeof message);
     cJSON_Delete(overrides);
     fr_plugin_deps_close(deps);
     fr_lua_runtime_shutdown();
@@ -745,14 +749,144 @@ TEST an_override_naming_its_own_requires_is_refused_as_reserved(void) {
     cJSON *overrides = cJSON_Parse(overrides_json);
 
     fr_plugin_deps *deps = NULL;
-    int status = acquire_with_overrides(source, overrides, &deps, message, sizeof message);
+    int status = acquire_with_overrides(".", source, overrides, &deps, message, sizeof message);
     cJSON_Delete(overrides);
     fr_plugin_deps_close(deps);
     fr_lua_runtime_shutdown();
 
     ASSERT_EQ(FR_ERR, status);
     ASSERTm(message, strstr(message, "reserved") != NULL);
-    ASSERTm(message, strstr(message, "java") != NULL);
+    /* Names the dotted form it reserves, not merely the alias it is about: a
+       refusal naming no form at all would still contain "java" (the alias)
+       and would satisfy a looser assertion. */
+    ASSERTm(message, strstr(message, "[plugins.gradle.requires.java.requires]") != NULL);
+    PASS();
+}
+
+/* A malformed override value is refused inside fr_plugins_parse_entry, whose
+   messages read "plugin \"%s\": ...": the label passed there must not be the
+   bare alias, or the reader is sent looking for a [plugins.java] entry that
+   does not exist. */
+TEST a_malformed_override_value_is_refused_naming_the_override_not_the_alias(void) {
+    static char message[512];
+    char source[512];
+    serve_two_plugins();
+    dependent_source(source, sizeof source, "java", "https://x/java.lua", JAVA_DIGEST);
+    cJSON *overrides = cJSON_Parse("{\"java\":{\"path\":\"./x\",\"url\":\"https://x/y\"}}");
+
+    fr_plugin_deps *deps = NULL;
+    int status = acquire_with_overrides(".", source, overrides, &deps, message, sizeof message);
+    cJSON_Delete(overrides);
+    fr_plugin_deps_close(deps);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "path, url, or resolver") != NULL);
+    ASSERTm(message, strstr(message, "gradle's override for java") != NULL);
+    PASS();
+}
+
+/* The other call site sharing plugins.c's "plugin \"%s\": ..." messages:
+   fr_plugins_acquire_source's own pin check, reached once parsing succeeded. */
+TEST an_override_whose_pin_does_not_match_is_refused_naming_the_override_not_the_alias(void) {
+    static char message[512];
+    char source[512];
+    char overrides_json[256];
+    serve_two_plugins();
+    dependent_source(source, sizeof source, "java", "https://x/java.lua", JAVA_DIGEST);
+    snprintf(overrides_json, sizeof overrides_json,
+            "{\"java\":{\"url\":\"https://x/foo.lua\",\"sha256\":\"%s\"}}", ZERO_DIGEST);
+    cJSON *overrides = cJSON_Parse(overrides_json);
+
+    fr_plugin_deps *deps = NULL;
+    int status = acquire_with_overrides(".", source, overrides, &deps, message, sizeof message);
+    cJSON_Delete(overrides);
+    fr_plugin_deps_close(deps);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "expected sha256") != NULL);
+    ASSERTm(message, strstr(message, "gradle's override for java") != NULL);
+    PASS();
+}
+
+static const char DIR_OVERRIDE_PLUGIN_TEXT[] =
+    "daukle.plugin{ api = 1, exports = { \"lib/coords\" } }\n";
+static const char DIR_OVERRIDE_COORDS_TEXT[] = "return { tag = \"directory\" }\n";
+
+/* This is the primary local-development case the override exists for at all
+   (a path, never reachable any other way), and it produces node state the
+   ordinary url path never does: NULL text, zero length, an empty digest, and
+   a directory source handed to read_node_declaration. A real temp directory
+   is used rather than a fixture the sandbox already trusts, so the path
+   actually travels through fr_lua_sandbox_resolve_dir and
+   fr_plugin_source_open_directory, not around them. */
+TEST a_path_override_reads_a_local_directory(void) {
+    static char acquire_message[512];
+    static char member_message[512];
+    char scratch[512];
+    char lib_dir[512];
+    char plugin_file[512];
+    char coords_file[512];
+    char source[512];
+    FILE *plugin_out;
+    FILE *coords_out;
+
+    snprintf(scratch, sizeof scratch, "%s/daukle_test_plugin_deps_override_%d",
+            fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(scratch);
+    ASSERT_EQ(0, fr_test_make_directory(scratch));
+    snprintf(lib_dir, sizeof lib_dir, "%s/lib", scratch);
+    ASSERT_EQ(0, fr_test_make_directory(lib_dir));
+
+    snprintf(plugin_file, sizeof plugin_file, "%s/plugin.lua", scratch);
+    plugin_out = fopen(plugin_file, "wb");
+    ASSERTm("could not write the fixture plugin.lua", plugin_out != NULL);
+    fwrite(DIR_OVERRIDE_PLUGIN_TEXT, 1, sizeof DIR_OVERRIDE_PLUGIN_TEXT - 1, plugin_out);
+    fclose(plugin_out);
+
+    snprintf(coords_file, sizeof coords_file, "%s/lib/coords.lua", scratch);
+    coords_out = fopen(coords_file, "wb");
+    ASSERTm("could not write the fixture lib/coords.lua", coords_out != NULL);
+    fwrite(DIR_OVERRIDE_COORDS_TEXT, 1, sizeof DIR_OVERRIDE_COORDS_TEXT - 1, coords_out);
+    fclose(coords_out);
+
+    serve_two_plugins();
+    dependent_source(source, sizeof source, "java", "https://x/java.lua", JAVA_DIGEST);
+    cJSON *overrides = cJSON_Parse("{\"java\":{\"path\":\".\"}}");
+
+    fr_plugin_deps *deps = NULL;
+    int status = acquire_with_overrides(scratch, source, overrides, &deps, acquire_message,
+                                        sizeof acquire_message);
+    int requests = stub_requests;
+
+    fr_error err;
+    const char *text = NULL;
+    size_t length = 0;
+    fr_plugin_deps *owner = NULL;
+    const char *owner_label = NULL;
+    int member_status = FR_ERR;
+    int served_directory = 0;
+    if (status == FR_OK) {
+        member_status = fr_plugin_deps_member(deps, "java", "lib/coords", &text, &length, &owner,
+                                              &owner_label, &err);
+        if (member_status == FR_OK) {
+            served_directory = length == sizeof DIR_OVERRIDE_COORDS_TEXT - 1
+                && memcmp(text, DIR_OVERRIDE_COORDS_TEXT, length) == 0;
+        } else {
+            snprintf(member_message, sizeof member_message, "%s", err.message);
+        }
+    }
+    cJSON_Delete(overrides);
+    fr_plugin_deps_close(deps);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(scratch);
+
+    ASSERT_EQm(acquire_message, FR_OK, status);
+    ASSERT_EQm(member_message, FR_OK, member_status);
+    ASSERTm("the directory override's own lib/coords.lua was served", served_directory);
+    ASSERT_EQm("the path override replaces java-v1 entirely: neither stubbed url is ever"
+              " fetched", 0, requests);
     PASS();
 }
 
@@ -827,7 +961,7 @@ TEST an_override_does_not_reach_a_transitively_required_artifacts_own_alias(void
     cJSON *overrides = cJSON_Parse(overrides_json);
 
     fr_plugin_deps *deps = NULL;
-    int status = acquire_with_overrides(source, overrides, &deps, acquire_message,
+    int status = acquire_with_overrides(".", source, overrides, &deps, acquire_message,
                                         sizeof acquire_message);
 
     fr_error err;
@@ -901,6 +1035,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_manifest_override_replaces_what_the_author_named);
     RUN_TEST(an_override_naming_an_alias_the_dependent_does_not_declare_is_refused);
     RUN_TEST(an_override_naming_its_own_requires_is_refused_as_reserved);
+    RUN_TEST(a_malformed_override_value_is_refused_naming_the_override_not_the_alias);
+    RUN_TEST(an_override_whose_pin_does_not_match_is_refused_naming_the_override_not_the_alias);
+    RUN_TEST(a_path_override_reads_a_local_directory);
     RUN_TEST(an_override_does_not_reach_a_transitively_required_artifacts_own_alias);
     GREATEST_MAIN_END();
 }

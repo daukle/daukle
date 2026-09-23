@@ -21,10 +21,12 @@ typedef struct {
     char *coordinate;  /* FR_PLUGIN_RESOLVED, opaque to core */
     char *sha256;      /* optional on every kind */
     /* This entry's own "requires" table, the manifest override for one of ITS
-       aliases, or NULL. Borrowed from the parsed document: fr_plugins_load
-       holds that document for the whole load, so it outlives every entry
-       parsed from it. fr_plugins_free (and fr_plugins_free_entry) must not
-       free this, because it is not owned here. */
+       aliases, or NULL. Borrowed from the parsed document, which must outlive
+       every entry parsed from it: fr_plugins_load holds it open for the whole
+       load, and main.c's manifest_plugins_free relies on the same ordering by
+       hand, freeing its entries before deleting its document, not after.
+       fr_plugins_free (and fr_plugins_free_entry) must not free this, because
+       it is not owned here. */
     const struct cJSON *overrides;
 } fr_plugin_entry;
 
@@ -127,8 +129,10 @@ int fr_plugins_parse_entry(const char *label, const struct cJSON *member,
    of it. On FR_OK, *out_source is open and out_digest holds the hex sha256 of
    the fetched bytes, empty for a directory (which cannot be pinned);
    *out_text is the fetched bytes and NULL for a directory. Every output is
-   owned by the caller on FR_OK; on FR_ERR every output is left at its zeroed
-   default and there is nothing to free. */
+   owned by the caller on FR_OK. On FR_ERR, *out_text, *out_origin,
+   *out_resolved and *out_source are NULL and there is nothing to free;
+   *out_length and out_digest may still hold what was fetched (a failed pin
+   check reports them) and must not be read for anything else. */
 int fr_plugins_acquire_source(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
                               size_t resolver_count, char **out_text, size_t *out_length,
                               char **out_origin, char **out_resolved, char out_digest[65],
