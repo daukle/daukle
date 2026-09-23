@@ -38,6 +38,11 @@ int fr_plugin_source_entry(fr_plugin_source *source, const char **out_text, size
 int fr_plugin_source_member(fr_plugin_source *source, const char *module_name,
                             const char **out_text, size_t *out_length, fr_error *err);
 
+/* The rules a module name obeys, callable from outside because an "exports"
+   entry is a module name declared somewhere else and is refused where it is
+   written rather than at the require that misses it. */
+int fr_plugin_module_name_check(const char *name, fr_error *err);
+
 void fr_plugin_source_close(fr_plugin_source *source);
 
 #endif

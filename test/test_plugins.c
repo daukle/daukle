@@ -638,6 +638,98 @@ TEST a_hostile_index_metatable_on_a_requires_entry_is_never_consulted(void) {
     PASS();
 }
 
+TEST a_declaration_records_its_exports(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, exports = { \"lib/coords\" } }",
+        &declaration, message, sizeof message);
+    size_t count = declaration.exports_count;
+    char first[64] = "";
+    if (count == 1) snprintf(first, sizeof first, "%s", declaration.exports[0]);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQm(message, FR_OK, status);
+    ASSERT_EQ(1, (int) count);
+    ASSERT_STR_EQ("lib/coords", first);
+    PASS();
+}
+
+TEST an_export_written_as_a_file_name_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, exports = { \"lib/coords.lua\" } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "without the \".lua\"") != NULL);
+    PASS();
+}
+
+TEST an_export_that_climbs_out_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, exports = { \"../secrets\" } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "may not leave the plugin") != NULL);
+    PASS();
+}
+
+TEST a_resolver_may_not_export(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    fr_error err;
+    memset(&declaration, 0, sizeof declaration);
+    const char *source = "daukle.plugin{ api = 1, exports = { \"lib/x\" } }";
+    fr_registry *registry = NULL;
+    int began = fr_build_registry(&registry, &err) == FR_OK
+              && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = began ? fr_plugins_read_declaration(source, strlen(source), "@test", "resolver",
+                                                     "gh", &declaration, &err)
+                       : FR_ERR;
+    if (status != FR_OK) snprintf(message, sizeof message, "%s", err.message);
+    fr_lua_runtime_shutdown();
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "has no dependents") != NULL);
+    PASS();
+}
+
+/* exports is a sequence, walked with lua_rawgeti/lua_rawlen rather than
+   lua_next, so the requires-entry hostile-metatable trick above (a hash key
+   that is simply absent raw) does not exercise the same risk here: a
+   metatable on a table that already holds every element raw proves nothing,
+   because lua_rawgeti and a metamethod-honouring lua_geti would return the
+   same value at every index. A table literal's array part is sized to its
+   listed element count regardless of which of them are nil, and the border
+   search behind lua_rawlen trusts a non-nil top slot without checking the
+   slots below it, so { nil, "lib/coords" } reports length 2 while index 1
+   is a genuine raw hole: absent under lua_rawgeti, answered by __index under
+   lua_geti. That is the one place a raw read and a metamethod-honouring read
+   of this exact table diverge. */
+TEST a_hostile_index_metatable_on_exports_is_never_consulted(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, exports = setmetatable({ nil, \"lib/coords\" },"
+        " { __index = function() error(\"boom\") end }) }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "must be a string") != NULL);
+    ASSERTm(message, strstr(message, "boom") == NULL);
+    PASS();
+}
+
 static char AUTH_VALUE_SEEN[256];
 static int AUTH_HEADER_PRESENT = 0;
 
@@ -2243,6 +2335,11 @@ int main(int argc, char **argv) {
     RUN_TEST(an_alias_with_a_reserved_character_is_refused);
     RUN_TEST(a_resolver_may_not_require_a_plugin);
     RUN_TEST(a_hostile_index_metatable_on_a_requires_entry_is_never_consulted);
+    RUN_TEST(a_declaration_records_its_exports);
+    RUN_TEST(an_export_written_as_a_file_name_is_refused);
+    RUN_TEST(an_export_that_climbs_out_is_refused);
+    RUN_TEST(a_resolver_may_not_export);
+    RUN_TEST(a_hostile_index_metatable_on_exports_is_never_consulted);
     RUN_TEST(the_github_plugin_authenticates_from_either_token_variable);
     RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
     RUN_TEST(a_url_entry_fetches_and_loads);

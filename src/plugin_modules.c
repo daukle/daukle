@@ -174,7 +174,7 @@ int fr_plugin_source_entry(fr_plugin_source *source, const char **out_text, size
 
 /* Every refusal says what to write instead, because the caller is a plugin
    author reading one line of output. */
-static int check_module_name(const char *name, fr_error *err) {
+int fr_plugin_module_name_check(const char *name, fr_error *err) {
     size_t length = strlen(name);
     if (length == 0) {
         fr_error_set(err, "daukle.require was given an empty module name");
@@ -227,7 +227,7 @@ static void report_missing(const fr_plugin_source *source, const char *file_name
 
 int fr_plugin_source_member(fr_plugin_source *source, const char *module_name,
                             const char **out_text, size_t *out_length, fr_error *err) {
-    if (check_module_name(module_name, err) != FR_OK) return FR_ERR;
+    if (fr_plugin_module_name_check(module_name, err) != FR_OK) return FR_ERR;
 
     char file_name[FR_TAR_MAX_NAME + 1];
     snprintf(file_name, sizeof file_name, "%s.lua", module_name);

@@ -9,6 +9,7 @@
 #include "lua_verbs.h"
 #include "luax.h"
 #include "plugin_fetch.h"
+#include "plugin_modules.h"
 #include "region.h"
 #include "resolvers.h"
 #include "sha256.h"
@@ -265,6 +266,10 @@ void fr_plugins_free_declaration(fr_plugin_declaration *declaration) {
         free(declaration->uses[index]);
     }
     declaration->uses_count = 0;
+    for (size_t index = 0; index < declaration->exports_count; index++) {
+        free(declaration->exports[index]);
+    }
+    declaration->exports_count = 0;
     for (size_t index = 0; index < declaration->requires_count; index++) {
         free(declaration->requires[index].alias);
         free(declaration->requires[index].url);
@@ -303,6 +308,47 @@ static int record_uses(lua_State *state, fr_plugin_declaration *declaration) {
         }
         declaration->uses[declaration->uses_count] = copy;
         declaration->uses_count++;
+        lua_pop(state, 1);
+    }
+    return 0;
+}
+
+static int record_exports(lua_State *state, fr_plugin_declaration *declaration) {
+    if (lua_isnil(state, -1)) return 0;
+    if (strcmp(declaration->kind, "resolver") == 0) {
+        return luaL_error(state, "resolver \"%s\": a resolver may not export a module, because a"
+                                 " resolver has no dependents",
+                          declaration->label);
+    }
+    if (!lua_istable(state, -1)) {
+        return luaL_error(state, "%s \"%s\": exports must be a list of module names",
+                          declaration->kind, declaration->label);
+    }
+
+    lua_Integer length = (lua_Integer) lua_rawlen(state, -1);
+    for (lua_Integer index = 1; index <= length; index++) {
+        lua_rawgeti(state, -1, index);
+        if (lua_type(state, -1) != LUA_TSTRING) {
+            return luaL_error(state, "%s \"%s\": every name in exports must be a string",
+                              declaration->kind, declaration->label);
+        }
+        const char *name = lua_tostring(state, -1);
+        fr_error name_err;
+        if (fr_plugin_module_name_check(name, &name_err) != FR_OK) {
+            return luaL_error(state, "%s \"%s\": %s", declaration->kind, declaration->label,
+                              name_err.message);
+        }
+        if (declaration->exports_count == FR_PLUGIN_MAX_EXPORTS) {
+            return luaL_error(state, "%s \"%s\": exports names more than %d modules",
+                              declaration->kind, declaration->label, FR_PLUGIN_MAX_EXPORTS);
+        }
+        char *copy = fr_dup_string(name);
+        if (copy == NULL) {
+            return luaL_error(state, "%s \"%s\": out of memory reading exports",
+                              declaration->kind, declaration->label);
+        }
+        declaration->exports[declaration->exports_count] = copy;
+        declaration->exports_count++;
         lua_pop(state, 1);
     }
     return 0;
@@ -440,6 +486,10 @@ static int declare_plugin(lua_State *state) {
 
     lua_getfield(state, 1, "requires");
     record_requires(state, declaration);
+    lua_pop(state, 1);
+
+    lua_getfield(state, 1, "exports");
+    record_exports(state, declaration);
     lua_pop(state, 1);
 
     lua_pushliteral(state, FR_PLUGIN_DECLARATION_READ);
