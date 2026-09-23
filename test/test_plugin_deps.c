@@ -1,6 +1,7 @@
 #include "greatest.h"
 #include "plugin_deps.h"
 
+#include "cJSON.h"
 #include "cache.h"
 #include "config_lua.h"
 #include "error.h"
@@ -144,6 +145,37 @@ static int acquire_into(const char *source, fr_registry *registry, fr_plugin_dep
 
 static int acquire_for(const char *source, fr_plugin_deps **out_deps, char *message, size_t size) {
     return acquire_into(source, NULL, out_deps, message, size);
+}
+
+/* Like acquire_for, but with a manifest override: overrides is the borrowed
+   cJSON "requires" table a [plugins.<label>] entry's own "requires" key would
+   carry, exactly as plugin_deps.c receives it from fr_plugin_entry.overrides. */
+static int acquire_with_overrides(const char *source, const cJSON *overrides,
+                                  fr_plugin_deps **out_deps, char *message, size_t size) {
+    fr_error err;
+    fr_plugin_declaration declaration;
+    memset(&declaration, 0, sizeof declaration);
+    message[0] = '\0';
+    *out_deps = NULL;
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    fr_http_fn previous = fr_http_set_backend(serve_stub);
+
+    int status = fr_lua_runtime_begin(".", NULL, &err);
+    if (status == FR_OK) {
+        status = fr_plugins_read_declaration(source, strlen(source), "@test", "plugin", "gradle",
+                                             &declaration, &err);
+    }
+    if (status == FR_OK) {
+        status = fr_plugin_deps_acquire(&declaration, overrides, NULL, 0, out_deps, &err);
+    }
+    if (status != FR_OK) snprintf(message, size, "%s", err.message);
+
+    fr_plugins_free_declaration(&declaration);
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+    return status;
 }
 
 TEST a_declared_dependency_is_acquired(void) {
@@ -591,6 +623,267 @@ TEST a_dependency_naming_more_aliases_than_the_limit_is_refused(void) {
     PASS();
 }
 
+/* --- Task 5: the manifest override --- */
+
+static char OVERRIDE_V1_ARCHIVE[8192];
+static size_t OVERRIDE_V1_ARCHIVE_LENGTH;
+static char OVERRIDE_V1_DIGEST[65];
+static char OVERRIDE_V2_ARCHIVE[8192];
+static size_t OVERRIDE_V2_ARCHIVE_LENGTH;
+static char OVERRIDE_V2_DIGEST[65];
+
+static const char OVERRIDE_PLUGIN_CHUNK[] =
+    "daukle.plugin{ api = 1, exports = { \"lib/coords\" } }\n";
+static const char OVERRIDE_V1_MODULE[] = "return { tag = \"v1\" }\n";
+static const char OVERRIDE_V2_MODULE[] = "return { tag = \"v2\" }\n";
+
+/* Two archives at two urls, distinguished only by what lib/coords returns:
+   the override test below asserts on THIS difference, the bytes the dependent
+   actually receives, never on a flag or a log line. v1's url is deliberately
+   also stubbed here (rather than left unserved) so a broken override that
+   still reached the author's original url would be caught by a content
+   mismatch, not masked by a fetch failure. */
+static void serve_override_targets(void) {
+    stub_reset();
+    memset(OVERRIDE_V1_ARCHIVE, 0, sizeof OVERRIDE_V1_ARCHIVE);
+    size_t offset = fr_test_tar_append(OVERRIDE_V1_ARCHIVE, 0, "plugin.lua", '0',
+                                       OVERRIDE_PLUGIN_CHUNK, sizeof OVERRIDE_PLUGIN_CHUNK - 1);
+    offset = fr_test_tar_append(OVERRIDE_V1_ARCHIVE, offset, "lib/coords.lua", '0',
+                                OVERRIDE_V1_MODULE, sizeof OVERRIDE_V1_MODULE - 1);
+    OVERRIDE_V1_ARCHIVE_LENGTH = fr_test_tar_end(OVERRIDE_V1_ARCHIVE, offset);
+    fr_sha256_hex(OVERRIDE_V1_ARCHIVE, OVERRIDE_V1_ARCHIVE_LENGTH, OVERRIDE_V1_DIGEST);
+    stub_serve("https://x/java-v1.lua", OVERRIDE_V1_ARCHIVE, OVERRIDE_V1_ARCHIVE_LENGTH);
+
+    memset(OVERRIDE_V2_ARCHIVE, 0, sizeof OVERRIDE_V2_ARCHIVE);
+    offset = fr_test_tar_append(OVERRIDE_V2_ARCHIVE, 0, "plugin.lua", '0', OVERRIDE_PLUGIN_CHUNK,
+                                sizeof OVERRIDE_PLUGIN_CHUNK - 1);
+    offset = fr_test_tar_append(OVERRIDE_V2_ARCHIVE, offset, "lib/coords.lua", '0',
+                                OVERRIDE_V2_MODULE, sizeof OVERRIDE_V2_MODULE - 1);
+    OVERRIDE_V2_ARCHIVE_LENGTH = fr_test_tar_end(OVERRIDE_V2_ARCHIVE, offset);
+    fr_sha256_hex(OVERRIDE_V2_ARCHIVE, OVERRIDE_V2_ARCHIVE_LENGTH, OVERRIDE_V2_DIGEST);
+    stub_serve("https://x/java-v2.lua", OVERRIDE_V2_ARCHIVE, OVERRIDE_V2_ARCHIVE_LENGTH);
+}
+
+TEST a_manifest_override_replaces_what_the_author_named(void) {
+    static char acquire_message[512];
+    static char member_message[512];
+    char source[512];
+    char overrides_json[256];
+    serve_override_targets();
+    dependent_source(source, sizeof source, "java", "https://x/java-v1.lua", OVERRIDE_V1_DIGEST);
+    snprintf(overrides_json, sizeof overrides_json,
+            "{\"java\":{\"url\":\"https://x/java-v2.lua\",\"sha256\":\"%s\"}}",
+            OVERRIDE_V2_DIGEST);
+    cJSON *overrides = cJSON_Parse(overrides_json);
+
+    fr_plugin_deps *deps = NULL;
+    int status = acquire_with_overrides(source, overrides, &deps, acquire_message,
+                                        sizeof acquire_message);
+    int requests = stub_requests;
+
+    fr_error err;
+    const char *text = NULL;
+    size_t length = 0;
+    fr_plugin_deps *owner = NULL;
+    const char *owner_label = NULL;
+    int member_status = FR_ERR;
+    int served_v2 = 0;
+    if (status == FR_OK) {
+        member_status = fr_plugin_deps_member(deps, "java", "lib/coords", &text, &length, &owner,
+                                              &owner_label, &err);
+        if (member_status != FR_OK) {
+            snprintf(member_message, sizeof member_message, "%s", err.message);
+        } else {
+            served_v2 = length == sizeof OVERRIDE_V2_MODULE - 1
+                && memcmp(text, OVERRIDE_V2_MODULE, length) == 0;
+        }
+    }
+    cJSON_Delete(overrides);
+    fr_plugin_deps_close(deps);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQm(acquire_message, FR_OK, status);
+    ASSERT_EQm(member_message, FR_OK, member_status);
+    ASSERTm("the override's own target was served, not the author's original url", served_v2);
+    ASSERT_EQm("only the override's url is fetched, never the author's original one", 1, requests);
+    PASS();
+}
+
+TEST an_override_naming_an_alias_the_dependent_does_not_declare_is_refused(void) {
+    static char message[512];
+    char source[512];
+    serve_two_plugins();
+    dependent_source(source, sizeof source, "java", "https://x/java.lua", JAVA_DIGEST);
+    char overrides_json[256];
+    snprintf(overrides_json, sizeof overrides_json,
+            "{\"kotlin\":{\"url\":\"https://x/other.lua\",\"sha256\":\"%s\"}}", ZERO_DIGEST);
+    cJSON *overrides = cJSON_Parse(overrides_json);
+
+    fr_plugin_deps *deps = NULL;
+    int status = acquire_with_overrides(source, overrides, &deps, message, sizeof message);
+    cJSON_Delete(overrides);
+    fr_plugin_deps_close(deps);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "does not declare") != NULL);
+    ASSERTm(message, strstr(message, "kotlin") != NULL);
+    ASSERTm(message, strstr(message, "java") != NULL);
+    PASS();
+}
+
+TEST an_override_naming_its_own_requires_is_refused_as_reserved(void) {
+    static char message[512];
+    char source[512];
+    serve_two_plugins();
+    dependent_source(source, sizeof source, "java", "https://x/java.lua", JAVA_DIGEST);
+    char overrides_json[512];
+    snprintf(overrides_json, sizeof overrides_json,
+            "{\"java\":{\"url\":\"https://x/java.lua\",\"sha256\":\"%s\","
+            "\"requires\":{\"foo\":{\"url\":\"https://x/foo.lua\",\"sha256\":\"%s\"}}}}",
+            JAVA_DIGEST, ZERO_DIGEST);
+    cJSON *overrides = cJSON_Parse(overrides_json);
+
+    fr_plugin_deps *deps = NULL;
+    int status = acquire_with_overrides(source, overrides, &deps, message, sizeof message);
+    cJSON_Delete(overrides);
+    fr_plugin_deps_close(deps);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "reserved") != NULL);
+    ASSERTm(message, strstr(message, "java") != NULL);
+    PASS();
+}
+
+static char SCOPE_MID_ARCHIVE[8192];
+static size_t SCOPE_MID_ARCHIVE_LENGTH;
+static char SCOPE_MID_DIGEST[65];
+static char SCOPE_MID_JAVA_ARCHIVE[8192];
+static size_t SCOPE_MID_JAVA_ARCHIVE_LENGTH;
+static char SCOPE_MID_JAVA_DIGEST[65];
+
+static const char SCOPE_MARKER_MODULE[] = "return { marker = true }\n";
+static const char SCOPE_MID_JAVA_MODULE[] = "return { tag = \"mid-java\" }\n";
+
+/* mid requires its OWN "java", unrelated to the root's: an override on the
+   root names one of the ROOT's own aliases, and this fixture exists to prove
+   it never reaches an alias merely spelled the same two levels down. Adds to
+   whatever the caller already stubbed rather than resetting: the one test
+   using this calls serve_override_targets first, for the root's own java-v1
+   and java-v2. */
+static void serve_scoping_targets(void) {
+    memset(SCOPE_MID_JAVA_ARCHIVE, 0, sizeof SCOPE_MID_JAVA_ARCHIVE);
+    size_t offset = fr_test_tar_append(SCOPE_MID_JAVA_ARCHIVE, 0, "plugin.lua", '0',
+                                       OVERRIDE_PLUGIN_CHUNK, sizeof OVERRIDE_PLUGIN_CHUNK - 1);
+    offset = fr_test_tar_append(SCOPE_MID_JAVA_ARCHIVE, offset, "lib/coords.lua", '0',
+                                SCOPE_MID_JAVA_MODULE, sizeof SCOPE_MID_JAVA_MODULE - 1);
+    SCOPE_MID_JAVA_ARCHIVE_LENGTH = fr_test_tar_end(SCOPE_MID_JAVA_ARCHIVE, offset);
+    fr_sha256_hex(SCOPE_MID_JAVA_ARCHIVE, SCOPE_MID_JAVA_ARCHIVE_LENGTH, SCOPE_MID_JAVA_DIGEST);
+    stub_serve("https://x/mid-java.lua", SCOPE_MID_JAVA_ARCHIVE, SCOPE_MID_JAVA_ARCHIVE_LENGTH);
+
+    char mid_requirement[256];
+    char mid_chunk[512];
+    requirement_entry(mid_requirement, sizeof mid_requirement, "java", "https://x/mid-java.lua",
+                      SCOPE_MID_JAVA_DIGEST);
+    snprintf(mid_chunk, sizeof mid_chunk,
+            "daukle.plugin{ api = 1, exports = { \"lib/marker\" }, requires = { %s } }\n",
+            mid_requirement);
+
+    memset(SCOPE_MID_ARCHIVE, 0, sizeof SCOPE_MID_ARCHIVE);
+    offset = fr_test_tar_append(SCOPE_MID_ARCHIVE, 0, "plugin.lua", '0', mid_chunk,
+                                strlen(mid_chunk));
+    offset = fr_test_tar_append(SCOPE_MID_ARCHIVE, offset, "lib/marker.lua", '0',
+                                SCOPE_MARKER_MODULE, sizeof SCOPE_MARKER_MODULE - 1);
+    SCOPE_MID_ARCHIVE_LENGTH = fr_test_tar_end(SCOPE_MID_ARCHIVE, offset);
+    fr_sha256_hex(SCOPE_MID_ARCHIVE, SCOPE_MID_ARCHIVE_LENGTH, SCOPE_MID_DIGEST);
+    stub_serve("https://x/mid.lua", SCOPE_MID_ARCHIVE, SCOPE_MID_ARCHIVE_LENGTH);
+
+    /* The root's own "java" is deliberately overridden to java-v2 (served by
+       serve_override_targets's fixture, called alongside this one) and its
+       own declared url, java-v1, is never meant to be reached either. */
+}
+
+TEST an_override_does_not_reach_a_transitively_required_artifacts_own_alias(void) {
+    static char acquire_message[512];
+    static char root_message[512];
+    static char mid_message[512];
+    char source[512];
+    char root_java_req[256];
+    char root_mid_req[256];
+    char overrides_json[256];
+
+    serve_override_targets();
+    serve_scoping_targets();
+    requirement_entry(root_java_req, sizeof root_java_req, "java", "https://x/java-v1.lua",
+                      OVERRIDE_V1_DIGEST);
+    requirement_entry(root_mid_req, sizeof root_mid_req, "mid", "https://x/mid.lua",
+                      SCOPE_MID_DIGEST);
+    snprintf(source, sizeof source, "daukle.plugin{ api = 1, requires = { %s, %s } }\n",
+            root_java_req, root_mid_req);
+    snprintf(overrides_json, sizeof overrides_json,
+            "{\"java\":{\"url\":\"https://x/java-v2.lua\",\"sha256\":\"%s\"}}",
+            OVERRIDE_V2_DIGEST);
+    cJSON *overrides = cJSON_Parse(overrides_json);
+
+    fr_plugin_deps *deps = NULL;
+    int status = acquire_with_overrides(source, overrides, &deps, acquire_message,
+                                        sizeof acquire_message);
+
+    fr_error err;
+    const char *root_text = NULL;
+    size_t root_length = 0;
+    fr_plugin_deps *root_owner = NULL;
+    const char *root_owner_label = NULL;
+    const char *mid_text = NULL;
+    size_t mid_length = 0;
+    fr_plugin_deps *mid_view = NULL;
+    const char *mid_owner_label = NULL;
+    fr_plugin_deps *java_owner = NULL;
+    const char *java_owner_label = NULL;
+    int root_status = FR_ERR;
+    int mid_lookup_status = FR_ERR;
+    int mid_java_status = FR_ERR;
+    int root_saw_v2 = 0;
+    int mid_saw_its_own_java = 0;
+    if (status == FR_OK) {
+        root_status = fr_plugin_deps_member(deps, "java", "lib/coords", &root_text, &root_length,
+                                            &root_owner, &root_owner_label, &err);
+        if (root_status == FR_OK) {
+            root_saw_v2 = root_length == sizeof OVERRIDE_V2_MODULE - 1
+                && memcmp(root_text, OVERRIDE_V2_MODULE, root_length) == 0;
+        } else {
+            snprintf(root_message, sizeof root_message, "%s", err.message);
+        }
+
+        mid_lookup_status = fr_plugin_deps_member(deps, "mid", "lib/marker", &mid_text,
+                                                  &mid_length, &mid_view, &mid_owner_label, &err);
+        if (mid_lookup_status == FR_OK) {
+            mid_java_status = fr_plugin_deps_member(mid_view, "java", "lib/coords", &mid_text,
+                                                    &mid_length, &java_owner, &java_owner_label,
+                                                    &err);
+            if (mid_java_status == FR_OK) {
+                mid_saw_its_own_java = mid_length == sizeof SCOPE_MID_JAVA_MODULE - 1
+                    && memcmp(mid_text, SCOPE_MID_JAVA_MODULE, mid_length) == 0;
+            } else {
+                snprintf(mid_message, sizeof mid_message, "%s", err.message);
+            }
+        }
+    }
+    cJSON_Delete(overrides);
+    fr_plugin_deps_close(deps);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQm(acquire_message, FR_OK, status);
+    ASSERT_EQm(root_message, FR_OK, root_status);
+    ASSERTm("the root's own java alias is overridden", root_saw_v2);
+    ASSERT_EQ(FR_OK, mid_lookup_status);
+    ASSERT_EQm(mid_message, FR_OK, mid_java_status);
+    ASSERTm("mid's own java alias resolves to what mid itself required, untouched by the"
+           " root's override", mid_saw_its_own_java);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_declared_dependency_is_acquired);
@@ -605,5 +898,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_graph_deeper_than_the_limit_is_refused);
     RUN_TEST(a_graph_wider_than_the_node_limit_is_refused);
     RUN_TEST(a_dependency_naming_more_aliases_than_the_limit_is_refused);
+    RUN_TEST(a_manifest_override_replaces_what_the_author_named);
+    RUN_TEST(an_override_naming_an_alias_the_dependent_does_not_declare_is_refused);
+    RUN_TEST(an_override_naming_its_own_requires_is_refused_as_reserved);
+    RUN_TEST(an_override_does_not_reach_a_transitively_required_artifacts_own_alias);
     GREATEST_MAIN_END();
 }

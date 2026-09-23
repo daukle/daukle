@@ -16,10 +16,14 @@ typedef struct fr_plugin_deps fr_plugin_deps;
 
 /* Acquires every artifact declaration requires, transitively: fetch, verify the
    digest, open the source, read that artifact's own declaration, repeat. No
-   entry chunk is run. overrides is the dependent's [plugins] entry "requires"
-   table or NULL, and Task 5 fills it. resolvers is carried for the same reason
-   load_one carries it: an override may name a resolver coordinate, which the
-   author's own url form never can. Every source stays open until close. */
+   entry chunk is run. overrides is the dependent's own [plugins] entry
+   "requires" table or NULL: it replaces what the author named for one of
+   declaration's own aliases (depth 0 only, never an alias belonging to
+   something declaration itself requires), and may take any form a [plugins]
+   value takes (the string sugar, or a table with path, url, or resolver plus
+   coordinate). resolvers is carried for the same reason load_one carries it:
+   an override may name a resolver coordinate, which the author's own url form
+   never can. Every source stays open until close. */
 int fr_plugin_deps_acquire(const fr_plugin_declaration *declaration,
                            const struct cJSON *overrides, const fr_resolver_entry *resolvers,
                            size_t resolver_count, fr_plugin_deps **out, fr_error *err);

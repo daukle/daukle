@@ -117,6 +117,15 @@ static int parse_string_form(const char *label, const char *value,
    of them may also carry a "sha256" pin. */
 static int parse_table_form(const char *label, const cJSON *member, fr_plugin_entry *out,
                             fr_error *err) {
+    /* Borrowed, not copied: the document outlives every entry parsed from it
+       (fr_plugins_load holds it for the whole load), and plugin_deps.c is the
+       only reader, scoped to this entry's own aliases. Whether it is even
+       valid as a table of alias to artifact is plugin_deps.c's question to
+       ask, not this parse's: a [plugins] entry with no requires at all is the
+       overwhelmingly common case and must not pay for validating a table that
+       is not there. */
+    out->overrides = cJSON_GetObjectItemCaseSensitive(member, "requires");
+
     if (cJSON_GetObjectItemCaseSensitive(member, "sha256") != NULL) {
         const char *sha256 = NULL;
         if (fr_json_string(member, "sha256", label, &sha256, err) != FR_OK) return FR_ERR;
@@ -176,6 +185,18 @@ static int parse_table_form(const char *label, const cJSON *member, fr_plugin_en
     return (out->resolver != NULL && out->coordinate != NULL) ? FR_OK : out_of_memory(label, err);
 }
 
+int fr_plugins_parse_entry(const char *label, const cJSON *member,
+                           const fr_resolver_entry *resolvers, size_t resolver_count,
+                           fr_plugin_entry *out, fr_error *err) {
+    if (cJSON_IsString(member) && member->valuestring != NULL) {
+        return parse_string_form(label, member->valuestring, resolvers, resolver_count, out, err);
+    }
+    if (cJSON_IsObject(member)) return parse_table_form(label, member, out, err);
+
+    fr_error_set(err, "plugin \"%s\" must be a string or a table", label);
+    return FR_ERR;
+}
+
 int fr_plugins_parse(const struct cJSON *document, const fr_resolver_entry *resolvers,
                      size_t resolver_count, fr_plugin_entry **out, size_t *out_count,
                      fr_error *err) {
@@ -213,18 +234,7 @@ int fr_plugins_parse(const struct cJSON *document, const fr_resolver_entry *reso
             return FR_ERR;
         }
 
-        int status;
-        if (cJSON_IsString(member) && member->valuestring != NULL) {
-            status = parse_string_form(label, member->valuestring, resolvers, resolver_count,
-                                       slot, err);
-        } else if (cJSON_IsObject(member)) {
-            status = parse_table_form(label, member, slot, err);
-        } else {
-            fr_error_set(err, "plugin \"%s\" must be a string or a table", label);
-            status = FR_ERR;
-        }
-
-        if (status != FR_OK) {
+        if (fr_plugins_parse_entry(label, member, resolvers, resolver_count, slot, err) != FR_OK) {
             fr_plugins_free(entries, count);
             return FR_ERR;
         }
@@ -242,16 +252,19 @@ int fr_plugins_reject_in_fetched(const struct cJSON *document, const char *proje
     return FR_ERR;
 }
 
+void fr_plugins_free_entry(fr_plugin_entry *entry) {
+    free(entry->label);
+    free(entry->path);
+    free(entry->url);
+    free(entry->resolver);
+    free(entry->coordinate);
+    free(entry->sha256);
+    memset(entry, 0, sizeof *entry);
+}
+
 void fr_plugins_free(fr_plugin_entry *entries, size_t count) {
     if (entries == NULL) return;
-    for (size_t index = 0; index < count; index++) {
-        free(entries[index].label);
-        free(entries[index].path);
-        free(entries[index].url);
-        free(entries[index].resolver);
-        free(entries[index].coordinate);
-        free(entries[index].sha256);
-    }
+    for (size_t index = 0; index < count; index++) fr_plugins_free_entry(&entries[index]);
     free(entries);
 }
 
@@ -757,35 +770,38 @@ static int acquire(const fr_plugin_entry *entry, const fr_resolver_entry *resolv
     return FR_OK;
 }
 
-static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
-                    size_t resolver_count, fr_error *err) {
-    char *origin = NULL;
-    char *text = NULL;
-    char *resolved = NULL;
-    size_t length = 0;
+int fr_plugins_acquire_source(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
+                              size_t resolver_count, char **out_text, size_t *out_length,
+                              char **out_origin, char **out_resolved, char out_digest[65],
+                              fr_plugin_source **out_source, fr_error *err) {
+    *out_text = NULL;
+    *out_length = 0;
+    *out_origin = NULL;
+    *out_resolved = NULL;
+    out_digest[0] = '\0';
+    *out_source = NULL;
+
     int is_directory = 0;
-    if (acquire(entry, resolvers, resolver_count, &text, &length, &origin, &resolved,
-                &is_directory, err)
+    if (acquire(entry, resolvers, resolver_count, out_text, out_length, out_origin, out_resolved,
+               &is_directory, err)
         != FR_OK) {
         return FR_ERR;
     }
 
     /* Computed for every plugin that HAS a byte string, pinned or not: an
        unpinned entry's digest is what "daukle config print" shows, so adopting a
-       pin is a copy and a paste. Checked before read_declaration, which already
-       runs the chunk: verifying after would mean the mismatched code had already
-       executed. */
-    char digest[65];
-    digest[0] = '\0';
+       pin is a copy and a paste. Checked before the source is opened, which for
+       an archive already reads its central directory: verifying after would
+       mean unpinned bytes had already been trusted that far. */
     if (!is_directory) {
-        fr_sha256_hex(text, length, digest);
-        if (entry->sha256 != NULL && !digest_matches(digest, entry->sha256)) {
+        fr_sha256_hex(*out_text, *out_length, out_digest);
+        if (entry->sha256 != NULL && !digest_matches(out_digest, entry->sha256)) {
             fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
-                        entry->label, entry->sha256, digest);
-            if (entry->kind != FR_PLUGIN_PATH) fr_plugin_fetch_discard(origin);
-            free(text);
-            free(origin);
-            free(resolved);
+                        entry->label, entry->sha256, out_digest);
+            if (entry->kind != FR_PLUGIN_PATH) fr_plugin_fetch_discard(*out_origin);
+            free(*out_text); *out_text = NULL;
+            free(*out_origin); *out_origin = NULL;
+            free(*out_resolved); *out_resolved = NULL;
             return FR_ERR;
         }
     } else if (entry->sha256 != NULL) {
@@ -796,9 +812,9 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
         fr_error_set(err, "plugin \"%s\": \"%s\" is a directory and cannot carry a sha256; pin the"
                           " published archive instead",
                     entry->label, entry->path);
-        free(text);
-        free(origin);
-        free(resolved);
+        free(*out_text); *out_text = NULL;
+        free(*out_origin); *out_origin = NULL;
+        free(*out_resolved); *out_resolved = NULL;
         return FR_ERR;
     }
 
@@ -806,11 +822,29 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
     int opened = is_directory
                      ? fr_plugin_source_open_directory(fr_lua_runtime_state(), entry->path, &source,
                                                        err)
-                     : fr_plugin_source_open_bytes(text, length, &source, err);
+                     : fr_plugin_source_open_bytes(*out_text, *out_length, &source, err);
     if (opened != FR_OK) {
-        free(text);
-        free(origin);
-        free(resolved);
+        free(*out_text); *out_text = NULL;
+        free(*out_origin); *out_origin = NULL;
+        free(*out_resolved); *out_resolved = NULL;
+        return FR_ERR;
+    }
+
+    *out_source = source;
+    return FR_OK;
+}
+
+static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
+                    size_t resolver_count, fr_error *err) {
+    char *origin = NULL;
+    char *text = NULL;
+    char *resolved = NULL;
+    size_t length = 0;
+    char digest[65];
+    fr_plugin_source *source = NULL;
+    if (fr_plugins_acquire_source(entry, resolvers, resolver_count, &text, &length, &origin,
+                                  &resolved, digest, &source, err)
+        != FR_OK) {
         return FR_ERR;
     }
 

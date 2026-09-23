@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 struct cJSON;
+typedef struct fr_plugin_source fr_plugin_source; /* plugin_modules.h owns the real definition */
 
 typedef enum { FR_PLUGIN_PATH, FR_PLUGIN_URL, FR_PLUGIN_RESOLVED } fr_plugin_kind;
 
@@ -19,6 +20,12 @@ typedef struct {
     char *resolver;    /* FR_PLUGIN_RESOLVED, a [resolvers] label */
     char *coordinate;  /* FR_PLUGIN_RESOLVED, opaque to core */
     char *sha256;      /* optional on every kind */
+    /* This entry's own "requires" table, the manifest override for one of ITS
+       aliases, or NULL. Borrowed from the parsed document: fr_plugins_load
+       holds that document for the whole load, so it outlives every entry
+       parsed from it. fr_plugins_free (and fr_plugins_free_entry) must not
+       free this, because it is not owned here. */
+    const struct cJSON *overrides;
 } fr_plugin_entry;
 
 /* One reported plugin, holding copies of everything an fr_plugin_entry held:
@@ -101,9 +108,41 @@ int fr_plugins_parse(const struct cJSON *document, const fr_resolver_entry *reso
                      size_t resolver_count, fr_plugin_entry **out, size_t *out_count,
                      fr_error *err);
 
+/* Parses one [plugins] value, string sugar or table form, the way
+   fr_plugins_parse does per member of the table: promoted so a manifest
+   override (plugin_deps.c) turns an override value into an entry through the
+   identical path-versus-url-versus-resolver reading, rather than a second
+   copy of it. label names the value in every message and out is filled in
+   place; the caller sets out->label itself, matching fr_plugins_parse's own
+   convention. */
+int fr_plugins_parse_entry(const char *label, const struct cJSON *member,
+                           const fr_resolver_entry *resolvers, size_t resolver_count,
+                           fr_plugin_entry *out, fr_error *err);
+
+/* Fetches or reads entry's bytes (or resolves it as a directory, for a local
+   path), verifies entry->sha256 against what came back when a pin is present,
+   and opens the result as a ready-to-read fr_plugin_source. Promoted out of
+   load_one so plugin_deps.c's override handling acquires an override target
+   through the identical fetch-verify-open sequence, rather than a second copy
+   of it. On FR_OK, *out_source is open and out_digest holds the hex sha256 of
+   the fetched bytes, empty for a directory (which cannot be pinned);
+   *out_text is the fetched bytes and NULL for a directory. Every output is
+   owned by the caller on FR_OK; on FR_ERR every output is left at its zeroed
+   default and there is nothing to free. */
+int fr_plugins_acquire_source(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
+                              size_t resolver_count, char **out_text, size_t *out_length,
+                              char **out_origin, char **out_resolved, char out_digest[65],
+                              fr_plugin_source **out_source, fr_error *err);
+
 /* A fetched dependency's manifest may not declare plugins: otherwise adding a
    dependency would be enough to make daukle execute its author's code. */
 int fr_plugins_reject_in_fetched(const struct cJSON *document, const char *project, fr_error *err);
+
+/* Frees every string a single entry owns (not overrides, which it borrows,
+   and not the entry pointer itself). Safe to call again on an already-freed
+   entry. Shared by fr_plugins_free's loop and plugin_deps.c, which parses one
+   entry on the stack rather than through this module's array allocator. */
+void fr_plugins_free_entry(fr_plugin_entry *entry);
 
 /* Frees every string an entry owns, then the array itself.
    Tolerates a NULL array paired with a zero count. */
