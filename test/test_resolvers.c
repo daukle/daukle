@@ -207,10 +207,6 @@ TEST a_resolver_is_acquired_through_the_floor_and_invoked(void) {
     PASS();
 }
 
-/* Every one of these follows the same shape, and the shape is the point: parse,
-   begin a runtime, act, capture into locals, release everything, then assert.
-   Asserting before the shutdown would leave the shared runtime open and turn
-   one failure into a cascade through the rest of the file. */
 /* The parse() helper above deletes the document, and fr_resolver_entry.block
    borrows from it, so this returns the document for the caller to delete once
    the resolver has run: handing a freed block to Lua is a use-after-free. */
@@ -249,6 +245,10 @@ static int use_resolver(const char *document_json, const char *coordinate,
     return status;
 }
 
+/* Every one of these follows the same shape, and the shape is the point: parse,
+   begin a runtime, act, capture into locals, release everything, then assert.
+   Asserting before the shutdown would leave the shared runtime open and turn
+   one failure into a cascade through the rest of the file. */
 TEST a_resolver_receives_its_own_block(void) {
     fr_error err;
     char *url = NULL;
