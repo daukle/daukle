@@ -322,29 +322,52 @@ TEST an_aggregator_pulls_in_what_joined_it(void) {
     PASS();
 }
 
-TEST the_same_graph_plans_the_same_order_twice(void) {
+/* Planning the same fr_task_set object twice is trivially equal to itself and
+   proves nothing about ordering. The real question is whether two manifests
+   that declare the SAME graph, but with their [tasks] entries written in a
+   different order, plan to the same order. That question is worth asking
+   specifically because visit_joiners walks the set in set order (the
+   manifest's own declaration order, for a manifest-only task), so a
+   partOf-heavy graph genuinely could come out differently depending on how
+   it was written down. Here mid_a and mid_b both join root through partOf, but
+   mid_b also depends on mid_a, so wherever visit_joiners' scan meets them
+   first, the dependency forces mid_a to be visited, and appended, before
+   mid_b: the declared order of the surrounding text cannot move that pair
+   relative to each other, however it is written. */
+TEST the_same_graph_plans_the_same_order_in_either_declaration_order(void) {
     fr_registry *registry = fr_registry_create();
-    fr_manifest manifest = manifest_of(
+    fr_manifest first_order = manifest_of(
         "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},\"tasks\":{"
-        "\"all\":{\"dependsOn\":[\"one\",\"two\",\"three\"]},"
-        "\"one\":{},\"two\":{\"dependsOn\":[\"one\"]},\"three\":{\"dependsOn\":[\"one\"]}}}");
-    fr_task_set set; fr_error err;
-    fr_tasks_collect(registry, &manifest, &set, &err);
+        "\"root\":{},"
+        "\"mid_a\":{\"partOf\":\"root\"},"
+        "\"mid_b\":{\"partOf\":\"root\",\"dependsOn\":[\"mid_a\"]}}}");
+    fr_manifest second_order = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},\"tasks\":{"
+        "\"mid_b\":{\"partOf\":\"root\",\"dependsOn\":[\"mid_a\"]},"
+        "\"mid_a\":{\"partOf\":\"root\"},"
+        "\"root\":{}}}");
+    fr_task_set first_set, second_set; fr_error err;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &first_order, &first_set, &err));
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &second_order, &second_set, &err));
 
     fr_task_plan first, second;
-    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "all", &first, &err));
-    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "all", &second, &err));
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&first_set, "root", &first, &err));
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&second_set, "root", &second, &err));
     ASSERT_EQ(first.count, second.count);
     for (size_t index = 0; index < first.count; index++) {
         ASSERT_STR_EQ(first.nodes[index]->name, second.nodes[index]->name);
     }
-    /* and it is the order declaration implies, not merely a stable one */
-    ASSERT_STR_EQ("one", first.nodes[0]->name);
-    ASSERT_STR_EQ("all", first.nodes[first.count - 1]->name);
+    /* and it is the order the dependency implies, not merely a stable one */
+    ASSERT_STR_EQ("mid_a", first.nodes[0]->name);
+    ASSERT_STR_EQ("mid_b", first.nodes[1]->name);
+    ASSERT_STR_EQ("root", first.nodes[2]->name);
+
     fr_tasks_plan_free(&first);
     fr_tasks_plan_free(&second);
-    fr_tasks_set_free(&set);
-    fr_manifest_free(&manifest);
+    fr_tasks_set_free(&first_set);
+    fr_tasks_set_free(&second_set);
+    fr_manifest_free(&first_order);
+    fr_manifest_free(&second_order);
     fr_registry_destroy(registry);
     PASS();
 }
@@ -563,7 +586,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_part_of_naming_nothing_is_refused);
     RUN_TEST(a_depends_on_naming_nothing_is_refused);
     RUN_TEST(an_aggregator_pulls_in_what_joined_it);
-    RUN_TEST(the_same_graph_plans_the_same_order_twice);
+    RUN_TEST(the_same_graph_plans_the_same_order_in_either_declaration_order);
     RUN_TEST(a_goal_nothing_declares_is_refused);
     RUN_TEST(a_plan_runs_its_tasks_in_order);
     RUN_TEST(a_failing_task_stops_the_run_naming_itself);
