@@ -1874,6 +1874,204 @@ TEST a_single_file_path_with_a_sha256_still_loads(void) {
     PASS();
 }
 
+static char served_archive[8192];
+static size_t served_archive_length;
+static int archive_requests;
+
+static int stub_serves_the_archive(const char *url, const fr_http_header *headers,
+                                   size_t header_count, char **out_body, size_t *out_length,
+                                   fr_error *err) {
+    (void) url; (void) headers; (void) header_count; (void) err;
+    archive_requests++;
+    char *copy = malloc(served_archive_length + 1);
+    if (copy == NULL) return FR_ERR;
+    memcpy(copy, served_archive, served_archive_length);
+    copy[served_archive_length] = '\0';
+    *out_body = copy;
+    *out_length = served_archive_length;
+    return FR_OK;
+}
+
+static const char ARCHIVE_ENTRY[] =
+    "daukle.plugin{ api = 1, uses = {} }\n"
+    "local greeting = daukle.require(\"lib/greeting\")\n"
+    "daukle.language{ name = greeting.name,\n"
+    "                 apply = function(consumer, resolved, text) return text end }\n";
+static const char ARCHIVE_MODULE[] = "return { name = \"from-archive\" }\n";
+
+static void build_served_archive(int with_entry) {
+    memset(served_archive, 0, sizeof served_archive);
+    size_t offset = 0;
+    if (with_entry) {
+        offset = fr_test_tar_append(served_archive, offset, "plugin.lua", '0', ARCHIVE_ENTRY,
+                                    sizeof ARCHIVE_ENTRY - 1);
+    }
+    offset = fr_test_tar_append(served_archive, offset, "lib/greeting.lua", '0', ARCHIVE_MODULE,
+                                sizeof ARCHIVE_MODULE - 1);
+    served_archive_length = fr_test_tar_end(served_archive, offset);
+}
+
+static char archive_message[512];
+
+/* Loads one url-form plugin against the archive the stub serves, inside its own
+   cache directory: the fetch cache is keyed by url and survives between runs, so
+   a test meaning to reach the network can otherwise be answered from a previous
+   run's cache and pass for the wrong reason. */
+static int loads_served_archive(const char *pin, int *out_registered) {
+    fr_error err;
+    err.message[0] = '\0';
+    archive_message[0] = '\0';
+    *out_registered = 0;
+
+    char json[512];
+    if (pin != NULL) {
+        snprintf(json, sizeof json,
+                 "{\"plugins\":{\"a\":{\"url\":\"https://x/plugin.tar\",\"sha256\":\"%s\"}}}", pin);
+    } else {
+        snprintf(json, sizeof json, "{\"plugins\":{\"a\":\"https://x/plugin.tar\"}}");
+    }
+
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, &err) != FR_OK) return FR_ERR;
+    cJSON *document = document_from(json);
+
+    int status = FR_ERR;
+    if (fr_lua_runtime_begin(".", registry, &err) == FR_OK) {
+        status = fr_plugins_load(registry, document, ".", &err);
+        *out_registered = fr_registry_language(registry, "daukle.language/from-archive") != NULL;
+    }
+    snprintf(archive_message, sizeof archive_message, "%s", err.message);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_plugins_report_clear();
+    fr_lua_runtime_shutdown();
+    return status;
+}
+
+TEST an_archive_plugin_loads_from_a_url_under_its_pin(void) {
+    build_served_archive(1);
+
+    char digest[65];
+    /* Computed from the bytes actually served rather than pasted: a digest
+       written into a test is pinned against that checkout's line endings, which
+       is how the suite went red on a merge once already. */
+    fr_sha256_hex(served_archive, served_archive_length, digest);
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_archive_pin_%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
+    fr_http_fn previous = fr_http_set_backend(stub_serves_the_archive);
+    int registered = 0;
+    int status = loads_served_archive(digest, &registered);
+    fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
+
+    ASSERT_EQm(archive_message, FR_OK, status);
+    ASSERT(registered);
+    PASS();
+}
+
+/* The second load reaches a backend that refuses everything, so it can only
+   come from the cache. This is also the only test that would catch the cache
+   entry's rename being half done. */
+TEST an_archive_plugin_loads_again_from_the_cache(void) {
+    build_served_archive(1);
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_archive_cache_%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
+    archive_requests = 0;
+    fr_http_fn previous = fr_http_set_backend(stub_serves_the_archive);
+    int first_registered = 0;
+    int first = loads_served_archive(NULL, &first_registered);
+    int requests_after_first = archive_requests;
+
+    fr_http_set_backend(stub_refuses_every_request);
+    int second_registered = 0;
+    int second = loads_served_archive(NULL, &second_registered);
+
+    fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
+
+    ASSERT_EQm(archive_message, FR_OK, first);
+    ASSERT(first_registered);
+    ASSERT_EQ(1, requests_after_first);
+    ASSERT_EQm(archive_message, FR_OK, second);
+    ASSERT(second_registered);
+    PASS();
+}
+
+TEST an_archive_without_a_plugin_lua_is_refused(void) {
+    build_served_archive(0);
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_archive_noentry_%d",
+             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
+    fr_http_fn previous = fr_http_set_backend(stub_serves_the_archive);
+    int registered = 0;
+    int status = loads_served_archive(NULL, &registered);
+    char message[512];
+    snprintf(message, sizeof message, "%s", archive_message);
+    fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "no plugin.lua") != NULL);
+    PASS();
+}
+
+/* A pin covers the archive as a whole, so a mismatch is reported against the
+   artifact and the bytes are not kept for the next run to trust. */
+TEST an_archive_whose_pin_does_not_match_is_refused_and_discarded(void) {
+    build_served_archive(1);
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_archive_badpin_%d",
+             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
+    archive_requests = 0;
+    fr_http_fn previous = fr_http_set_backend(stub_serves_the_archive);
+    int registered = 0;
+    int status = loads_served_archive(
+        "0000000000000000000000000000000000000000000000000000000000000000", &registered);
+    char message[512];
+    snprintf(message, sizeof message, "%s", archive_message);
+
+    /* A second load with a correct pin must fetch again rather than be served
+       the bytes the first one rejected. */
+    char digest[65];
+    fr_sha256_hex(served_archive, served_archive_length, digest);
+    int second_registered = 0;
+    int second = loads_served_archive(digest, &second_registered);
+    int requests = archive_requests;
+
+    fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "expected sha256") != NULL);
+    ASSERT_EQ(FR_OK, second);
+    ASSERT(second_registered);
+    ASSERT_EQ(2, requests);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -1916,6 +2114,10 @@ int main(int argc, char **argv) {
     RUN_TEST(a_directory_path_loads_the_plugin_lua_inside_it);
     RUN_TEST(a_directory_path_may_not_carry_a_sha256);
     RUN_TEST(a_single_file_path_with_a_sha256_still_loads);
+    RUN_TEST(an_archive_plugin_loads_from_a_url_under_its_pin);
+    RUN_TEST(an_archive_plugin_loads_again_from_the_cache);
+    RUN_TEST(an_archive_without_a_plugin_lua_is_refused);
+    RUN_TEST(an_archive_whose_pin_does_not_match_is_refused_and_discarded);
     RUN_TEST(a_resolved_entry_loads_what_its_resolver_names);
     RUN_TEST(a_plugin_chunk_may_not_declare_a_resolver);
     RUN_TEST(the_headers_a_resolver_returns_reach_the_artifact_fetch);
