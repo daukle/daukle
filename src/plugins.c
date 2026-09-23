@@ -259,6 +259,7 @@ void fr_plugins_free(fr_plugin_entry *entries, size_t count) {
 #define FR_PLUGIN_DECLARATION_READ "daukle: plugin declaration read"
 
 typedef struct {
+    const char *kind;   /* "plugin" or "resolver", named in every message below */
     const char *label;
     char *uses[FR_PLUGIN_MAX_USES];
     size_t uses_count;
@@ -276,30 +277,30 @@ static void free_declaration(fr_plugin_declaration *declaration) {
 static int record_uses(lua_State *state, fr_plugin_declaration *declaration) {
     if (lua_isnil(state, -1)) return 0;
     if (!lua_istable(state, -1)) {
-        return luaL_error(state, "plugin \"%s\": uses must be a list of verb names",
-                          declaration->label);
+        return luaL_error(state, "%s \"%s\": uses must be a list of verb names",
+                          declaration->kind, declaration->label);
     }
 
     lua_Integer length = (lua_Integer) lua_rawlen(state, -1);
     for (lua_Integer index = 1; index <= length; index++) {
         lua_rawgeti(state, -1, index);
         if (lua_type(state, -1) != LUA_TSTRING) {
-            return luaL_error(state, "plugin \"%s\": every name in uses must be a string",
-                              declaration->label);
+            return luaL_error(state, "%s \"%s\": every name in uses must be a string",
+                              declaration->kind, declaration->label);
         }
         const char *name = lua_tostring(state, -1);
         if (!fr_lua_verbs_is_known(name)) {
-            return luaL_error(state, "plugin \"%s\": \"%s\" is not a daukle verb",
-                              declaration->label, name);
+            return luaL_error(state, "%s \"%s\": \"%s\" is not a daukle verb",
+                              declaration->kind, declaration->label, name);
         }
         if (declaration->uses_count == FR_PLUGIN_MAX_USES) {
-            return luaL_error(state, "plugin \"%s\": uses names more than %d verbs",
-                              declaration->label, FR_PLUGIN_MAX_USES);
+            return luaL_error(state, "%s \"%s\": uses names more than %d verbs",
+                              declaration->kind, declaration->label, FR_PLUGIN_MAX_USES);
         }
         char *copy = fr_dup_string(name);
         if (copy == NULL) {
-            return luaL_error(state, "plugin \"%s\": out of memory reading uses",
-                              declaration->label);
+            return luaL_error(state, "%s \"%s\": out of memory reading uses",
+                              declaration->kind, declaration->label);
         }
         declaration->uses[declaration->uses_count] = copy;
         declaration->uses_count++;
@@ -318,12 +319,12 @@ static int declare_plugin(lua_State *state) {
         int is_integer = 0;
         lua_Integer api = lua_tointegerx(state, -1, &is_integer);
         if (!is_integer) {
-            return luaL_error(state, "plugin \"%s\": api must be a whole number",
-                              declaration->label);
+            return luaL_error(state, "%s \"%s\": api must be a whole number",
+                              declaration->kind, declaration->label);
         }
         if (api != 1) {
-            return luaL_error(state, "plugin \"%s\": needs daukle api %I, this daukle provides 1",
-                              declaration->label, (LUAI_UACINT) api);
+            return luaL_error(state, "%s \"%s\": needs daukle api %I, this daukle provides 1",
+                              declaration->kind, declaration->label, (LUAI_UACINT) api);
         }
     }
     lua_pop(state, 1);
@@ -385,14 +386,23 @@ static int read_declaration(lua_State *state, const char *text, const char *orig
    daukle.plugin{ uses = {...} } call a plugin's does, and acquiring it goes
    through this same read-then-load split so that declaration is honoured
    there too, rather than every verb being either always on or always off for
-   a resolver. */
-int fr_plugins_read_uses(const char *text, const char *origin, const char *label,
-                         char ***out_uses, size_t *out_uses_count, fr_error *err) {
+   a resolver. kind names the caller ("plugin" or "resolver") in every message
+   below, so a resolver's malformed uses is reported as a resolver, not a
+   plugin. A NULL runtime state is a real error here, not a crash:
+   read_declaration's first line touches it. */
+int fr_plugins_read_uses(const char *text, const char *origin, const char *kind,
+                         const char *label, char ***out_uses, size_t *out_uses_count,
+                         fr_error *err) {
     *out_uses = NULL;
     *out_uses_count = 0;
 
     lua_State *state = fr_lua_runtime_state();
-    fr_plugin_declaration declaration = { label, { NULL }, 0 };
+    if (state == NULL) {
+        fr_error_set(err, "no lua runtime is open for \"%s\"", origin);
+        return FR_ERR;
+    }
+
+    fr_plugin_declaration declaration = { kind, label, { NULL }, 0 };
     if (read_declaration(state, text, origin, &declaration, err) != FR_OK) {
         free_declaration(&declaration);
         return FR_ERR;
@@ -402,7 +412,8 @@ int fr_plugins_read_uses(const char *text, const char *origin, const char *label
     char **uses = malloc(declaration.uses_count * sizeof *uses);
     if (uses == NULL) {
         free_declaration(&declaration);
-        return out_of_memory(label, err);
+        fr_error_set(err, "out of memory reading %s \"%s\"", kind, label);
+        return FR_ERR;
     }
     memcpy(uses, declaration.uses, declaration.uses_count * sizeof *uses);
     *out_uses = uses;
@@ -577,7 +588,7 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
     }
 
     lua_State *state = fr_lua_runtime_state();
-    fr_plugin_declaration declaration = { entry->label, { NULL }, 0 };
+    fr_plugin_declaration declaration = { "plugin", entry->label, { NULL }, 0 };
     int status = read_declaration(state, text, origin, &declaration, err);
     if (status == FR_OK) {
         status = fr_lua_plugin_load(text, origin, (const char *const *) declaration.uses,
@@ -624,8 +635,8 @@ int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
                             const char *label, size_t *out_removed_count, fr_error *err) {
     *out_removed_count = 0;
 
-    int cache_was_enabled = fr_cache_enabled();
-    fr_cache_set_enabled(0);
+    int was_refreshing = fr_cache_refreshing();
+    fr_cache_set_refreshing(1);
 
     int status = FR_OK;
     int matched = label == NULL;
@@ -659,7 +670,7 @@ int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
         if (label != NULL) break;
     }
 
-    fr_cache_set_enabled(cache_was_enabled);
+    fr_cache_set_refreshing(was_refreshing);
 
     if (status != FR_OK) return FR_ERR;
     if (!matched) {

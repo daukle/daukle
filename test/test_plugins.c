@@ -489,6 +489,24 @@ TEST a_verb_used_before_the_declaration_says_so(void) {
     PASS();
 }
 
+/* read_declaration's first line touches the lua_State it is given, so a caller
+   reaching fr_plugins_read_uses with no runtime open (resolvers.c's acquire,
+   before fr_lua_plugin_load, is the one that matters) needs a real error back,
+   not a crash. No runtime is open here between tests, so this needs no setup. */
+TEST fr_plugins_read_uses_rejects_a_closed_runtime(void) {
+    fr_error err;
+    char **uses = NULL;
+    size_t uses_count = 0;
+    int status = fr_plugins_read_uses("daukle.plugin{ api = 1 }", "test.lua", "resolver", "t",
+                                      &uses, &uses_count, &err);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(err.message, "test.lua") != NULL);
+    ASSERT(uses == NULL);
+    ASSERT_EQ(0u, uses_count);
+    PASS();
+}
+
 static char AUTH_VALUE_SEEN[256];
 static int AUTH_HEADER_PRESENT = 0;
 
@@ -963,27 +981,52 @@ static int stub_named_artifacts(const char *url, const fr_http_header *headers,
     return FR_OK;
 }
 
+/* Fetches url once and discards the text, so a cached artifact for it exists
+   for a later discard to find: without this, "the artifact is gone" would be
+   true whether or not the discard ever ran. */
+static int seed_cached_artifact(const char *url) {
+    fr_error err;
+    char *text = NULL;
+    int status = fr_plugin_fetch(url, &text, &err) == FR_OK;
+    free(text);
+    return status;
+}
+
+/* Swaps in a backend that refuses every request, fetches url, and restores
+   restore: true only if url is still served, since a cache miss here has
+   nowhere else to come from and fails outright. */
+static int artifact_survived(const char *url, fr_http_fn restore) {
+    fr_error err;
+    fr_http_set_backend(stub_refuses_every_request);
+    char *text = NULL;
+    int served = fr_plugin_fetch(url, &text, &err) == FR_OK;
+    free(text);
+    fr_http_set_backend(restore);
+    return served;
+}
+
 /* The resolver answers from an environment variable, so the test changes what a
    coordinate means without touching the manifest. That is what separates the
    two things being tested: an ordinary run must keep serving the old answer
    from the resolver's cache, and only the update may go past it.
-   The resolver's own daukle.cache call is keyed by the coordinate alone, so
-   that stale answer is permanently sticky for any ordinary, cache-enabled
-   run: fr_plugins_update_cache disabling the global cache flag only reaches
-   past it for the DURATION of the update's own resolve, and does not (cannot,
-   per fr_plugins_update_cache's own doc comment) rewrite the resolver's
-   on-disk answer. So the property this test can actually prove about a
-   SUBSEQUENT ordinary run is that the artifact the update discarded is gone,
-   not that the resolver itself now answers differently: that is why the
-   proof below pre-seeds a cached artifact for the fresh url and checks it is
-   gone afterwards, rather than running a third ordinary load and expecting it
-   to see the new target. */
+   fr_plugins_update_cache runs the resolve step with reads bypassed but
+   writes kept on, so the resolver's own coordinate-to-url mapping is
+   overwritten, not just ignored for the one call: that is why a THIRD,
+   ordinary load after the update is expected to see the new target, not just
+   the update's own internal resolve. */
 TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     fr_error err;
     const char *document_json =
         "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/from-env.lua\"}},"
         "\"plugins\":{\"p\":\"t:a/b\"}}";
     const char *fresh_url = "https://example.invalid/two.lua";
+
+    /* Isolated from the real cache root, the way test_cache.c and test_e2e.c
+       isolate theirs, since this test writes a persistent on-disk mapping. */
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_plugin_update_cache_%d",
+            fr_test_temp_base(), fr_test_process_id());
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
 
     fr_plugin_fetch_discard(fresh_url);
     fr_http_fn previous = fr_http_set_backend(stub_named_artifacts);
@@ -1012,13 +1055,7 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     fr_plugins_report_clear();
     fr_resolvers_clear();
 
-    /* Seeded with the cache enabled and the real stub still installed, so this
-       is a genuine cached artifact, not a fabricated one: if the update below
-       resolved the STALE url (a bug: caching not actually disabled), it would
-       discard nothing here and this artifact would survive. */
-    char *seed_text = NULL;
-    int seeded = fr_plugin_fetch(fresh_url, &seed_text, &err) == FR_OK;
-    free(seed_text);
+    int seeded = seed_cached_artifact(fresh_url);
 
     fr_plugin_entry *entries = NULL;
     size_t count = 0;
@@ -1027,10 +1064,6 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     fr_resolvers_parse(document, &resolvers, &resolver_count, &err);
     fr_plugins_parse(document, resolvers, resolver_count, &entries, &count, &err);
 
-    /* fr_plugins_update_cache re-resolves an FR_PLUGIN_RESOLVED entry through
-       fr_resolvers_use, which needs a lua runtime open the same way
-       fr_plugins_load's own callers give it one; main.c's plugin_update opens
-       this same runtime around its call for the same reason. */
     fr_registry *update_registry = NULL;
     int update_began = fr_build_registry(&update_registry, &err) == FR_OK
                     && fr_lua_runtime_begin(".", update_registry, &err) == FR_OK;
@@ -1044,21 +1077,26 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     fr_resolvers_free(resolvers, resolver_count);
     fr_resolvers_clear();
 
-    /* served_stale is true only if the update left the seeded artifact in
-       place: with the real stub swapped out, a cache miss here has nowhere
-       else to come from and fails outright. */
-    fr_http_set_backend(stub_refuses_every_request);
-    char *after_text = NULL;
-    int served_stale = fr_plugin_fetch(fresh_url, &after_text, &err) == FR_OK;
-    free(after_text);
+    int served_stale = artifact_survived(fresh_url, stub_named_artifacts);
+
+    fr_registry *third_registry = NULL;
+    int built_third = fr_build_registry(&third_registry, &err) == FR_OK;
+    int third_load = fr_lua_runtime_begin(".", third_registry, &err) == FR_OK
+                  && fr_plugins_load(third_registry, document, ".", &err) == FR_OK;
+    int got_two = fr_registry_language(third_registry, "daukle.language/target-two") != NULL;
+    fr_registry_destroy(third_registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
 
     fr_http_set_backend(previous);
     fr_plugin_fetch_discard(fresh_url);
     cJSON_Delete(document);
     fr_test_set_env("RESOLVER_TARGET", NULL);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
 
-    ASSERT(built_first && built_second);
-    ASSERT(first_load && second_load);
+    ASSERT(built_first && built_second && built_third);
+    ASSERT(first_load && second_load && third_load);
     ASSERT(seeded);
     ASSERT(update_began);
     ASSERT(got_one);
@@ -1066,6 +1104,7 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     ASSERT(updated);
     ASSERT_EQ(1u, removed);
     ASSERT_FALSE(served_stale);
+    ASSERT(got_two);
     PASS();
 }
 
@@ -1300,6 +1339,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_written_against_a_later_api_says_which);
     RUN_TEST(a_uses_entry_that_is_not_a_string_is_refused);
     RUN_TEST(a_verb_used_before_the_declaration_says_so);
+    RUN_TEST(fr_plugins_read_uses_rejects_a_closed_runtime);
     RUN_TEST(the_github_plugin_authenticates_from_either_token_variable);
     RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
     RUN_TEST(a_url_entry_fetches_and_loads);

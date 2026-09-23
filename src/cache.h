@@ -49,4 +49,16 @@ void fr_cache_set_enabled(int enabled);
    duplicating the flag. */
 int fr_cache_enabled(void);
 
+/* A second, independent flag from fr_cache_set_enabled: refreshing makes
+   fr_cache_read report a miss unconditionally (so a producer always reruns)
+   while leaving fr_cache_write untouched, so the fresh answer IS persisted.
+   --no-cache wants both reads and writes off, which fr_cache_set_enabled(0)
+   already gives it; "daukle plugin update" wants only reads bypassed, so the
+   resolver's own coordinate-to-url cache is overwritten rather than merely
+   ignored for one call. Has no effect while fr_cache_enabled() is false,
+   since a disabled cache already treats every read as a miss and every write
+   as a no-op. */
+void fr_cache_set_refreshing(int refreshing);
+int fr_cache_refreshing(void);
+
 #endif

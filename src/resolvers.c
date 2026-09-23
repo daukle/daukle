@@ -200,7 +200,8 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
 
     char **uses = NULL;
     size_t uses_count = 0;
-    int status = fr_plugins_read_uses(text, origin, entry->label, &uses, &uses_count, err);
+    int status = fr_plugins_read_uses(text, origin, "resolver", entry->label, &uses, &uses_count,
+                                      err);
     if (status == FR_OK) {
         status = fr_lua_plugin_load(text, origin, (const char *const *) uses, uses_count, err);
     }
