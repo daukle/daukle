@@ -115,7 +115,11 @@ void fr_plugins_report_clear(void);
    resolve step with reads bypassed but writes kept on (fr_cache_set_refreshing,
    not fr_cache_set_enabled(0): the whole point is that the resolver's
    producer reruns AND its fresh answer is persisted, so an ordinary run
-   afterward reads that fresh mapping instead of the stale one). This means a
+   afterward reads that fresh mapping instead of the stale one). The cache is
+   forced on for the duration for that same reason: this command IS a refresh,
+   so a caller that passed --no-cache would otherwise turn off the one write
+   the command exists to make, leaving the stale mapping behind and the next
+   run fetching the url whose artifact was just discarded. This means a
    lua runtime must already be open (fr_lua_runtime_begin), the same
    precondition fr_resolvers_use itself has, since acquiring a resolver's
    chunk goes through it. It also means the command now executes plugin code,

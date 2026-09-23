@@ -1390,6 +1390,92 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     PASS();
 }
 
+/* One resolve through a runtime of its own, so what comes back is the
+   resolver's persisted answer rather than a memo an earlier call left behind. */
+static int resolve_once(const fr_resolver_entry *resolver, const char *coordinate,
+                        char *out_url, size_t out_size, fr_error *err) {
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, err) != FR_OK) return 0;
+
+    int status = FR_ERR;
+    char *url = NULL;
+    char *resolved = NULL;
+    fr_http_headers headers = { { { NULL, NULL } }, 0 };
+    if (fr_lua_runtime_begin(".", registry, err) == FR_OK) {
+        status = fr_resolvers_use(resolver, coordinate, &url, &resolved, &headers, err);
+    }
+    if (status == FR_OK) snprintf(out_url, out_size, "%s", url);
+
+    fr_http_headers_free(&headers);
+    free(url);
+    free(resolved);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_resolvers_clear();
+    return status == FR_OK;
+}
+
+/* "daukle plugin update" IS a cache refresh, so --no-cache must not be allowed
+   to turn off the write that persists the fresh mapping. With writes off the
+   resolver re-resolves and the stale answer survives, and the next ordinary
+   run fetches the old url whose artifact this command just discarded: a
+   silent no-op on the one entry kind the command exists for. */
+TEST plugin_update_persists_the_fresh_url_with_the_cache_disabled(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/from-env.lua\"}},"
+        "\"plugins\":{\"p\":\"t:c/d\"}}";
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_update_no_cache_%d",
+            fr_test_temp_base(), fr_test_process_id());
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+    fr_test_set_env("RESOLVER_TARGET", "one");
+
+    cJSON *document = cJSON_Parse(document_json);
+    fr_resolver_entry *resolvers = NULL;
+    size_t resolver_count = 0;
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    fr_resolvers_parse(document, &resolvers, &resolver_count, &err);
+    fr_plugins_parse(document, resolvers, resolver_count, &entries, &count, &err);
+
+    char before[256] = "";
+    int resolved_before = resolve_once(&resolvers[0], "c/d", before, sizeof before, &err);
+
+    fr_test_set_env("RESOLVER_TARGET", "two");
+
+    fr_registry *update_registry = NULL;
+    int update_began = fr_build_registry(&update_registry, &err) == FR_OK
+                    && fr_lua_runtime_begin(".", update_registry, &err) == FR_OK;
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    size_t removed = 0;
+    int updated = update_began
+               && fr_plugins_update_cache(entries, count, resolvers, resolver_count, NULL,
+                                         &removed, &err) == FR_OK;
+    fr_cache_set_enabled(cache_was_enabled);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(update_registry);
+    fr_resolvers_clear();
+
+    char after[256] = "";
+    int resolved_after = resolve_once(&resolvers[0], "c/d", after, sizeof after, &err);
+
+    fr_plugins_free(entries, count);
+    fr_resolvers_free(resolvers, resolver_count);
+    cJSON_Delete(document);
+    fr_test_set_env("RESOLVER_TARGET", NULL);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+
+    ASSERT(update_began);
+    ASSERTm(err.message, updated);
+    ASSERT(resolved_before && resolved_after);
+    ASSERT_STR_EQ("https://example.invalid/one.lua", before);
+    ASSERT_STR_EQ("https://example.invalid/two.lua", after);
+    PASS();
+}
+
 /* This is the property "daukle plugin update" with no label must have: the plugin
    cache root is shared across every project on the machine, so discarding the
    artifacts of entries a manifest declares must never reach a url it does not,
@@ -1641,6 +1727,7 @@ int main(int argc, char **argv) {
     RUN_TEST(the_report_names_the_resolver_and_the_url);
     RUN_TEST(the_report_names_a_declared_unused_resolver);
     RUN_TEST(plugin_update_re_resolves_and_takes_the_new_url);
+    RUN_TEST(plugin_update_persists_the_fresh_url_with_the_cache_disabled);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);
     RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_url_entry_removes_it);
     RUN_TEST(fr_plugins_update_cache_with_an_unknown_label_errors_naming_it);

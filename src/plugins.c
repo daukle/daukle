@@ -709,7 +709,9 @@ int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
     *out_removed_count = 0;
 
     int was_refreshing = fr_cache_refreshing();
+    int was_enabled = fr_cache_enabled();
     fr_cache_set_refreshing(1);
+    fr_cache_set_enabled(1);
 
     int status = FR_OK;
     int matched = label == NULL;
@@ -747,6 +749,7 @@ int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
     }
 
     fr_cache_set_refreshing(was_refreshing);
+    fr_cache_set_enabled(was_enabled);
 
     if (status != FR_OK) return FR_ERR;
     if (!matched) {
