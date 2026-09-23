@@ -226,6 +226,9 @@ A manifest's `[plugins]` table registers a source or a language by running each 
 source or a language directly into the binary, `source_path.c`, `source_github.c`, `lang_npm.c`,
 `lang_gradle.c` and `lang_c.c`, are gone. `FR_SOURCE_[A-Z]` and `FR_LANGUAGE_[A-Z]` are in the
 agnostic check's `FORBIDDEN` list, so `config.c` cannot silently regain one.
+`check_agnostic.cmake` enforces two rules over two file sets: no plugin name in `CORE_FILES`, and no
+forge host, `api.github.com`, `github.com`, `gitlab` or `bitbucket`, anywhere in `src/*.c` or
+`src/*.h`, which is why the second rule reaches `plugins.c` and `resolvers.c` that the first excludes.
 `daukle plugin update [label]` always reads the current manifest first and removes a
 remote plugin's cached copies scoped to what THAT manifest declares: one label's entry, or, with no
 label, every remote entry it declares, and nothing outside it, so the plugin cache root, which is

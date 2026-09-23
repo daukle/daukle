@@ -29,6 +29,31 @@ if(FINDINGS)
     message(FATAL_ERROR "core names a plugin")
 endif()
 
+# Every file in src/, not just CORE_FILES: the three files excluded above for
+# carrying the "path" key are exactly the ones that decide where a plugin comes
+# from, so the list that catches a hardcoded host cannot be the list that
+# excludes them.
+file(GLOB ALL_SOURCES "${SOURCE_DIR}/src/*.c" "${SOURCE_DIR}/src/*.h")
+set(FORBIDDEN_HOSTS "api\\.github\\.com" "github\\.com" "gitlab" "bitbucket")
+
+set(HOST_FINDINGS "")
+foreach(source ${ALL_SOURCES})
+    file(READ "${source}" content)
+    get_filename_component(source_name "${source}" NAME)
+    foreach(pattern ${FORBIDDEN_HOSTS})
+        if(content MATCHES "${pattern}")
+            list(APPEND HOST_FINDINGS "${source_name} matches ${pattern}")
+        endif()
+    endforeach()
+endforeach()
+
+if(HOST_FINDINGS)
+    foreach(finding ${HOST_FINDINGS})
+        message(STATUS "agnostic-core: ${finding}")
+    endforeach()
+    message(FATAL_ERROR "core names a forge")
+endif()
+
 # A fixture that needs a staged plugin carries its own copy, because a local
 # plugin path resolves through a sandbox that refuses ".." and absolute paths.
 # No test loads the staged file itself, so nothing but this loop would notice an
