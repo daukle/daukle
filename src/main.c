@@ -539,6 +539,26 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
     return 0;
 }
 
+#define FR_TASKS_JOINER_CAPACITY 32
+
+/* label reads in the direction that kind actually runs: FR_TASK_JOIN_PART_OF
+   is what name pulls in (they run before name), FR_TASK_JOIN_DEPENDS_ON is
+   what pulls name in (name runs before them). Printing the true total past
+   FR_TASKS_JOINER_CAPACITY, rather than staying silent about it, is what
+   keeps a truncated list from being mistaken for a complete one. */
+static void print_task_joiners(const fr_task_set *set, const char *name,
+                               fr_task_join_kind kind, const char *label) {
+    const char *joiners[FR_TASKS_JOINER_CAPACITY];
+    size_t total = fr_tasks_joiners(set, name, kind, joiners, FR_TASKS_JOINER_CAPACITY);
+    size_t shown = total < FR_TASKS_JOINER_CAPACITY ? total : FR_TASKS_JOINER_CAPACITY;
+    for (size_t index = 0; index < shown; index++) {
+        printf("  %s: %s\n", label, joiners[index]);
+    }
+    if (total > shown) {
+        printf("  ... and %zu more not shown\n", total - shown);
+    }
+}
+
 static int list_tasks(int use_cache, int verbose) {
     fr_error err;
     char *resolved = NULL;
@@ -563,8 +583,11 @@ static int list_tasks(int use_cache, int verbose) {
 
     if (set.count == 0) {
         printf("daukle: this project has no tasks\n");
+    } else {
+        printf("daukle: %zu task%s\n", set.count, set.count == 1 ? "" : "s");
     }
     for (size_t index = 0; index < set.count; index++) {
+        if (index > 0) printf("\n");
         const fr_task_node *node = &set.nodes[index];
         printf("%s%s\n", node->name, node->plugin == NULL ? " (from the manifest)" : "");
         printf("  runs: %s\n", (node->plugin != NULL && node->plugin->run != NULL)
@@ -578,11 +601,8 @@ static int list_tasks(int use_cache, int verbose) {
         if (node->part_of != NULL) printf("  part of: %s\n", node->part_of);
         if (node->extra_part_of != NULL) printf("  part of: %s (from the manifest)\n", node->extra_part_of);
 
-        const char *joiners[32];
-        size_t joiner_count = fr_tasks_joiners(&set, node->name, joiners, 32);
-        for (size_t edge = 0; edge < joiner_count; edge++) {
-            printf("  pulled in by: %s\n", joiners[edge]);
-        }
+        print_task_joiners(&set, node->name, FR_TASK_JOIN_PART_OF, "pulls in");
+        print_task_joiners(&set, node->name, FR_TASK_JOIN_DEPENDS_ON, "pulled in by");
     }
 
     fr_tasks_set_free(&set);

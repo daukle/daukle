@@ -39,12 +39,24 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
 void fr_tasks_set_free(fr_task_set *set);
 const fr_task_node *fr_tasks_find(const fr_task_set *set, const char *name);
 
-/* Every task pointing at name, by either kind of edge: what declared itself
-   part of it, and what depends on it. This is the inbound half of the graph,
-   which a plugin's own source cannot show, and it is why "daukle tasks" is a
-   complete view rather than another partial one. Writes at most capacity
-   names and returns how many it wrote. */
-size_t fr_tasks_joiners(const fr_task_set *set, const char *name,
+/* FR_TASK_JOIN_PART_OF: what declared itself part of a name. Those run before
+   it and it pulls them in. FR_TASK_JOIN_DEPENDS_ON: what names it in
+   dependsOn. Those run after it and it is what pulls THEM in: it is a
+   prerequisite of theirs, not the reverse. The two kinds run in opposite
+   directions, so a listing that does not tell them apart states one of them
+   backwards. */
+typedef enum {
+    FR_TASK_JOIN_PART_OF,
+    FR_TASK_JOIN_DEPENDS_ON
+} fr_task_join_kind;
+
+/* Every task pointing at name by the given kind of edge. This is the inbound
+   half of the graph, which a plugin's own source cannot show, and it is why
+   "daukle tasks" is a complete view rather than another partial one. Writes
+   at most capacity names, but always returns the true total, even past
+   capacity: the caller compares the return value against capacity to learn
+   whether the list it was handed is the whole answer. */
+size_t fr_tasks_joiners(const fr_task_set *set, const char *name, fr_task_join_kind kind,
                         const char **out_names, size_t capacity);
 
 /* The built-in command names. A task may not take one, because the command

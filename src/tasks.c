@@ -198,16 +198,20 @@ static int names_one(const char *const *list, size_t count, const char *name) {
     return 0;
 }
 
-size_t fr_tasks_joiners(const fr_task_set *set, const char *name,
+size_t fr_tasks_joiners(const fr_task_set *set, const char *name, fr_task_join_kind kind,
                         const char **out_names, size_t capacity) {
     size_t written = 0;
-    for (size_t index = 0; index < set->count && written < capacity; index++) {
+    for (size_t index = 0; index < set->count; index++) {
         const fr_task_node *node = &set->nodes[index];
-        int points = (node->part_of != NULL && strcmp(node->part_of, name) == 0)
-                     || (node->extra_part_of != NULL && strcmp(node->extra_part_of, name) == 0)
-                     || names_one(node->depends_on, node->depends_on_count, name)
-                     || names_one(node->extra_depends_on, node->extra_depends_on_count, name);
-        if (points) out_names[written++] = node->name;
+        int points = kind == FR_TASK_JOIN_PART_OF
+            ? ((node->part_of != NULL && strcmp(node->part_of, name) == 0)
+               || (node->extra_part_of != NULL && strcmp(node->extra_part_of, name) == 0))
+            : (names_one(node->depends_on, node->depends_on_count, name)
+               || names_one(node->extra_depends_on, node->extra_depends_on_count, name));
+        if (points) {
+            if (written < capacity) out_names[written] = node->name;
+            written++;
+        }
     }
     return written;
 }
