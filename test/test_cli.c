@@ -50,10 +50,8 @@ TEST rejects_a_second_manifest_path(void) {
     PASS();
 }
 
-TEST rejects_an_unknown_command_and_no_command_at_all(void) {
-    const char *unknown[] = { "daukle", "publish" };
-    ASSERT_EQ(FR_CLI_USAGE, parse(2, unknown).command);
-
+/* An unknown first word is now a task name; see an_unknown_first_word_is_a_task. */
+TEST no_command_at_all_is_usage(void) {
     const char *bare[] = { "daukle" };
     ASSERT_EQ(FR_CLI_USAGE, parse(1, bare).command);
     PASS();
@@ -204,6 +202,27 @@ TEST clean_takes_an_optional_manifest(void) {
     PASS();
 }
 
+TEST an_unknown_first_word_is_a_task(void) {
+    const char *argv[] = { "daukle", "build" };
+    fr_cli_options options = parse(2, argv);
+    ASSERT_EQ(FR_CLI_TASK, options.command);
+    ASSERT_STR_EQ("build", options.task_name);
+    PASS();
+}
+
+TEST a_built_in_command_wins_over_a_task_of_the_same_name(void) {
+    const char *argv[] = { "daukle", "clean" };
+    fr_cli_options options = parse(2, argv);
+    ASSERT_EQ(FR_CLI_CLEAN, options.command);
+    PASS();
+}
+
+TEST a_task_takes_no_second_word(void) {
+    const char *argv[] = { "daukle", "build", "daukle.toml" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(3, argv).command);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -213,7 +232,7 @@ int main(int argc, char **argv) {
     RUN_TEST(accepts_no_cache_on_either_side_of_the_command);
     RUN_TEST(rejects_an_unknown_option);
     RUN_TEST(rejects_a_second_manifest_path);
-    RUN_TEST(rejects_an_unknown_command_and_no_command_at_all);
+    RUN_TEST(no_command_at_all_is_usage);
     RUN_TEST(reports_the_version_flag);
     RUN_TEST(parses_an_add_command);
     RUN_TEST(rejects_an_add_without_a_range);
@@ -232,5 +251,8 @@ int main(int argc, char **argv) {
     RUN_TEST(rejects_a_limit_that_is_not_a_number);
     RUN_TEST(clean_is_parsed);
     RUN_TEST(clean_takes_an_optional_manifest);
+    RUN_TEST(an_unknown_first_word_is_a_task);
+    RUN_TEST(a_built_in_command_wins_over_a_task_of_the_same_name);
+    RUN_TEST(a_task_takes_no_second_word);
     GREATEST_MAIN_END();
 }

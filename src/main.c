@@ -11,6 +11,7 @@
 #include "region.h"
 #include "registry.h"
 #include "sync.h"
+#include "tasks.h"
 #include "tomledit.h"
 
 #include "cJSON.h"
@@ -471,6 +472,69 @@ static int clean_derived(const char *manifest_path, int verbose) {
     return 0;
 }
 
+static int run_task(const char *task_name, int use_cache, int verbose) {
+    fr_error err;
+    char *resolved = NULL;
+    if (resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    fr_session session;
+    int opened = fr_session_open(resolved, use_cache, &session, &err);
+    free(resolved);
+    if (opened != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    fr_sync_report report;
+    if (fr_sync_session(&session, 1, &report, &err) != FR_OK) {
+        fr_sync_report_free(&report);
+        fr_session_close(&session);
+        report_error(&err, verbose);
+        return 1;
+    }
+    fr_sync_report_free(&report);
+
+    fr_task_set set;
+    if (fr_tasks_collect(session.registry, &session.manifest, &set, &err) != FR_OK) {
+        fr_session_close(&session);
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    fr_task_plan plan;
+    if (fr_tasks_plan(&set, task_name, &plan, &err) != FR_OK) {
+        int unknown = fr_tasks_find(&set, task_name) == NULL;
+        size_t plugin_count = fr_plugins_report()->count;
+        fr_tasks_set_free(&set);
+        fr_session_close(&session);
+        report_error(&err, verbose);
+        if (unknown) {
+            if (plugin_count == 0) {
+                fprintf(stderr, "  this project declares no plugins, so it has no tasks\n");
+            } else {
+                fprintf(stderr, "  tasks come from plugins; this project declares %zu\n", plugin_count);
+            }
+            fprintf(stderr, "  run \"daukle tasks\" to see what they provide\n");
+            return 2;
+        }
+        return 1;
+    }
+
+    int status = fr_tasks_run(&plan, &session, &err);
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    if (status != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+    printf("daukle: %s\n", task_name);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     fr_cli_options options;
     fr_cli_parse(argc, argv, &options);
@@ -495,6 +559,8 @@ int main(int argc, char **argv) {
             return plugin_update(options.plugin_label, options.use_cache, options.verbose);
         case FR_CLI_CLEAN:
             return clean_derived(options.manifest_path, options.verbose);
+        case FR_CLI_TASK:
+            return run_task(options.task_name, options.use_cache, options.verbose);
         case FR_CLI_USAGE:
             break;
     }
@@ -506,7 +572,8 @@ int main(int argc, char **argv) {
 
     fprintf(stderr, "usage: daukle [--version | sync [manifest] | check [manifest]"
                     " | add <project>@<range> --to <consumer> [--modules a,b]"
-                    " | config print | plugin update [label] | clean [manifest]]"
+                    " | config print | plugin update [label] | clean [manifest]"
+                    " | <task> | tasks]"
                     " [--no-cache] [--verbose]\n");
     return 2;
 }
