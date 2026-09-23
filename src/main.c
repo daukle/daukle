@@ -602,7 +602,7 @@ static int list_tasks(int use_cache, int verbose) {
         if (node->extra_part_of != NULL) printf("  part of: %s (from the manifest)\n", node->extra_part_of);
 
         print_task_joiners(&set, node->name, FR_TASK_JOIN_PART_OF, "pulls in");
-        print_task_joiners(&set, node->name, FR_TASK_JOIN_DEPENDS_ON, "pulled in by");
+        print_task_joiners(&set, node->name, FR_TASK_JOIN_DEPENDS_ON, "needed by");
     }
 
     fr_tasks_set_free(&set);
