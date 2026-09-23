@@ -1,10 +1,17 @@
 #include "resolvers.h"
 
 #include "cJSON.h"
+#include "config_lua.h"
 #include "error.h"
 #include "jsonx.h"
+#include "lua_sandbox.h"
+#include "plugin_fetch.h"
 #include "plugins.h"
+#include "region.h"
+#include "sha256.h"
 
+#include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -136,4 +143,92 @@ const fr_resolver_entry *fr_resolvers_find(const fr_resolver_entry *entries, siz
         if (strcmp(entries[index].label, label) == 0) return &entries[index];
     }
     return NULL;
+}
+
+/* Mirrors plugins.c's own digest_matches: both compare a bounded, lowercased
+   sha256 hex digest and neither is worth sharing across a header for one
+   four-line helper. */
+static int digest_matches(const char *actual, const char *pinned) {
+    size_t length = strlen(actual);
+    if (length != strlen(pinned) || length >= 65) return 0;
+    for (size_t index = 0; index < length; index++) {
+        if (tolower((unsigned char) actual[index]) != tolower((unsigned char) pinned[index])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static char *loaded_label;
+
+void fr_resolvers_clear(void) {
+    free(loaded_label);
+    loaded_label = NULL;
+}
+
+/* Reads entry's chunk (local path or pinned url), verifies its digest before
+   running it, then loads it and confirms it declared a resolver. Mirrors
+   load_one in plugins.c step for step, for the same reason: verifying the
+   digest after the chunk ran would mean the mismatched code already executed. */
+static int acquire(const fr_resolver_entry *entry, fr_error *err) {
+    lua_State *state = fr_lua_runtime_state();
+
+    char *path = NULL;
+    char *text = NULL;
+    if (entry->path != NULL) {
+        if (fr_lua_sandbox_resolve(state, entry->path, &path, err) != FR_OK) return FR_ERR;
+        if (fr_file_read_text(path, &text, err) != FR_OK) {
+            free(path);
+            return FR_ERR;
+        }
+    } else {
+        if (fr_plugin_fetch(entry->url, &text, err) != FR_OK) return FR_ERR;
+    }
+
+    char digest[65];
+    fr_sha256_hex(text, strlen(text), digest);
+    if (entry->sha256 != NULL && !digest_matches(digest, entry->sha256)) {
+        fr_error_set(err, "resolver \"%s\": expected sha256 %s but the file is %s",
+                    entry->label, entry->sha256, digest);
+        if (entry->url != NULL) fr_plugin_fetch_discard(entry->url);
+        free(text);
+        free(path);
+        return FR_ERR;
+    }
+
+    const char *origin = entry->path != NULL ? path : entry->url;
+    int status = fr_lua_plugin_load(text, origin, NULL, 0, err);
+    free(text);
+    free(path);
+    if (status != FR_OK) return FR_ERR;
+
+    if (!fr_lua_resolver_declared()) {
+        fr_error_set(err, "resolver \"%s\" declares no resolver", entry->label);
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
+int fr_resolvers_use(const fr_resolver_entry *entry, const char *coordinate, char **out_url,
+                     char **out_resolved, fr_error *err) {
+    if (loaded_label == NULL || strcmp(loaded_label, entry->label) != 0) {
+        if (acquire(entry, err) != FR_OK) return FR_ERR;
+
+        char *label = fr_dup_string(entry->label);
+        if (label == NULL) {
+            fr_error_set(err, "out of memory recording resolver \"%s\" as loaded", entry->label);
+            return FR_ERR;
+        }
+        free(loaded_label);
+        loaded_label = label;
+    }
+
+    if (fr_lua_resolver_call(coordinate, entry->block, out_url, out_resolved, err) == FR_OK) {
+        return FR_OK;
+    }
+
+    char reason[sizeof err->message];
+    snprintf(reason, sizeof reason, "%s", err->message);
+    fr_error_set(err, "resolver \"%s\": coordinate \"%s\": %s", entry->label, coordinate, reason);
+    return FR_ERR;
 }

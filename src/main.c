@@ -10,6 +10,7 @@
 #include "plugins.h"
 #include "region.h"
 #include "registry.h"
+#include "resolvers.h"
 #include "sync.h"
 #include "tasks.h"
 #include "tomledit.h"
@@ -80,6 +81,7 @@ static int resolve_manifest_path(const char *manifest_path, char **out_path, fr_
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
+    fr_resolvers_clear();
     return status;
 }
 
@@ -186,6 +188,7 @@ static int print_config(const char *manifest_path, int use_cache, int verbose) {
         fr_manifest_free(&manifest);
         free(resolved);
         fr_plugins_report_clear();
+        fr_resolvers_clear();
         return 1;
     }
 
@@ -196,6 +199,7 @@ static int print_config(const char *manifest_path, int use_cache, int verbose) {
         fr_manifest_free(&manifest);
         free(resolved);
         fr_plugins_report_clear();
+        fr_resolvers_clear();
         return 1;
     }
 
@@ -205,6 +209,7 @@ static int print_config(const char *manifest_path, int use_cache, int verbose) {
     cJSON_Delete(env_reads);
     print_plugin_report();
     fr_plugins_report_clear();
+    fr_resolvers_clear();
     fr_manifest_free(&manifest);
     free(resolved);
     return 0;
