@@ -1,0 +1,8 @@
+schema = 1
+project = "forebay/directory-plugin"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+hello = "./plugin"
