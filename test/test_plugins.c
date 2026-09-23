@@ -1781,6 +1781,99 @@ TEST fetched_bytes_carry_their_length_past_an_embedded_nul(void) {
     PASS();
 }
 
+/* greatest's ASSERT_*m keeps the message POINTER and prints it once the test has
+   returned, so the buffer it names cannot live on the test's stack. */
+static char directory_message[512];
+
+static int loads_directory_plugin(const char *json) {
+    fr_error err;
+    err.message[0] = '\0';
+    directory_message[0] = '\0';
+
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, &err) != FR_OK) return FR_ERR;
+
+    cJSON *document = document_from(json);
+    int status = FR_ERR;
+    if (fr_lua_runtime_begin("test/fixtures/plugin-directory", registry, &err) == FR_OK) {
+        status = fr_plugins_load(registry, document, "test/fixtures/plugin-directory", &err);
+    }
+    snprintf(directory_message, sizeof directory_message, "%s", err.message);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    return status;
+}
+
+TEST a_directory_path_loads_the_plugin_lua_inside_it(void) {
+    int status = loads_directory_plugin("{\"plugins\":{\"hello\":{\"path\":\"./plugin\"}}}");
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    char digest[65];
+    snprintf(digest, sizeof digest, "%s", count == 1 ? report->entries[0].sha256 : "missing");
+
+    fr_plugins_report_clear();
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQm(directory_message, FR_OK, status);
+    ASSERT_EQ(1u, count);
+    /* A directory has no byte string to digest, so the report carries none
+       rather than a number nothing could reproduce. */
+    ASSERT_STR_EQ("", digest);
+    PASS();
+}
+
+TEST a_directory_path_may_not_carry_a_sha256(void) {
+    int status = loads_directory_plugin(
+        "{\"plugins\":{\"hello\":{\"path\":\"./plugin\",\"sha256\":"
+        "\"0000000000000000000000000000000000000000000000000000000000000000\"}}}");
+    char message[512];
+    snprintf(message, sizeof message, "%s", directory_message);
+
+    fr_plugins_report_clear();
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "is a directory and cannot carry a sha256") != NULL);
+    PASS();
+}
+
+/* The refusal above is about directories, not about paths: a single-file path
+   keeps its pin exactly as it had it. */
+TEST a_single_file_path_with_a_sha256_still_loads(void) {
+    fr_error err;
+    err.message[0] = '\0';
+    char *text = NULL;
+    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/plugin-local/plugins/hello.lua", &text,
+                                       &err));
+    char digest[65];
+    fr_sha256_hex(text, strlen(text), digest);
+    free(text);
+
+    char json[512];
+    snprintf(json, sizeof json,
+             "{\"plugins\":{\"hello\":{\"path\":\"./plugins/hello.lua\",\"sha256\":\"%s\"}}}",
+             digest);
+
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    cJSON *document = document_from(json);
+    int status = FR_ERR;
+    if (fr_lua_runtime_begin("test/fixtures/plugin-local", registry, &err) == FR_OK) {
+        status = fr_plugins_load(registry, document, "test/fixtures/plugin-local", &err);
+    }
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_plugins_report_clear();
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQm(message, FR_OK, status);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -1820,6 +1913,9 @@ int main(int argc, char **argv) {
     RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
     RUN_TEST(a_url_entry_fetches_and_loads);
     RUN_TEST(fetched_bytes_carry_their_length_past_an_embedded_nul);
+    RUN_TEST(a_directory_path_loads_the_plugin_lua_inside_it);
+    RUN_TEST(a_directory_path_may_not_carry_a_sha256);
+    RUN_TEST(a_single_file_path_with_a_sha256_still_loads);
     RUN_TEST(a_resolved_entry_loads_what_its_resolver_names);
     RUN_TEST(a_plugin_chunk_may_not_declare_a_resolver);
     RUN_TEST(the_headers_a_resolver_returns_reach_the_artifact_fetch);
