@@ -8,6 +8,7 @@
 #include "manifest.h"
 #include "plugins.h"
 #include "resolve.h"
+#include "tar.h"
 
 #include "cJSON.h"
 #include "lauxlib.h"
@@ -1037,7 +1038,55 @@ static int lua_declare_plugin(lua_State *state) {
     return 0;
 }
 
+/* Where a module runs: the entry chunk's own environment table, held under the
+   address of this file static so no plugin can name the key. */
+static const char module_env_key = 0;
+static fr_plugin_source *loading_source;
+
+/* Declared here rather than beside fr_lua_plugin_exec_is_refused, which is
+   further down the file than the first use below. */
+static int plugin_chunk_running;
+
+/* Not a verb and not declared in "uses": reading a member of the artifact the
+   manifest already pinned grants nothing the digest does not already cover.
+   Reaching ANOTHER plugin's code is the edge that has to be declared, and that
+   is child spec 6's to design. */
+static int lua_require_module(lua_State *state) {
+    const char *name = luaL_checkstring(state, 1);
+    /* One condition rather than two: a source is held only while a plugin chunk
+       runs, so this covers both a single-file plugin and a call from outside a
+       load, which the "daukle.plugin must be the first call" refusal already
+       reaches first. */
+    if (loading_source == NULL) {
+        return luaL_error(state, "daukle.require(\"%s\"): this plugin has no modules", name);
+    }
+
+    const char *text = NULL;
+    size_t length = 0;
+    fr_error err;
+    if (fr_plugin_source_member(loading_source, name, &text, &length, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    char chunk_name[FR_TAR_MAX_NAME + 8];
+    snprintf(chunk_name, sizeof chunk_name, "@%s.lua", name);
+    if (fr_lua_load_named(state, text, length, chunk_name) != LUA_OK) return lua_error(state);
+
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &module_env_key);
+    if (lua_setupvalue(state, -2, 1) == NULL) {
+        /* Never reached for a chunk compiled from source, and checked anyway:
+           failing here silently would run the module against the globals rather
+           than against what the plugin declared. */
+        return luaL_error(state, "daukle.require(\"%s\") could not be given its environment", name);
+    }
+
+    lua_call(state, 0, 1);
+    return 1;
+}
+
 void fr_lua_verbs_install_registration(lua_State *state) {
+    lua_pushcfunction(state, lua_require_module);
+    lua_setfield(state, -2, "require");
     lua_pushcfunction(state, lua_declare_language);
     lua_setfield(state, -2, "language");
     lua_pushcfunction(state, lua_declare_source);
@@ -1180,8 +1229,6 @@ fr_registry *fr_lua_registering_registry(void) {
     return registering_into;
 }
 
-static int plugin_chunk_running;
-
 int fr_lua_plugin_exec_is_refused(void) {
     return plugin_chunk_running;
 }
@@ -1213,7 +1260,8 @@ static void settle_resolver_callback(lua_State *state, int chunk_succeeded, int 
 }
 
 int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
-                       const char *const *verbs, size_t verb_count, fr_error *err) {
+                       const char *const *verbs, size_t verb_count, fr_plugin_source *source,
+                       fr_error *err) {
     lua_State *state = fr_lua_runtime_state();
     if (state == NULL) {
         fr_error_set(err, "no lua runtime is open for \"%s\"", origin);
@@ -1227,9 +1275,17 @@ int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
     int backup_resolver_callback = hold_second_reference(state, resolver_callback);
 
     chunk_state_clear();
+    loading_source = source;
+    lua_pushvalue(state, env);
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &module_env_key);
+
     plugin_chunk_running = 1;
     int status = fr_lua_run_in_env_bytes(state, text, length, origin, env, err);
     plugin_chunk_running = 0;
+
+    loading_source = NULL;
+    lua_pushnil(state);
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &module_env_key);
 
     resolver_declared = status == FR_OK ? chunk_declared_resolver : 0;
     settle_resolver_callback(state, status == FR_OK, backup_resolver_callback);

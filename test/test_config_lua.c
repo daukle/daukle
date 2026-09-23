@@ -709,7 +709,7 @@ TEST a_task_is_declared_and_registered(void) {
         "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n"
         "daukle.task{ name = 'cmake:build', partOf = 'build', dependsOn = { 'cmake:configure' },"
         " run = function() end }\n";
-    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", uses, 1, &err));
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", uses, 1, NULL, &err));
 
     const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/cmake:build");
     ASSERT(task != NULL);
@@ -727,7 +727,7 @@ TEST a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare(void) {
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "squatter.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "squatter.lua", NULL, 0, NULL, &err));
     ASSERT(strstr(err.message, "declares no toolchain \"cmake\"") != NULL);
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
@@ -739,7 +739,7 @@ TEST an_aggregator_needs_no_run(void) {
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk = "daukle.task{ name = 'build' }\n";
-    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, strlen(chunk), "lifecycle.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, strlen(chunk), "lifecycle.lua", NULL, 0, NULL, &err));
 
     const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/build");
     ASSERT(task != NULL);
@@ -758,10 +758,10 @@ TEST a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain(void) {
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *first_chunk =
         "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n";
-    ASSERT_EQ(FR_OK, fr_lua_plugin_load(first_chunk, strlen(first_chunk), "cmake.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(first_chunk, strlen(first_chunk), "cmake.lua", NULL, 0, NULL, &err));
 
     const char *second_chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(second_chunk, strlen(second_chunk), "squatter.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(second_chunk, strlen(second_chunk), "squatter.lua", NULL, 0, NULL, &err));
     ASSERT(strstr(err.message, "declares no toolchain \"cmake\"") != NULL);
 
     fr_lua_runtime_shutdown();
@@ -781,7 +781,7 @@ TEST a_hostile_index_metatable_on_the_task_table_is_never_consulted(void) {
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk =
         "daukle.task(setmetatable({}, { __index = function() error('boom') end }))\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "hostile.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "hostile.lua", NULL, 0, NULL, &err));
     ASSERT(strstr(err.message, "a task needs a name") != NULL);
     ASSERT(strstr(err.message, "boom") == NULL);
     fr_lua_runtime_shutdown();
@@ -815,7 +815,7 @@ TEST a_hostile_index_metatable_on_the_toolchain_table_is_never_consulted(void) {
         "  return 'cmake'\n"
         "end }\n"
         "daukle.toolchain(setmetatable({ generate = function() return {} end }, mt))\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "hostile-toolchain.lua", NULL, 0, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "hostile-toolchain.lua", NULL, 0, NULL, &err));
     ASSERT(strstr(err.message, "a toolchain needs a name") != NULL);
     ASSERT(strstr(err.message, "boom") == NULL);
     fr_lua_runtime_shutdown();
@@ -830,7 +830,7 @@ static int load_resolver_chunk(const char *text, const char *origin,
                                const char *const *verbs, size_t verb_count,
                                fr_error *err) {
     fr_lua_set_acquiring_resolver(1);
-    int status = fr_lua_plugin_load(text, strlen(text), origin, verbs, verb_count, err);
+    int status = fr_lua_plugin_load(text, strlen(text), origin, verbs, verb_count, NULL, err);
     fr_lua_set_acquiring_resolver(0);
     return status;
 }
@@ -845,7 +845,7 @@ TEST a_chunk_not_acquired_as_a_resolver_may_not_declare_one(void) {
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
         "daukle.resolver{ resolve = function(c) return { url = c } end }\n";
-    int status = fr_lua_plugin_load(chunk, strlen(chunk), "ordinary.lua", NULL, 0, &err);
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "ordinary.lua", NULL, 0, NULL, &err);
     int declared = fr_lua_resolver_declared();
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
@@ -1041,7 +1041,7 @@ TEST a_chunk_declaring_no_resolver_reports_none_declared(void) {
     const char *second_chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
         "daukle.language{ name = 'x', apply = function() return '' end }\n";
-    int second_loaded = fr_lua_plugin_load(second_chunk, strlen(second_chunk), "second.lua", NULL, 0, &err) == FR_OK;
+    int second_loaded = fr_lua_plugin_load(second_chunk, strlen(second_chunk), "second.lua", NULL, 0, NULL, &err) == FR_OK;
     int declared = fr_lua_resolver_declared();
 
     fr_registry_destroy(registry);
@@ -1072,6 +1072,80 @@ TEST a_refused_resolver_chunk_reports_none_declared(void) {
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
     ASSERT_EQ(0, declared);
+    PASS();
+}
+
+/* Loads a fixture that declares a directory-form plugin and reports both the
+   status and the message, so each test below asserts on one clause rather than
+   on whichever failure happened to come first. */
+static int loads_fixture(const char *manifest, char *message, size_t size) {
+    fr_error err;
+    /* A successful load leaves err untouched, and a test that failed for some
+       other reason would otherwise report whatever was on the stack. */
+    err.message[0] = '\0';
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, &err) != FR_OK) {
+        snprintf(message, size, "%s", err.message);
+        return FR_ERR;
+    }
+
+    fr_manifest parsed;
+    int status = fr_config_load_file(manifest, registry, &parsed, &err);
+    snprintf(message, size, "%s", err.message);
+    int registered = status == FR_OK
+                     && fr_registry_language(registry, "daukle.language/hello") != NULL;
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    return status == FR_OK && registered ? FR_OK : FR_ERR;
+}
+
+TEST a_module_supplies_what_the_entry_chunk_requires(void) {
+    char message[512];
+    int status = loads_fixture("test/fixtures/plugin-directory/daukle.toml", message,
+                               sizeof message);
+    ASSERT_EQm(message, FR_OK, status);
+    PASS();
+}
+
+TEST a_module_may_declare_a_language(void) {
+    char message[512];
+    int status = loads_fixture("test/fixtures/plugin-module-declares/daukle.toml", message,
+                               sizeof message);
+    ASSERT_EQm(message, FR_OK, status);
+    PASS();
+}
+
+/* The one test that proves a module runs in the plugin's OWN environment rather
+   than in a copy of it: a copy would pass everything else here. */
+TEST a_module_may_not_use_a_verb_the_plugin_did_not_declare(void) {
+    char message[512];
+    int status = loads_fixture("test/fixtures/plugin-module-verb/daukle.toml", message,
+                               sizeof message);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "was not declared in uses") != NULL);
+    PASS();
+}
+
+/* daukle.require needs the plugin to have said what it uses, and the rule that
+   gets it there already exists: daukle.plugin must be the first call. This is
+   what says the two compose, so a change to either is not free. */
+TEST daukle_require_before_daukle_plugin_is_refused(void) {
+    char message[512];
+    int status = loads_fixture("test/fixtures/plugin-require-early/daukle.toml", message,
+                               sizeof message);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "daukle.plugin must be the first call") != NULL);
+    PASS();
+}
+
+/* daukle.require is not a capability, so it is not in "uses" and a plugin that
+   declares none still has it. */
+TEST a_plugin_declaring_no_uses_may_still_require(void) {
+    char message[512];
+    int status = loads_fixture("test/fixtures/plugin-no-uses/daukle.toml", message,
+                               sizeof message);
+    ASSERT_EQm(message, FR_OK, status);
     PASS();
 }
 
@@ -1127,5 +1201,10 @@ int main(int argc, char **argv) {
     RUN_TEST(a_hostile_metatable_returning_a_function_is_never_used_as_resolve);
     RUN_TEST(a_chunk_declaring_no_resolver_reports_none_declared);
     RUN_TEST(a_refused_resolver_chunk_reports_none_declared);
+    RUN_TEST(a_module_supplies_what_the_entry_chunk_requires);
+    RUN_TEST(a_module_may_declare_a_language);
+    RUN_TEST(a_module_may_not_use_a_verb_the_plugin_did_not_declare);
+    RUN_TEST(daukle_require_before_daukle_plugin_is_refused);
+    RUN_TEST(a_plugin_declaring_no_uses_may_still_require);
     GREATEST_MAIN_END();
 }

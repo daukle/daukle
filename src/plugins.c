@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/stat.h>
+
 char *fr_dup_string(const char *text) {
     if (text == NULL) return NULL;
     size_t length = strlen(text) + 1;
@@ -542,17 +544,43 @@ static int unknown_resolver(const fr_plugin_entry *entry, const fr_resolver_entr
    digest pin is checked against and what a failed pin discards, resolved is
    the resolver's own answer and stays NULL for the two kinds core names
    itself. */
+/* stat and not access: access(path, X_OK) returns 0 for a directory, so it
+   cannot tell one from a file at all. */
+static int path_is_directory(const char *path) {
+#ifdef _WIN32
+    struct _stat info;
+    return _stat(path, &info) == 0 && (info.st_mode & _S_IFDIR) != 0;
+#else
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+#endif
+}
+
 static int acquire(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
                    size_t resolver_count, char **out_text, size_t *out_length, char **out_origin,
-                   char **out_resolved, fr_error *err) {
+                   char **out_resolved, int *out_is_directory, fr_error *err) {
     *out_text = NULL;
     *out_length = 0;
     *out_origin = NULL;
     *out_resolved = NULL;
+    *out_is_directory = 0;
 
     if (entry->kind == FR_PLUGIN_PATH) {
         lua_State *state = fr_lua_runtime_state();
-        if (fr_lua_sandbox_resolve(state, entry->path, out_origin, err) != FR_OK) return FR_ERR;
+        /* The directory resolver, although this may name a file: it is the one
+           that opens both kinds. fopen refuses a directory on Windows, so
+           resolving as a file first would fail before anything could ask which
+           kind it is. Containment is the same rule either way. */
+        if (fr_lua_sandbox_resolve_dir(state, entry->path, out_origin, err) != FR_OK) {
+            return FR_ERR;
+        }
+        if (path_is_directory(*out_origin)) {
+            /* No bytes to hand back: a directory has no single byte string, which
+               is also why it cannot be pinned. Its members are read as they are
+               asked for. */
+            *out_is_directory = 1;
+            return FR_OK;
+        }
         if (fr_file_read_bytes(*out_origin, out_text, out_length, err) != FR_OK) {
             free(*out_origin);
             *out_origin = NULL;
@@ -595,39 +623,79 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
     char *text = NULL;
     char *resolved = NULL;
     size_t length = 0;
-    if (acquire(entry, resolvers, resolver_count, &text, &length, &origin, &resolved, err)
+    int is_directory = 0;
+    if (acquire(entry, resolvers, resolver_count, &text, &length, &origin, &resolved,
+                &is_directory, err)
         != FR_OK) {
         return FR_ERR;
     }
 
-    /* Computed for every plugin, pinned or not: an unpinned entry's digest is what
-       "daukle config print" shows, so adopting a pin is a copy and a paste. Checked
-       before read_declaration, which already runs the chunk: verifying after would
-       mean the mismatched code had already executed. */
+    /* Computed for every plugin that HAS a byte string, pinned or not: an
+       unpinned entry's digest is what "daukle config print" shows, so adopting a
+       pin is a copy and a paste. Checked before read_declaration, which already
+       runs the chunk: verifying after would mean the mismatched code had already
+       executed. */
     char digest[65];
-    fr_sha256_hex(text, length, digest);
-    if (entry->sha256 != NULL && !digest_matches(digest, entry->sha256)) {
-        fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
-                    entry->label, entry->sha256, digest);
-        if (entry->kind != FR_PLUGIN_PATH) fr_plugin_fetch_discard(origin);
+    digest[0] = '\0';
+    if (!is_directory) {
+        fr_sha256_hex(text, length, digest);
+        if (entry->sha256 != NULL && !digest_matches(digest, entry->sha256)) {
+            fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
+                        entry->label, entry->sha256, digest);
+            if (entry->kind != FR_PLUGIN_PATH) fr_plugin_fetch_discard(origin);
+            free(text);
+            free(origin);
+            free(resolved);
+            return FR_ERR;
+        }
+    } else if (entry->sha256 != NULL) {
+        /* Refused rather than approximated: a digest over some canonical reading
+           of a directory would be neither the published archive's digest nor
+           anything a standard tool reproduces, so copying it out of
+           "daukle config print" would fail the day the entry became a url. */
+        fr_error_set(err, "plugin \"%s\": \"%s\" is a directory and cannot carry a sha256; pin the"
+                          " published archive instead",
+                    entry->label, entry->path);
         free(text);
         free(origin);
         free(resolved);
         return FR_ERR;
     }
 
+    fr_plugin_source *source = NULL;
+    int opened = is_directory
+                     ? fr_plugin_source_open_directory(fr_lua_runtime_state(), entry->path, &source,
+                                                       err)
+                     : fr_plugin_source_open_bytes(text, length, &source, err);
+    if (opened != FR_OK) {
+        free(text);
+        free(origin);
+        free(resolved);
+        return FR_ERR;
+    }
+
+    /* The digest above covers the whole artifact; what RUNS is its entry, which
+       for an archive is one member of it. */
+    const char *chunk = NULL;
+    size_t chunk_length = 0;
+    int status = fr_plugin_source_entry(source, &chunk, &chunk_length, err);
+
     lua_State *state = fr_lua_runtime_state();
     fr_plugin_declaration declaration = { "plugin", entry->label, { NULL }, 0 };
-    int status = read_declaration(state, text, length, origin, &declaration, err);
     if (status == FR_OK) {
-        status = fr_lua_plugin_load(text, length, origin, (const char *const *) declaration.uses,
-                                    declaration.uses_count, err);
+        status = read_declaration(state, chunk, chunk_length, origin, &declaration, err);
+    }
+    if (status == FR_OK) {
+        status = fr_lua_plugin_load(chunk, chunk_length, origin,
+                                    (const char *const *) declaration.uses,
+                                    declaration.uses_count, source, err);
     }
     if (status == FR_OK) {
         status = append_report_entry(entry, origin, resolved, digest, &declaration, err);
     }
 
     free_declaration(&declaration);
+    fr_plugin_source_close(source);
     free(text);
     free(origin);
     free(resolved);
