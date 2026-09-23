@@ -1,4 +1,6 @@
-# plugins.c/.h stay out: their own manifest-table key text collides with a forbidden literal below
+# plugins.c/.h stay out: their own manifest-table key text collides with a forbidden literal below.
+# resolvers.c/.h stay out for the same reason: it carries the "path" key literal too. Task 8 gives
+# the forge rule a file set that covers it anyway.
 set(CORE_FILES
     resolve.c resolve.h manifest.c manifest.h registry.c registry.h
     types.h sync.c sync.h main.c cli.c cli.h config.c config.h
