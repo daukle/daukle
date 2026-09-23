@@ -1255,19 +1255,38 @@ TEST the_report_names_the_resolver_and_the_url(void) {
     PASS();
 }
 
+/* The spare resolver is the url form, so acquiring it needs the network, and
+   the backend installed for the load refuses every request: the load succeeds
+   only if the spare is neither fetched nor run. The used resolver is a local
+   path and the artifact it names is seeded into the fetch cache first, so
+   nothing the load legitimately does reaches the network either. A spare in
+   the path form, or a backend that answers, would leave the same report
+   whether or not the unreferenced resolver had been acquired. */
 TEST the_report_names_a_declared_unused_resolver(void) {
     fr_error err;
+    const char *artifact_url = "https://example.invalid/a/b.lua";
     const char *document_json =
         "{\"resolvers\":{\"used\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"},"
-        "\"spare\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"}},"
+        "\"spare\":{\"url\":\"https://example.invalid/spare-resolver.lua\",\"sha256\":"
+        "\"0000000000000000000000000000000000000000000000000000000000000000\"}},"
         "\"plugins\":{\"p\":\"used:a/b\"}}";
 
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_unused_resolver_%d",
+            fr_test_temp_base(), fr_test_process_id());
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
     fr_http_fn previous = fr_http_set_backend(stub_named_artifacts);
+    int seeded = seed_cached_artifact(artifact_url);
+    fr_http_set_backend(stub_refuses_every_request);
+
     fr_registry *registry = NULL;
     int built = fr_build_registry(&registry, &err) == FR_OK;
     cJSON *document = cJSON_Parse(document_json);
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int loaded = fr_plugins_load(registry, document, ".", &err) == FR_OK;
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
 
     const fr_plugin_report *report = fr_plugins_report();
     char unused[64] = "";
@@ -1279,9 +1298,12 @@ TEST the_report_names_a_declared_unused_resolver(void) {
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
+    fr_plugin_fetch_discard(artifact_url);
     fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
 
-    ASSERT(built && began && loaded);
+    ASSERT(built && began && seeded);
+    ASSERTm(message, loaded);
     ASSERT_EQ(1u, unused_count);
     ASSERT_STR_EQ("spare", unused);
     PASS();
