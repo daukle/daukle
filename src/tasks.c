@@ -432,7 +432,7 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
         context.project = session->manifest.self.project;
         context.version = version;
         context.root = FR_DERIVED_ROOT_RELATIVE;
-        context.derived_dir = derived_dir_relative;
+        context.derived_dir_relative = derived_dir_relative;
         context.resolved = resolved;
         context.resolved_count = resolved_count;
 

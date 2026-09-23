@@ -54,11 +54,11 @@ static int failing_run(void *state, const fr_task_run_context *context, fr_error
 static char recorded_cwd[128];
 
 /* Mirrors what config_lua.c's lua_task_run does around a real plugin's run
-   callback: publish context->derived_dir through fr_lua_set_task_cwd, the
-   same accessor daukle.exec's cwd default reads, and reset it once done. */
+   callback: publish context->derived_dir_relative through fr_lua_set_task_cwd,
+   the same accessor daukle.exec's cwd default reads, and reset it once done. */
 static int cwd_recording_run(void *state, const fr_task_run_context *context, fr_error *err) {
     (void) state; (void) err;
-    fr_lua_set_task_cwd(context->derived_dir);
+    fr_lua_set_task_cwd(context->derived_dir_relative);
     const char *published = fr_lua_task_cwd();
     if (published != NULL) snprintf(recorded_cwd, sizeof recorded_cwd, "%s", published);
     fr_lua_set_task_cwd(NULL);

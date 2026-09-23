@@ -33,9 +33,11 @@ typedef struct {
     void *state;
 } fr_toolchain_plugin;
 
-/* What a task's run callback is handed. toolchain and derived_dir are NULL
-   only for an aggregator, which by section 3 of the task spec has no run
-   callback at all, so a callback never sees them NULL. */
+/* What a task's run callback is handed. fr_tasks_run builds this only for a
+   task whose plugin has a run callback, and every such task carries a
+   toolchain (a bare task with no toolchain in its name is refused a run
+   callback at collection time), so toolchain and derived_dir_relative are
+   never NULL here. */
 typedef struct {
     const char *name;
     const fr_toolchain *toolchain;
@@ -46,7 +48,7 @@ typedef struct {
        manifest directory), e.g. "build/daukle/cmake", not a filesystem path:
        this is what fr_lua_task_cwd publishes for daukle.exec's cwd default,
        and daukle.exec's cwd is always resolved relative to that same base. */
-    const char *derived_dir;
+    const char *derived_dir_relative;
     const fr_resolved *resolved;
     size_t resolved_count;
 } fr_task_run_context;

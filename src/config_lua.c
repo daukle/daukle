@@ -694,7 +694,7 @@ static int lua_task_run(void *state, const fr_task_run_context *context, fr_erro
     int top = lua_gettop(runtime_state);
     lua_task_context wrapper = { state, context };
     task_context = &wrapper;
-    fr_lua_set_task_cwd(context->derived_dir);
+    fr_lua_set_task_cwd(context->derived_dir_relative);
     lua_pushcfunction(runtime_state, protected_task_run);
     int status = lua_pcall(runtime_state, 0, 0, 0);
     fr_lua_set_task_cwd(NULL);
