@@ -187,8 +187,8 @@ int fr_plugin_module_name_check(const char *name, fr_error *err) {
         return FR_ERR;
     }
     if (strchr(name, ':') != NULL) {
-        fr_error_set(err, "daukle.require(\"%s\"): cross-plugin requires are not implemented",
-                     name);
+        fr_error_set(err, "daukle.require(\"%s\"): a module name may contain at most one \":\","
+                          " which separates a plugin from its module", name);
         return FR_ERR;
     }
     if (ends_with_lua(name)) {

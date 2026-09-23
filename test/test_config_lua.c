@@ -1,16 +1,22 @@
 #include "greatest.h"
+#include "cache.h"
 #include "config.h"
 #include "config_lua.h"
 #include "derived.h"
+#include "error.h"
+#include "http.h"
 #include "manifest.h"
+#include "plugins.h"
 #include "region.h"
 #include "registry.h"
+#include "sha256.h"
 #include "sync.h"
 #include "support.h"
 
 #include "cJSON.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 TEST a_script_beside_a_toml_manifest_changes_it(void) {
@@ -709,7 +715,7 @@ TEST a_task_is_declared_and_registered(void) {
         "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n"
         "daukle.task{ name = 'cmake:build', partOf = 'build', dependsOn = { 'cmake:configure' },"
         " run = function() end }\n";
-    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", uses, 1, NULL, &err));
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", uses, 1, NULL, NULL, &err));
 
     const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/cmake:build");
     ASSERT(task != NULL);
@@ -727,7 +733,7 @@ TEST a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare(void) {
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "squatter.lua", NULL, 0, NULL, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "squatter.lua", NULL, 0, NULL, NULL, &err));
     ASSERT(strstr(err.message, "declares no toolchain \"cmake\"") != NULL);
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
@@ -739,7 +745,7 @@ TEST an_aggregator_needs_no_run(void) {
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk = "daukle.task{ name = 'build' }\n";
-    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, strlen(chunk), "lifecycle.lua", NULL, 0, NULL, &err));
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, strlen(chunk), "lifecycle.lua", NULL, 0, NULL, NULL, &err));
 
     const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/build");
     ASSERT(task != NULL);
@@ -758,10 +764,10 @@ TEST a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain(void) {
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *first_chunk =
         "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n";
-    ASSERT_EQ(FR_OK, fr_lua_plugin_load(first_chunk, strlen(first_chunk), "cmake.lua", NULL, 0, NULL, &err));
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(first_chunk, strlen(first_chunk), "cmake.lua", NULL, 0, NULL, NULL, &err));
 
     const char *second_chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(second_chunk, strlen(second_chunk), "squatter.lua", NULL, 0, NULL, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(second_chunk, strlen(second_chunk), "squatter.lua", NULL, 0, NULL, NULL, &err));
     ASSERT(strstr(err.message, "declares no toolchain \"cmake\"") != NULL);
 
     fr_lua_runtime_shutdown();
@@ -781,7 +787,7 @@ TEST a_hostile_index_metatable_on_the_task_table_is_never_consulted(void) {
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk =
         "daukle.task(setmetatable({}, { __index = function() error('boom') end }))\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "hostile.lua", NULL, 0, NULL, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "hostile.lua", NULL, 0, NULL, NULL, &err));
     ASSERT(strstr(err.message, "a task needs a name") != NULL);
     ASSERT(strstr(err.message, "boom") == NULL);
     fr_lua_runtime_shutdown();
@@ -815,7 +821,7 @@ TEST a_hostile_index_metatable_on_the_toolchain_table_is_never_consulted(void) {
         "  return 'cmake'\n"
         "end }\n"
         "daukle.toolchain(setmetatable({ generate = function() return {} end }, mt))\n";
-    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "hostile-toolchain.lua", NULL, 0, NULL, &err));
+    ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "hostile-toolchain.lua", NULL, 0, NULL, NULL, &err));
     ASSERT(strstr(err.message, "a toolchain needs a name") != NULL);
     ASSERT(strstr(err.message, "boom") == NULL);
     fr_lua_runtime_shutdown();
@@ -830,7 +836,7 @@ static int load_resolver_chunk(const char *text, const char *origin,
                                const char *const *verbs, size_t verb_count,
                                fr_error *err) {
     fr_lua_set_acquiring_resolver(1);
-    int status = fr_lua_plugin_load(text, strlen(text), origin, verbs, verb_count, NULL, err);
+    int status = fr_lua_plugin_load(text, strlen(text), origin, verbs, verb_count, NULL, NULL, err);
     fr_lua_set_acquiring_resolver(0);
     return status;
 }
@@ -845,7 +851,7 @@ TEST a_chunk_not_acquired_as_a_resolver_may_not_declare_one(void) {
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
         "daukle.resolver{ resolve = function(c) return { url = c } end }\n";
-    int status = fr_lua_plugin_load(chunk, strlen(chunk), "ordinary.lua", NULL, 0, NULL, &err);
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "ordinary.lua", NULL, 0, NULL, NULL, &err);
     int declared = fr_lua_resolver_declared();
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
@@ -1041,7 +1047,7 @@ TEST a_chunk_declaring_no_resolver_reports_none_declared(void) {
     const char *second_chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
         "daukle.language{ name = 'x', apply = function() return '' end }\n";
-    int second_loaded = fr_lua_plugin_load(second_chunk, strlen(second_chunk), "second.lua", NULL, 0, NULL, &err) == FR_OK;
+    int second_loaded = fr_lua_plugin_load(second_chunk, strlen(second_chunk), "second.lua", NULL, 0, NULL, NULL, &err) == FR_OK;
     int declared = fr_lua_resolver_declared();
 
     fr_registry_destroy(registry);
@@ -1164,6 +1170,421 @@ TEST a_cycle_between_modules_is_refused(void) {
     PASS();
 }
 
+/* ---- daukle.require("<alias>:<module>") across a plugin boundary ----
+
+   Every test below goes through fr_plugins_load, because load_one is where the
+   dependency graph is acquired and handed to the chunk: a test that called
+   fr_lua_plugin_load itself would pass with that wiring deleted. */
+
+#define XP_MAX_ARTIFACTS 8
+#define XP_BODY_MAX 8192
+
+typedef struct {
+    const char *url;
+    char body[XP_BODY_MAX];
+    size_t length;
+    char digest[65];
+} xp_artifact;
+
+static xp_artifact XP[XP_MAX_ARTIFACTS];
+static size_t xp_count;
+static char xp_message[512];
+
+static const char XP_APPLY[] = "apply = function(consumer, resolved, text) return text end";
+
+static void xp_reset(void) {
+    xp_count = 0;
+    xp_message[0] = '\0';
+}
+
+/* The digest is computed from the bytes the stub will serve and never pasted:
+   a pasted one is computed over one line ending and compared against whatever
+   the checkout wrote. */
+static const xp_artifact *xp_serve(const char *url, const char *bytes, size_t length) {
+    xp_artifact *artifact = NULL;
+    for (size_t index = 0; index < xp_count && artifact == NULL; index++) {
+        if (strcmp(XP[index].url, url) == 0) artifact = &XP[index];
+    }
+    if (artifact == NULL) {
+        if (xp_count == XP_MAX_ARTIFACTS || length > XP_BODY_MAX) {
+            snprintf(xp_message, sizeof xp_message, "the test cannot serve \"%s\"", url);
+            return &XP[0];
+        }
+        artifact = &XP[xp_count];
+        xp_count++;
+    }
+    artifact->url = url;
+    memcpy(artifact->body, bytes, length);
+    artifact->length = length;
+    fr_sha256_hex(artifact->body, length, artifact->digest);
+    return artifact;
+}
+
+static const xp_artifact *xp_serve_chunk(const char *url, const char *text) {
+    return xp_serve(url, text, strlen(text));
+}
+
+/* A provider is an archive, because a single chunk carries no members to
+   export. names and bodies are its modules, beside the plugin.lua in entry. */
+static const xp_artifact *xp_serve_plugin(const char *url, const char *entry,
+                                          const char *const *names, const char *const *bodies,
+                                          size_t member_count) {
+    static char archive[XP_BODY_MAX];
+    memset(archive, 0, sizeof archive);
+    size_t offset = fr_test_tar_append(archive, 0, "plugin.lua", '0', entry, strlen(entry));
+    for (size_t index = 0; index < member_count; index++) {
+        offset = fr_test_tar_append(archive, offset, names[index], '0', bodies[index],
+                                    strlen(bodies[index]));
+    }
+    offset = fr_test_tar_end(archive, offset);
+    return xp_serve(url, archive, offset);
+}
+
+static char *xp_copy(const char *data, size_t length) {
+    char *copy = malloc(length + 1);
+    if (copy == NULL) return NULL;
+    memcpy(copy, data, length);
+    copy[length] = '\0';
+    return copy;
+}
+
+static int xp_http(const char *url, const fr_http_header *headers, size_t header_count,
+                   char **out_body, size_t *out_length, fr_error *err) {
+    (void) headers;
+    (void) header_count;
+    for (size_t index = 0; index < xp_count; index++) {
+        if (strcmp(url, XP[index].url) != 0) continue;
+        *out_body = xp_copy(XP[index].body, XP[index].length);
+        if (*out_body == NULL) {
+            fr_error_set(err, "out of memory serving %s", url);
+            return FR_ERR;
+        }
+        *out_length = XP[index].length;
+        return FR_OK;
+    }
+    fr_error_set(err, "no artifact for %s", url);
+    return FR_ERR;
+}
+
+static char xp_requires[512];
+
+static const char *xp_requires_one(const char *alias, const xp_artifact *artifact) {
+    snprintf(xp_requires, sizeof xp_requires, "%s = { url = \"%s\", sha256 = \"%s\" }", alias,
+             artifact->url, artifact->digest);
+    return xp_requires;
+}
+
+static char xp_chunk[2048];
+
+static const char *xp_dependent(const char *uses, const char *requires_table, const char *body) {
+    snprintf(xp_chunk, sizeof xp_chunk,
+             "daukle.plugin{ api = 1, uses = { %s }, requires = { %s } }\n%s", uses, requires_table,
+             body);
+    return xp_chunk;
+}
+
+static char xp_document[1024];
+
+static const char *xp_manifest(const char *label, const char *url) {
+    snprintf(xp_document, sizeof xp_document, "{\"plugins\":{\"%s\":{\"url\":\"%s\"}}}", label, url);
+    return xp_document;
+}
+
+static const char *xp_manifest_two(const char *first, const char *first_url, const char *second,
+                                   const char *second_url) {
+    snprintf(xp_document, sizeof xp_document,
+             "{\"plugins\":{\"%s\":{\"url\":\"%s\"},\"%s\":{\"url\":\"%s\"}}}", first, first_url,
+             second, second_url);
+    return xp_document;
+}
+
+static int xp_loads(const char *document_json, fr_registry **out_registry) {
+    fr_error err;
+    err.message[0] = '\0';
+    *out_registry = NULL;
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    fr_http_fn previous = fr_http_set_backend(xp_http);
+
+    fr_registry *registry = NULL;
+    cJSON *document = cJSON_Parse(document_json);
+    int status = fr_build_registry(&registry, &err);
+    if (status == FR_OK && document == NULL) {
+        fr_error_set(&err, "the test document is not json");
+        status = FR_ERR;
+    }
+    if (status == FR_OK) status = fr_lua_runtime_begin(".", registry, &err);
+    if (status == FR_OK) status = fr_plugins_load(registry, document, ".", &err);
+    if (status != FR_OK) snprintf(xp_message, sizeof xp_message, "%s", err.message);
+
+    cJSON_Delete(document);
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+    *out_registry = registry;
+    return status;
+}
+
+static void xp_done(fr_registry *registry) {
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+}
+
+static const char JAVA_URL[] = "https://x/java.tar";
+static const char FOO_URL[] = "https://x/foo.tar";
+static const char GRADLE_URL[] = "https://x/gradle.lua";
+static const char MAVEN_URL[] = "https://x/maven.lua";
+
+/* The language is declared AFTER the declaration call, so it reaches the
+   registry only if the whole entry chunk ran rather than the pre-pass alone. */
+static const char JAVA_ENTRY[] =
+    "daukle.plugin{ api = 1, uses = {}, exports = { \"lib/coords\" } }\n"
+    "daukle.language{ name = \"java-ran\","
+    " apply = function(consumer, resolved, text) return text end }\n";
+
+static const xp_artifact *xp_serve_java(const char *coords_body) {
+    const char *names[] = { "lib/coords.lua" };
+    const char *bodies[1];
+    bodies[0] = coords_body;
+    return xp_serve_plugin(JAVA_URL, JAVA_ENTRY, names, bodies, 1);
+}
+
+TEST a_dependent_reaches_an_exported_module(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("return { parse = function() return \"parsed\" end }\n");
+    char body[512];
+    snprintf(body, sizeof body,
+             "local coords = daukle.require(\"java:lib/coords\")\n"
+             "daukle.language{ name = coords.parse(), %s }\n", XP_APPLY);
+    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java), body));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    int computed = status == FR_OK
+                   && fr_registry_language(registry, "daukle.language/parsed") != NULL;
+    xp_done(registry);
+
+    ASSERT_EQm(xp_message, FR_OK, status);
+    ASSERTm("the module's own answer never reached the registry", computed);
+    PASS();
+}
+
+TEST a_member_the_provider_does_not_export_is_refused(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("return {}\n");
+    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+                                            "daukle.require(\"java:internal/scratch\")\n"));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(xp_message, strstr(xp_message, "does not export") != NULL);
+    ASSERTm(xp_message, strstr(xp_message, "lib/coords") != NULL);
+    PASS();
+}
+
+TEST a_library_module_cannot_declare(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("daukle.toolchain{ name = \"smuggled\" }\nreturn {}\n");
+    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+                                            "daukle.require(\"java:lib/coords\")\n"));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(xp_message, strstr(xp_message, "across a plugin boundary") != NULL);
+    PASS();
+}
+
+/* The one test that separates a bare environment from the provider's own: an
+   implementation that ran the member in either plugin's environment passes
+   everything else here. */
+TEST a_library_module_cannot_use_the_dependents_verbs(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("daukle.fetch(\"https://x/never\")\nreturn {}\n");
+    xp_serve_chunk(GRADLE_URL, xp_dependent("\"fetch\"", xp_requires_one("java", java),
+                                            "daukle.require(\"java:lib/coords\")\n"));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(xp_message, strstr(xp_message, "across a plugin boundary") != NULL);
+    ASSERTm(xp_message, strstr(xp_message, "fetch") != NULL);
+    PASS();
+}
+
+TEST two_dependents_get_their_own_instance(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("return { seen = false }\n");
+    char body[512];
+
+    snprintf(body, sizeof body,
+             "local coords = daukle.require(\"java:lib/coords\")\n"
+             "coords.seen = true\n"
+             "daukle.language{ name = \"gradle-saw\", %s }\n", XP_APPLY);
+    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java), body));
+
+    snprintf(body, sizeof body,
+             "local coords = daukle.require(\"java:lib/coords\")\n"
+             "if coords.seen then error(\"the two dependents share one instance\") end\n"
+             "daukle.language{ name = \"maven-saw\", %s }\n", XP_APPLY);
+    xp_serve_chunk(MAVEN_URL, xp_dependent("", xp_requires_one("java", java), body));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest_two("gradle", GRADLE_URL, "maven", MAVEN_URL), &registry);
+    int both = status == FR_OK
+               && fr_registry_language(registry, "daukle.language/gradle-saw") != NULL
+               && fr_registry_language(registry, "daukle.language/maven-saw") != NULL;
+    xp_done(registry);
+
+    ASSERT_EQm(xp_message, FR_OK, status);
+    ASSERTm("one of the two dependents never loaded", both);
+    PASS();
+}
+
+TEST a_require_naming_an_undeclared_alias_is_refused(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("return {}\n");
+    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+                                            "daukle.require(\"jaba:lib/coords\")\n"));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(xp_message, strstr(xp_message, "jaba") != NULL);
+    ASSERTm(xp_message, strstr(xp_message, "it requires java") != NULL);
+    PASS();
+}
+
+/* Section 3, on the integrated path: an implementation that loaded a dependency
+   as an ordinary plugin passes every other test in this file. */
+TEST a_dependencys_entry_chunk_never_runs(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("return {}\n");
+    char body[256];
+    snprintf(body, sizeof body, "daukle.language{ name = \"gradle-ran\", %s }\n", XP_APPLY);
+    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java), body));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    int dependent_ran = status == FR_OK
+                        && fr_registry_language(registry, "daukle.language/gradle-ran") != NULL;
+    int provider_ran = fr_registry_language(registry, "daukle.language/java-ran") != NULL;
+    xp_done(registry);
+
+    ASSERT_EQm(xp_message, FR_OK, status);
+    ASSERTm("the dependent's own language never reached the registry", dependent_ran);
+    ASSERTm("the dependency's entry chunk ran", !provider_ran);
+    PASS();
+}
+
+/* Section 7.2, both directions of one rule: the alias a module names is its own
+   plugin's, and naming it from the dependent's chunk is refused. */
+TEST a_library_module_requires_against_its_own_owner(void) {
+    xp_reset();
+    const char *foo_names[] = { "lib/thing.lua" };
+    const char *foo_bodies[] = { "return { tag = \"from-foo\" }\n" };
+    const xp_artifact *foo = xp_serve_plugin(
+        FOO_URL, "daukle.plugin{ api = 1, uses = {}, exports = { \"lib/thing\" } }\n", foo_names,
+        foo_bodies, 1);
+
+    char java_entry[512];
+    snprintf(java_entry, sizeof java_entry,
+             "daukle.plugin{ api = 1, uses = {}, exports = { \"lib/coords\" },"
+             " requires = { %s } }\n", xp_requires_one("foo", foo));
+    const char *java_names[] = { "lib/coords.lua" };
+    const char *java_bodies[] = {
+        "local thing = daukle.require(\"foo:lib/thing\")\nreturn { tag = thing.tag }\n"
+    };
+    const xp_artifact *java = xp_serve_plugin(JAVA_URL, java_entry, java_names, java_bodies, 1);
+
+    char body[512];
+    snprintf(body, sizeof body,
+             "local coords = daukle.require(\"java:lib/coords\")\n"
+             "daukle.language{ name = coords.tag, %s }\n", XP_APPLY);
+    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java), body));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    int reached = status == FR_OK
+                  && fr_registry_language(registry, "daukle.language/from-foo") != NULL;
+    xp_done(registry);
+
+    ASSERT_EQm(xp_message, FR_OK, status);
+    ASSERTm("the module never reached its own plugin's requires", reached);
+
+    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+                                            "daukle.require(\"foo:lib/thing\")\n"));
+    int refused = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+
+    ASSERT_EQ(FR_ERR, refused);
+    ASSERTm(xp_message, strstr(xp_message, "foo") != NULL);
+    ASSERTm(xp_message, strstr(xp_message, "it requires java") != NULL);
+    PASS();
+}
+
+/* Section 14's last case: the one arrangement where the memo could hand a
+   full-environment instance across a boundary. */
+TEST a_provider_that_is_also_a_root_plugin_still_serves_a_bare_instance(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("daukle.fetch(\"https://x/never\")\nreturn {}\n");
+    xp_serve_chunk(GRADLE_URL, xp_dependent("\"fetch\"", xp_requires_one("java", java),
+                                            "daukle.require(\"java:lib/coords\")\n"));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest_two("java", JAVA_URL, "gradle", GRADLE_URL), &registry);
+    int provider_ran = fr_registry_language(registry, "daukle.language/java-ran") != NULL;
+    xp_done(registry);
+
+    ASSERTm("the provider's own entry chunk never ran", provider_ran);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(xp_message, strstr(xp_message, "across a plugin boundary") != NULL);
+    PASS();
+}
+
+TEST a_member_name_carrying_a_second_colon_is_refused(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("return {}\n");
+    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+                                            "daukle.require(\"java:lib:coords\")\n"));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(xp_message, strstr(xp_message, "at most one \":\"") != NULL);
+    PASS();
+}
+
+/* Child spec 3's correction 3: the escape check runs against the whole name
+   before the split, because a windows drive letter carries a colon too. */
+TEST a_drive_letter_is_an_escape_rather_than_an_alias(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("return {}\n");
+    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+                                            "daukle.require(\"C:/x\")\n"));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(xp_message, strstr(xp_message, "may not leave the plugin") != NULL);
+    ASSERTm(xp_message, strstr(xp_message, "alias") == NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -1223,5 +1644,16 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_declaring_no_uses_may_still_require);
     RUN_TEST(a_module_required_twice_runs_once);
     RUN_TEST(a_cycle_between_modules_is_refused);
+    RUN_TEST(a_dependent_reaches_an_exported_module);
+    RUN_TEST(a_member_the_provider_does_not_export_is_refused);
+    RUN_TEST(a_library_module_cannot_declare);
+    RUN_TEST(a_library_module_cannot_use_the_dependents_verbs);
+    RUN_TEST(two_dependents_get_their_own_instance);
+    RUN_TEST(a_require_naming_an_undeclared_alias_is_refused);
+    RUN_TEST(a_dependencys_entry_chunk_never_runs);
+    RUN_TEST(a_library_module_requires_against_its_own_owner);
+    RUN_TEST(a_provider_that_is_also_a_root_plugin_still_serves_a_bare_instance);
+    RUN_TEST(a_member_name_carrying_a_second_colon_is_refused);
+    RUN_TEST(a_drive_letter_is_an_escape_rather_than_an_alias);
     GREATEST_MAIN_END();
 }

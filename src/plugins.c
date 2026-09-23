@@ -16,7 +16,6 @@
 
 #include "lauxlib.h"
 
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -578,19 +577,6 @@ int fr_plugins_read_declaration(const char *text, size_t length, const char *ori
     return FR_OK;
 }
 
-/* stricmp/strcasecmp are not portable C11; a sha256 hex digest is a bounded
-   64 characters, so comparing lowercased copies in fixed buffers is safe. */
-static int digest_matches(const char *actual, const char *pinned) {
-    size_t length = strlen(actual);
-    if (length != strlen(pinned) || length >= 65) return 0;
-    for (size_t index = 0; index < length; index++) {
-        if (tolower((unsigned char) actual[index]) != tolower((unsigned char) pinned[index])) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
 static fr_plugin_report_entry *report_entries;
 static size_t report_count;
 
@@ -791,7 +777,7 @@ int fr_plugins_acquire_source(const fr_plugin_entry *entry, const fr_resolver_en
        mean unpinned bytes had already been trusted that far. */
     if (!is_directory) {
         fr_sha256_hex(*out_text, *out_length, out_digest);
-        if (entry->sha256 != NULL && !digest_matches(out_digest, entry->sha256)) {
+        if (entry->sha256 != NULL && !fr_sha256_hex_equal(out_digest, entry->sha256)) {
             fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
                         entry->label, entry->sha256, out_digest);
             if (entry->kind != FR_PLUGIN_PATH) fr_plugin_fetch_discard(*out_origin);
@@ -858,15 +844,25 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
     if (status == FR_OK) {
         status = read_declaration(state, chunk, chunk_length, origin, &declaration, err);
     }
+
+    /* Acquired before the chunk runs and closed after it returns: the chunk's
+       daukle.require of another plugin's module reads from this, and nothing
+       it holds may outlive the load. */
+    fr_plugin_deps *deps = NULL;
+    if (status == FR_OK) {
+        status = fr_plugin_deps_acquire(&declaration, entry->overrides, resolvers, resolver_count,
+                                        &deps, err);
+    }
     if (status == FR_OK) {
         status = fr_lua_plugin_load(chunk, chunk_length, origin,
                                     (const char *const *) declaration.uses,
-                                    declaration.uses_count, source, err);
+                                    declaration.uses_count, source, deps, err);
     }
     if (status == FR_OK) {
         status = append_report_entry(entry, origin, resolved, digest, &declaration, err);
     }
 
+    fr_plugin_deps_close(deps);
     fr_plugins_free_declaration(&declaration);
     fr_plugin_source_close(source);
     free(text);

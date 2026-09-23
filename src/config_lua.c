@@ -494,7 +494,12 @@ static int take_slot(lua_State *state, const char *prefix, const char *field,
         return luaL_error(state, "\"%s\" is declared twice", capability);
     }
 
+    /* Zeroed the way the task path already zeroes its own slot: the array is a
+       file static, so an index a released task declaration used still holds
+       that task's part_of and depends_on, and shutdown would free them a second
+       time through a language that reused the index. */
     fr_lua_plugin_slot *slot = &plugin_slots[plugin_slot_count];
+    memset(slot, 0, sizeof *slot);
     size_t length = strlen(capability) + 1;
     slot->capability = malloc(length);
     if (slot->capability == NULL) return luaL_error(state, "out of memory");
@@ -1042,6 +1047,13 @@ static int lua_declare_plugin(lua_State *state) {
    address of this file static so no plugin can name the key. */
 static const char module_env_key = 0;
 static fr_plugin_source *loading_source;
+static fr_plugin_deps *loading_deps;
+
+/* Which entry chunk is running, as a serial rather than a name. It is one third
+   of the memo key below, and a serial is never reused, which is what makes a
+   slot left over from an earlier chunk unmatchable: the artifact it points at
+   has been closed by then, and a later acquisition can land on that address. */
+static unsigned long running_dependent;
 
 /* Declared here rather than beside fr_lua_plugin_exec_is_refused, which is
    further down the file than the first use below. */
@@ -1049,20 +1061,45 @@ static int plugin_chunk_running;
 
 /* Not a verb and not declared in "uses": reading a member of the artifact the
    manifest already pinned grants nothing the digest does not already cover.
-   Reaching ANOTHER plugin's code is the edge that has to be declared, and that
-   is child spec 6's to design. */
+   Reaching ANOTHER plugin's code is the edge that has to be declared, and the
+   alias before the colon is that declaration. */
 #define FR_PLUGIN_MODULE_LIMIT 64
+#define FR_PLUGIN_MODULE_SLOTS 256
 
 typedef struct {
     char name[FR_TAR_MAX_NAME + 1];
+    char owner_label[FR_PLUGIN_MAX_ALIAS + 1];  /* empty when owner is NULL */
+    const fr_plugin_deps *owner;   /* NULL for a module of the plugin whose chunk is running */
+    unsigned long dependent;
     int value;   /* LUA_NOREF until the module has returned */
     int running;
 } module_slot;
 
-static module_slot module_slots[FR_PLUGIN_MODULE_LIMIT];
+/* One memo for the whole load phase, keyed on the entry chunk running, the
+   artifact the member belongs to, and the member name. The key is what scopes
+   an entry to its dependent, so one dependent sees one instance of a module
+   however many paths reach it, while two dependents requiring the same member
+   of the same artifact each get their own. */
+static module_slot module_slots[FR_PLUGIN_MODULE_SLOTS];
 static size_t module_slot_count;
 
-static void modules_clear(lua_State *state) {
+/* While a module reached across a plugin boundary runs, the artifact it came
+   from is the one a require inside it resolves against: a module's requires
+   belong to the plugin that owns the module, never to whoever asked for it.
+   Bounded explicitly rather than by how deep the C recursion happens to go. */
+typedef struct {
+    fr_plugin_deps *deps;
+    const char *label;   /* borrowed from the acquisition, which outlives the chunk */
+} owner_frame;
+
+static owner_frame owner_stack[FR_PLUGIN_DEPS_MAX_DEPTH];
+static size_t owner_stack_depth;
+
+static const owner_frame *current_owner(void) {
+    return owner_stack_depth == 0 ? NULL : &owner_stack[owner_stack_depth - 1];
+}
+
+static void modules_release_all(lua_State *state) {
     for (size_t index = 0; index < module_slot_count; index++) {
         if (module_slots[index].value != LUA_NOREF) {
             luaL_unref(state, LUA_REGISTRYINDEX, module_slots[index].value);
@@ -1071,9 +1108,29 @@ static void modules_clear(lua_State *state) {
     module_slot_count = 0;
 }
 
-static module_slot *module_slot_for(const char *name) {
+/* Drops what a finished chunk left half built, which is every slot it claimed
+   and never filled because the module raised. */
+static void modules_settle(unsigned long dependent) {
+    size_t kept = 0;
     for (size_t index = 0; index < module_slot_count; index++) {
-        if (strcmp(module_slots[index].name, name) == 0) return &module_slots[index];
+        module_slot *slot = &module_slots[index];
+        if (slot->dependent == dependent) {
+            if (slot->value == LUA_NOREF) continue;
+            slot->running = 0;
+        }
+        module_slots[kept] = *slot;
+        kept++;
+    }
+    module_slot_count = kept;
+}
+
+static module_slot *module_slot_for(const fr_plugin_deps *owner, const char *name) {
+    for (size_t index = 0; index < module_slot_count; index++) {
+        module_slot *slot = &module_slots[index];
+        if (slot->dependent == running_dependent && slot->owner == owner
+            && strcmp(slot->name, name) == 0) {
+            return slot;
+        }
     }
     return NULL;
 }
@@ -1085,53 +1142,51 @@ static int report_module_cycle(lua_State *state, const char *name) {
     size_t filled = 0;
     trail[0] = '\0';
     for (size_t index = 0; index < module_slot_count; index++) {
-        if (!module_slots[index].running) continue;
-        int written = snprintf(trail + filled, sizeof trail - filled, "%s%s",
-                               filled == 0 ? "" : " -> ", module_slots[index].name);
+        const module_slot *slot = &module_slots[index];
+        if (!slot->running || slot->dependent != running_dependent) continue;
+        int written = snprintf(trail + filled, sizeof trail - filled, "%s%s%s%s",
+                               filled == 0 ? "" : " -> ", slot->owner_label,
+                               slot->owner != NULL ? ":" : "", slot->name);
         if (written < 0 || (size_t) written >= sizeof trail - filled) break;
         filled += (size_t) written;
     }
     return luaL_error(state, "daukle.require(\"%s\") is a cycle: %s -> %s", name, trail, name);
 }
 
-static int lua_require_module(lua_State *state) {
-    const char *name = luaL_checkstring(state, 1);
-    /* One condition rather than two: a source is held only while a plugin chunk
-       runs, so this covers both a single-file plugin and a call from outside a
-       load, which the "daukle.plugin must be the first call" refusal already
-       reaches first. */
-    if (loading_source == NULL) {
-        return luaL_error(state, "daukle.require(\"%s\"): this plugin has no modules", name);
+/* Raises rather than reporting: both limits are the running plugin's own doing
+   and there is no require left to answer past either of them. */
+static module_slot *claim_module_slot(lua_State *state, const fr_plugin_deps *owner,
+                                      const char *owner_label, const char *name) {
+    size_t mine = 0;
+    for (size_t index = 0; index < module_slot_count; index++) {
+        if (module_slots[index].dependent == running_dependent) mine++;
+    }
+    if (mine == FR_PLUGIN_MODULE_LIMIT) {
+        luaL_error(state, "a plugin may require at most %d modules", FR_PLUGIN_MODULE_LIMIT);
+    }
+    if (module_slot_count == FR_PLUGIN_MODULE_SLOTS) {
+        luaL_error(state, "this load holds more than %d modules at once", FR_PLUGIN_MODULE_SLOTS);
     }
 
-    module_slot *slot = module_slot_for(name);
-    if (slot != NULL) {
-        if (slot->running) return report_module_cycle(state, name);
-        lua_rawgeti(state, LUA_REGISTRYINDEX, slot->value);
-        return 1;
-    }
-
-    const char *text = NULL;
-    size_t length = 0;
-    fr_error err;
-    if (fr_plugin_source_member(loading_source, name, &text, &length, &err) != FR_OK) {
-        return luaL_error(state, "%s", err.message);
-    }
-
-    if (module_slot_count == FR_PLUGIN_MODULE_LIMIT) {
-        return luaL_error(state, "a plugin may require at most %d modules",
-                          FR_PLUGIN_MODULE_LIMIT);
-    }
-    slot = &module_slots[module_slot_count++];
+    module_slot *slot = &module_slots[module_slot_count++];
+    memset(slot, 0, sizeof *slot);
     snprintf(slot->name, sizeof slot->name, "%s", name);
+    snprintf(slot->owner_label, sizeof slot->owner_label, "%s",
+             owner_label != NULL ? owner_label : "");
+    slot->owner = owner;
+    slot->dependent = running_dependent;
     slot->value = LUA_NOREF;
     slot->running = 1;
+    return slot;
+}
 
-    char chunk_name[FR_TAR_MAX_NAME + 8];
-    snprintf(chunk_name, sizeof chunk_name, "@%s.lua", name);
+/* Expects the environment the module runs in on the stack top, and leaves what
+   the module returned there instead. */
+static int run_module(lua_State *state, module_slot *slot, const char *name,
+                      const char *chunk_name, const char *text, size_t length) {
     if (fr_lua_load_named(state, text, length, chunk_name) != LUA_OK) return lua_error(state);
+    lua_insert(state, -2);
 
-    lua_rawgetp(state, LUA_REGISTRYINDEX, &module_env_key);
     if (lua_setupvalue(state, -2, 1) == NULL) {
         /* Never reached for a chunk compiled from source, and checked anyway:
            failing here silently would run the module against the globals rather
@@ -1148,6 +1203,119 @@ static int lua_require_module(lua_State *state) {
     slot->value = luaL_ref(state, LUA_REGISTRYINDEX);
     slot->running = 0;
     return 1;
+}
+
+/* A name with no alias: the running plugin's own module, or, inside a module
+   reached across a boundary, one of that module's own siblings. */
+static int require_own_module(lua_State *state, const char *name) {
+    const owner_frame *frame = current_owner();
+
+    /* One condition rather than two: a source is held only while a plugin chunk
+       runs, so this covers both a single-file plugin and a call from outside a
+       load, which the "daukle.plugin must be the first call" refusal already
+       reaches first. */
+    if (frame == NULL && loading_source == NULL) {
+        return luaL_error(state, "daukle.require(\"%s\"): this plugin has no modules", name);
+    }
+
+    const fr_plugin_deps *owner = frame != NULL ? frame->deps : NULL;
+    module_slot *slot = module_slot_for(owner, name);
+    if (slot != NULL) {
+        if (slot->running) return report_module_cycle(state, name);
+        lua_rawgeti(state, LUA_REGISTRYINDEX, slot->value);
+        return 1;
+    }
+
+    const char *text = NULL;
+    size_t length = 0;
+    fr_error err;
+    int found = frame != NULL
+        ? fr_plugin_deps_own_member(frame->deps, name, &text, &length, &err)
+        : fr_plugin_source_member(loading_source, name, &text, &length, &err);
+    if (found != FR_OK) return luaL_error(state, "%s", err.message);
+
+    slot = claim_module_slot(state, owner, frame != NULL ? frame->label : NULL, name);
+
+    char chunk_name[FR_TAR_MAX_NAME + 8];
+    snprintf(chunk_name, sizeof chunk_name, "@%s.lua", name);
+
+    if (frame != NULL) {
+        if (fr_lua_verbs_push_library_env(state, frame->label, name, &err) != FR_OK) {
+            return luaL_error(state, "%s", err.message);
+        }
+    } else {
+        lua_rawgetp(state, LUA_REGISTRYINDEX, &module_env_key);
+    }
+    return run_module(state, slot, name, chunk_name, text, length);
+}
+
+static int require_across_plugins(lua_State *state, const char *name, const char *colon) {
+    const owner_frame *frame = current_owner();
+    fr_plugin_deps *from = frame != NULL ? frame->deps : loading_deps;
+    const char *from_label = frame != NULL ? frame->label : fr_plugin_deps_label(loading_deps);
+
+    char alias[FR_PLUGIN_MAX_ALIAS + 1];
+    snprintf(alias, sizeof alias, "%.*s", (int) (colon - name), name);
+    const char *member = colon + 1;
+
+    fr_error err;
+    if (fr_plugin_module_name_check(member, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    const char *text = NULL;
+    size_t length = 0;
+    fr_plugin_deps *owner = NULL;
+    const char *owner_label = NULL;
+    if (fr_plugin_deps_member(from, alias, member, &text, &length, &owner, &owner_label, &err)
+        != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    module_slot *slot = module_slot_for(owner, member);
+    if (slot != NULL) {
+        if (slot->running) return report_module_cycle(state, name);
+        lua_rawgeti(state, LUA_REGISTRYINDEX, slot->value);
+        return 1;
+    }
+
+    if (owner_stack_depth == FR_PLUGIN_DEPS_MAX_DEPTH) {
+        return luaL_error(state, "daukle.require(\"%s\"): modules reach across more than %d plugin"
+                                 " boundaries", name, FR_PLUGIN_DEPS_MAX_DEPTH);
+    }
+
+    slot = claim_module_slot(state, owner, owner_label, member);
+
+    if (fr_lua_verbs_push_library_env(state, from_label != NULL ? from_label : "this plugin",
+                                      member, &err)
+        != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    char chunk_name[FR_TAR_MAX_NAME * 2];
+    snprintf(chunk_name, sizeof chunk_name, "@%s:%s.lua", owner_label, member);
+
+    owner_stack[owner_stack_depth].deps = owner;
+    owner_stack[owner_stack_depth].label = owner_label;
+    owner_stack_depth++;
+    int results = run_module(state, slot, name, chunk_name, text, length);
+    owner_stack_depth--;
+    return results;
+}
+
+static int lua_require_module(lua_State *state) {
+    const char *name = luaL_checkstring(state, 1);
+
+    /* Before the split below and not after: a windows drive letter carries a
+       colon too, so "C:/x" is an escape rather than a coordinate. */
+    if (fr_lua_sandbox_climbs_out(name)) {
+        return luaL_error(state, "daukle.require(\"%s\"): a module name may not leave the plugin",
+                          name);
+    }
+
+    const char *colon = strchr(name, ':');
+    if (colon != NULL) return require_across_plugins(state, name, colon);
+    return require_own_module(state, name);
 }
 
 lua_CFunction fr_lua_verbs_require_function(void) { return lua_require_module; }
@@ -1329,7 +1497,7 @@ static void settle_resolver_callback(lua_State *state, int chunk_succeeded, int 
 
 int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
                        const char *const *verbs, size_t verb_count, fr_plugin_source *source,
-                       fr_error *err) {
+                       fr_plugin_deps *deps, fr_error *err) {
     lua_State *state = fr_lua_runtime_state();
     if (state == NULL) {
         fr_error_set(err, "no lua runtime is open for \"%s\"", origin);
@@ -1343,10 +1511,11 @@ int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
     int backup_resolver_callback = hold_second_reference(state, resolver_callback);
 
     chunk_state_clear();
-    /* The memo is per load, so two plugins that both carry a module of the same
-       name get their own copy each. */
-    modules_clear(state);
+    running_dependent++;
+    unsigned long dependent = running_dependent;
+    owner_stack_depth = 0;
     loading_source = source;
+    loading_deps = deps;
     lua_pushvalue(state, env);
     lua_rawsetp(state, LUA_REGISTRYINDEX, &module_env_key);
 
@@ -1355,7 +1524,9 @@ int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
     plugin_chunk_running = 0;
 
     loading_source = NULL;
-    modules_clear(state);
+    loading_deps = NULL;
+    owner_stack_depth = 0;
+    modules_settle(dependent);
     lua_pushnil(state);
     lua_rawsetp(state, LUA_REGISTRYINDEX, &module_env_key);
 
@@ -1397,6 +1568,7 @@ static int config_lua_load(void *state_unused, const char *text, const char *ori
 
 void fr_lua_runtime_shutdown(void) {
     if (runtime_state != NULL) {
+        modules_release_all(runtime_state);
         fr_lua_close(runtime_state);
         runtime_state = NULL;
     }

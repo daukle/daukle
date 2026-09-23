@@ -39,6 +39,19 @@ int fr_plugin_deps_member(fr_plugin_deps *deps, const char *alias, const char *m
                           fr_plugin_deps **out_owner, const char **out_owner_label,
                           fr_error *err);
 
+/* A member of the artifact deps itself belongs to, which is what an alias-less
+   require inside a module this acquisition served must read: a module's
+   siblings are its own plugin's, not the dependent's, and they are reachable
+   whether or not their artifact exports them. Refused on the view
+   fr_plugin_deps_acquire returned, which belongs to no artifact. */
+int fr_plugin_deps_own_member(fr_plugin_deps *deps, const char *member, const char **out_text,
+                              size_t *out_length, fr_error *err);
+
+/* What deps is known by in a message: a [plugins] label for the acquired view,
+   the alias that first named the artifact for a view handed back by
+   fr_plugin_deps_member. */
+const char *fr_plugin_deps_label(const fr_plugin_deps *deps);
+
 void fr_plugin_deps_close(fr_plugin_deps *deps);
 
 #endif

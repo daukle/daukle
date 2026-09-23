@@ -253,7 +253,7 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
         fr_lua_set_acquiring_resolver(1);
         status = fr_lua_plugin_load(chunk, chunk_length, origin,
                                     (const char *const *) declaration.uses, declaration.uses_count,
-                                    source, err);
+                                    source, NULL, err);
         fr_lua_set_acquiring_resolver(0);
     }
     fr_plugins_free_declaration(&declaration);

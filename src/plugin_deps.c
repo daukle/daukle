@@ -6,7 +6,6 @@
 #include "plugin_modules.h"
 #include "sha256.h"
 
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +13,7 @@
 #define DEPS_NONE ((size_t) -1)
 
 typedef struct deps_graph deps_graph;
+typedef struct deps_node deps_node;
 
 typedef struct {
     char *alias;
@@ -28,12 +28,13 @@ struct fr_plugin_deps {
     deps_graph *graph;
     char *label;
     int label_is_alias;       /* a node is known by the alias that named it, not by a plugin label */
+    deps_node *artifact;      /* the node this view belongs to, NULL for the acquired root view */
     deps_binding bindings[FR_PLUGIN_MAX_REQUIRES];
     size_t binding_count;
     int owns_graph;
 };
 
-typedef struct {
+struct deps_node {
     char *url;
     char *label;              /* the alias it was first named by, for messages */
     char *required_by;        /* and who named it, for a disagreement over its pin */
@@ -47,7 +48,7 @@ typedef struct {
     size_t parent;            /* who required it, for naming a cycle's chain */
     size_t depth;
     fr_plugin_deps view;
-} deps_node;
+};
 
 struct deps_graph {
     deps_node nodes[FR_PLUGIN_DEPS_MAX_NODES];
@@ -83,19 +84,6 @@ static void list_names(char *out, size_t size, const char *const *names, size_t 
         if (written < 0 || (size_t) written >= size - filled) break;
         filled += (size_t) written;
     }
-}
-
-/* plugins.c's own copy is a file static there, and this module may not reach
-   into it: a pin may be written in either case and must still match. */
-static int digest_matches(const char *actual, const char *pinned) {
-    size_t length = strlen(actual);
-    if (length != strlen(pinned) || length >= 65) return 0;
-    for (size_t index = 0; index < length; index++) {
-        if (tolower((unsigned char) actual[index]) != tolower((unsigned char) pinned[index])) {
-            return 0;
-        }
-    }
-    return 1;
 }
 
 static void free_bindings(fr_plugin_deps *view) {
@@ -263,6 +251,7 @@ static int acquire_override(deps_graph *graph, fr_plugin_deps *view, size_t dept
     node->required_by_kind = requester(view);
     node->view.graph = graph;
     node->view.label_is_alias = 1;
+    node->view.artifact = node;
     if (node->url == NULL || node->label == NULL || node->required_by == NULL) {
         free_node(node);
         return out_of_memory(view, err);
@@ -312,7 +301,7 @@ static int acquire_one(deps_graph *graph, fr_plugin_deps *view, size_t parent, s
            fetched, not skipped: whoever asked first would otherwise decide
            which bytes everyone gets, and the attestation the later author
            wrote would never be compared to anything. */
-        if (!digest_matches(held->digest, sha256)) {
+        if (!fr_sha256_hex_equal(held->digest, sha256)) {
             fr_error_set(err, "%s \"%s\": requires[\"%s\"] expected sha256 %s but \"%s\" is"
                               " already pinned to %s by %s \"%s\"",
                          requester(view), view->label, requirement->alias, sha256, url,
@@ -337,7 +326,7 @@ static int acquire_one(deps_graph *graph, fr_plugin_deps *view, size_t parent, s
        would mean the unpinned bytes had already executed. */
     char digest[65];
     fr_sha256_hex(text, length, digest);
-    if (!digest_matches(digest, sha256)) {
+    if (!fr_sha256_hex_equal(digest, sha256)) {
         fr_error_set(err, "%s \"%s\": requires[\"%s\"] expected sha256 %s but the file is %s",
                      requester(view), view->label, requirement->alias, sha256, digest);
         fr_plugin_fetch_discard(url);
@@ -358,6 +347,7 @@ static int acquire_one(deps_graph *graph, fr_plugin_deps *view, size_t parent, s
     node->required_by_kind = requester(view);
     node->view.graph = graph;
     node->view.label_is_alias = 1;
+    node->view.artifact = node;
     if (node->url == NULL || node->label == NULL || node->required_by == NULL) {
         free_node(node);
         return out_of_memory(view, err);
@@ -532,6 +522,22 @@ int fr_plugin_deps_member(fr_plugin_deps *deps, const char *alias, const char *m
     *out_owner = &node->view;
     *out_owner_label = node->label;
     return FR_OK;
+}
+
+int fr_plugin_deps_own_member(fr_plugin_deps *deps, const char *member, const char **out_text,
+                              size_t *out_length, fr_error *err) {
+    *out_text = NULL;
+    *out_length = 0;
+
+    if (deps == NULL || deps->artifact == NULL) {
+        fr_error_set(err, "daukle.require(\"%s\"): no required artifact owns this module", member);
+        return FR_ERR;
+    }
+    return fr_plugin_source_member(deps->artifact->source, member, out_text, out_length, err);
+}
+
+const char *fr_plugin_deps_label(const fr_plugin_deps *deps) {
+    return deps != NULL ? deps->label : NULL;
 }
 
 /* A node's own view is owned by the graph, so closing the one
