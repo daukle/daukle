@@ -83,6 +83,7 @@ the client tier's rules.
 | what a plugin may touch, and building one environment per plugin | `lua_verbs.c` | the configuration sandbox, which is `lua_sandbox.c`. One is per plugin, the other is the state's globals |
 | reading `[plugins]`, the declaration pass, and loading a local plugin | `plugins.c` | the remote half, which is `plugins_remote.c` |
 | resolving a remote coordinate, the plugin cache, and fetching from GitHub | `plugins_remote.c` | the parser or the declaration reader, which are `plugins.c` |
+| fetching and caching the bytes at a plugin URL; knows no coordinate, version or host | `src/plugin_fetch.c` | resolving a coordinate to a URL, or interpreting the bytes it fetches, which are the plugin loader's question |
 | a sha-256 digest | `sha256.c` | a general crypto library |
 | the shared exec logic, joining a program and its argument vector into the one command line `CreateProcess` requires, and freeing an `fr_exec_result` | `exec.c`, `exec.h`, tested by `test/test_exec_quote.c` | spawning a process. That is `exec_posix.c` and `exec_win32.c`. Reachable from Lua through `daukle.exec`, which takes a `daukle.tool` handle, never a path string |
 | spawning a process on POSIX with `fork`/`execv`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `exec_posix.c`, tested by `test/test_exec.c` | building the command line, which stays in `exec.c` because Windows needs it too |
