@@ -75,6 +75,11 @@ typedef struct {
 int fr_tasks_plan(const fr_task_set *set, const char *goal, fr_task_plan *out, fr_error *err);
 void fr_tasks_plan_free(fr_task_plan *plan);
 
+/* Writes, into a caller-supplied buffer of out_size bytes, the sentence
+   explaining why goal named no task: whether this project declares any
+   plugins at all changes which of the two it is. */
+void fr_tasks_unknown_message(const char *goal, size_t plugin_count, char *out, size_t out_size);
+
 /* Runs a plan in order. Before each run-bearing task, its own toolchain's
    derived directory is ensured to exist, every iteration: generation may have
    created nothing for it (a compiler-driven toolchain's ordinary case), and

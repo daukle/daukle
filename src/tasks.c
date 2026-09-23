@@ -386,6 +386,23 @@ void fr_tasks_plan_free(fr_task_plan *plan) {
     plan->count = 0;
 }
 
+/* The sentence a caller prints when goal names no declared task at all,
+   chosen by whether this project declares any plugins: zero means the
+   project itself has none to provide a task, a nonzero count means some
+   plugin exists but none of them declares this goal. Composed here, naming
+   no plugin, so a caller stays free to add its own wording (a hint to run
+   "daukle tasks", an exit status) without core ever naming what provided
+   what. */
+void fr_tasks_unknown_message(const char *goal, size_t plugin_count, char *out, size_t out_size) {
+    if (plugin_count == 0) {
+        snprintf(out, out_size, "this project declares no plugins, so it has no task \"%s\"", goal);
+    } else {
+        snprintf(out, out_size,
+                "tasks come from plugins; this project declares %zu, but none of them is \"%s\"",
+                plugin_count, goal);
+    }
+}
+
 int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *err) {
     for (size_t index = 0; index < plan->count; index++) {
         const fr_task_node *node = plan->nodes[index];

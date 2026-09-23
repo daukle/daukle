@@ -503,11 +503,9 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
         fr_session_close(&session);
         report_error(&err, verbose);
         if (unknown) {
-            if (plugin_count == 0) {
-                fprintf(stderr, "  this project declares no plugins, so it has no tasks\n");
-            } else {
-                fprintf(stderr, "  tasks come from plugins; this project declares %zu\n", plugin_count);
-            }
+            char message[256];
+            fr_tasks_unknown_message(task_name, plugin_count, message, sizeof message);
+            fprintf(stderr, "  %s\n", message);
             fprintf(stderr, "  run \"daukle tasks\" to see what they provide\n");
             return 2;
         }

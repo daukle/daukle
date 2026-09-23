@@ -502,6 +502,27 @@ TEST a_task_lists_what_joined_it(void) {
     PASS();
 }
 
+/* main.c has no test binary of its own, so the sentence run_task prints for
+   an unknown goal is tested here, against the function that actually
+   composes it, rather than against a token (the plugin count) that also
+   appears unchanged in the function's own input. */
+TEST the_zero_plugin_unknown_message_says_the_project_has_none(void) {
+    char message[256];
+    fr_tasks_unknown_message("build", 0, message, sizeof message);
+    ASSERT(strstr(message, "declares no plugins") != NULL);
+    ASSERT(strstr(message, "\"build\"") != NULL);
+    PASS();
+}
+
+TEST the_nonzero_plugin_unknown_message_names_the_count(void) {
+    char message[256];
+    fr_tasks_unknown_message("build", 3, message, sizeof message);
+    ASSERT(strstr(message, "tasks come from plugins") != NULL);
+    ASSERT(strstr(message, "3") != NULL);
+    ASSERT(strstr(message, "\"build\"") != NULL);
+    PASS();
+}
+
 TEST joiners_past_capacity_are_still_counted(void) {
     fr_registry *registry = fr_registry_create();
     fr_manifest manifest = manifest_of(
@@ -548,6 +569,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_failing_task_stops_the_run_naming_itself);
     RUN_TEST(a_run_publishes_the_base_relative_derived_directory);
     RUN_TEST(a_task_lists_what_joined_it);
+    RUN_TEST(the_zero_plugin_unknown_message_says_the_project_has_none);
+    RUN_TEST(the_nonzero_plugin_unknown_message_names_the_count);
     RUN_TEST(joiners_past_capacity_are_still_counted);
     GREATEST_MAIN_END();
 }
