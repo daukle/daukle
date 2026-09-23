@@ -1552,6 +1552,55 @@ TEST a_provider_that_is_also_a_root_plugin_still_serves_a_bare_instance(void) {
     PASS();
 }
 
+/* What the artifact half of the memo key buys, in both directions: two paths to
+   one artifact's member share an instance, and the same member name in two
+   artifacts does not. The second path here is a bare require inside a library
+   module, which is the nesting the key has to see through. */
+TEST one_dependent_gets_one_copy_of_a_module_per_artifact(void) {
+    xp_reset();
+    const char *foo_names[] = { "lib/counter.lua" };
+    const char *foo_bodies[] = { "return { tag = \"foo\" }\n" };
+    const xp_artifact *foo = xp_serve_plugin(
+        FOO_URL, "daukle.plugin{ api = 1, uses = {}, exports = { \"lib/counter\" } }\n", foo_names,
+        foo_bodies, 1);
+    char foo_requirement[256];
+    snprintf(foo_requirement, sizeof foo_requirement, "%s", xp_requires_one("foo", foo));
+
+    const char *java_names[] = { "lib/coords.lua", "lib/counter.lua" };
+    const char *java_bodies[] = {
+        "local counter = daukle.require(\"lib/counter\")\ncounter.n = counter.n + 1\nreturn {}\n",
+        "return { n = 0 }\n"
+    };
+    const xp_artifact *java = xp_serve_plugin(
+        JAVA_URL,
+        "daukle.plugin{ api = 1, uses = {}, exports = { \"lib/coords\", \"lib/counter\" } }\n",
+        java_names, java_bodies, 2);
+
+    char requires_both[512];
+    snprintf(requires_both, sizeof requires_both, "%s, %s", xp_requires_one("java", java),
+             foo_requirement);
+
+    char body[768];
+    snprintf(body, sizeof body,
+             "daukle.require(\"java:lib/coords\")\n"
+             "local direct = daukle.require(\"java:lib/counter\")\n"
+             "local other = daukle.require(\"foo:lib/counter\")\n"
+             "if direct.n ~= 1 then error(\"two paths gave two instances\") end\n"
+             "if other.tag ~= \"foo\" then error(\"two artifacts shared one instance\") end\n"
+             "daukle.language{ name = \"one-copy\", %s }\n", XP_APPLY);
+    xp_serve_chunk(GRADLE_URL, xp_dependent("", requires_both, body));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    int held = status == FR_OK
+               && fr_registry_language(registry, "daukle.language/one-copy") != NULL;
+    xp_done(registry);
+
+    ASSERT_EQm(xp_message, FR_OK, status);
+    ASSERTm("the dependent's chunk never finished", held);
+    PASS();
+}
+
 TEST a_member_name_carrying_a_second_colon_is_refused(void) {
     xp_reset();
     const xp_artifact *java = xp_serve_java("return {}\n");
@@ -1653,6 +1702,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_dependencys_entry_chunk_never_runs);
     RUN_TEST(a_library_module_requires_against_its_own_owner);
     RUN_TEST(a_provider_that_is_also_a_root_plugin_still_serves_a_bare_instance);
+    RUN_TEST(one_dependent_gets_one_copy_of_a_module_per_artifact);
     RUN_TEST(a_member_name_carrying_a_second_colon_is_refused);
     RUN_TEST(a_drive_letter_is_an_escape_rather_than_an_alias);
     GREATEST_MAIN_END();
