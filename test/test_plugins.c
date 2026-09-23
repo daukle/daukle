@@ -573,7 +573,7 @@ TEST a_requires_entry_naming_a_path_is_refused(void) {
 
     ASSERT_EQ(FR_ERR, status);
     ASSERTm(message, strstr(message, "acquired by url") != NULL);
-    ASSERTm(message, strstr(message, "requires") != NULL);
+    ASSERTm(message, strstr(message, "[plugins.p].requires") != NULL);
     PASS();
 }
 
@@ -611,6 +611,30 @@ TEST a_resolver_may_not_require_a_plugin(void) {
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
     ASSERTm(message, strstr(message, "acquired by the floor only") != NULL);
+    PASS();
+}
+
+/* setmetatable is a reachable base global here too, so a requires entry can
+   carry a metatable whose __index would answer for the "url" this raw table
+   never sets, raising unconditionally on any key so a fall-through to a
+   metamethod-honouring read is detectable no matter which field is checked
+   first. If raw_has_field or raw_string_field ever read through lua_getfield
+   instead of lua_rawget, the metamethod would fire before "names no url"
+   could and its marker text would land in err.message; with the raw read in
+   place __index is never consulted, so the raw table's missing "url" is
+   refused plainly and "boom" never appears. */
+TEST a_hostile_index_metatable_on_a_requires_entry_is_never_consulted(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { java = setmetatable("
+        "{ sha256 = \"9f86d0\" }, { __index = function() error(\"boom\") end }) } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "names no url") != NULL);
+    ASSERTm(message, strstr(message, "boom") == NULL);
     PASS();
 }
 
@@ -2218,6 +2242,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_requires_entry_naming_a_path_is_refused);
     RUN_TEST(an_alias_with_a_reserved_character_is_refused);
     RUN_TEST(a_resolver_may_not_require_a_plugin);
+    RUN_TEST(a_hostile_index_metatable_on_a_requires_entry_is_never_consulted);
     RUN_TEST(the_github_plugin_authenticates_from_either_token_variable);
     RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
     RUN_TEST(a_url_entry_fetches_and_loads);
