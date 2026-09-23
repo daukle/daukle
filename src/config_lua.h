@@ -56,6 +56,13 @@ int fr_lua_generation_is_running(void);
    resolver. */
 int fr_lua_resolver_declared(void);
 
+/* Marks the chunk about to run as one being acquired as a resolver, which is
+   the only state in which daukle.resolver may be called. Set around the
+   fr_lua_plugin_load that runs a [resolvers] entry's own chunk and cleared
+   immediately after, so an ordinary plugin chunk can neither install a
+   resolver nor replace the one a later entry resolves through. */
+void fr_lua_set_acquiring_resolver(int acquiring);
+
 /* Calls the most recently declared resolver's resolve function with
    coordinate and block, and reads url and resolved (if present) from the
    table it returns. The caller adds the label and coordinate to any error

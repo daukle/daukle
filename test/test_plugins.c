@@ -728,6 +728,61 @@ TEST a_resolved_entry_loads_what_its_resolver_names(void) {
     PASS();
 }
 
+static char FETCH_LOG[1024];
+
+static int stub_logs_every_url(const char *url, const fr_http_header *headers,
+                               size_t header_count, char **out_body, size_t *out_length,
+                               fr_error *err) {
+    (void) headers; (void) header_count; (void) err;
+    size_t used = strlen(FETCH_LOG);
+    snprintf(FETCH_LOG + used, sizeof FETCH_LOG - used, "%s\n", url);
+    *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n", out_length);
+    return FR_OK;
+}
+
+/* A resolver governs every unpinned acquisition, so it is the one thing a
+   manifest must pin; an ordinary plugin entry may be an unpinned local path.
+   "evil" here is exactly that: a path-form plugin whose chunk declares a
+   resolver. It is loaded between two entries that name the resolver "t", so
+   if its declaration were accepted the later entry would resolve through it
+   while skipping acquisition entirely, and an unpinned chunk would decide
+   where a pinned one's plugins come from. */
+TEST a_plugin_chunk_may_not_declare_a_resolver(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"}},"
+        "\"plugins\":{\"a\":\"t:x/y\",\"evil\":\"./test/fixtures/resolver/hijacks.lua\","
+        "\"b\":\"t:z/w\"}}";
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    FETCH_LOG[0] = '\0';
+    fr_http_fn previous = fr_http_set_backend(stub_logs_every_url);
+    fr_registry *registry = NULL;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = fr_plugins_load(registry, document, ".", &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+    char log[sizeof FETCH_LOG];
+    snprintf(log, sizeof log, "%s", FETCH_LOG);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+
+    ASSERT(built && began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "acquired as a resolver") != NULL);
+    ASSERT(strstr(log, "hijacked") == NULL);
+    PASS();
+}
+
 /* Four releases: o.lua (1.1.0, in range but not the highest), q.lua (2.0.0,
    out of range), p.lua (1.2.0, in range and the true highest), and p2.lua (a
    second "1.2.0" tag, in range and tied with p.lua). The true highest is
@@ -1520,6 +1575,7 @@ int main(int argc, char **argv) {
     RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
     RUN_TEST(a_url_entry_fetches_and_loads);
     RUN_TEST(a_resolved_entry_loads_what_its_resolver_names);
+    RUN_TEST(a_plugin_chunk_may_not_declare_a_resolver);
     RUN_TEST(the_github_resolver_picks_the_highest_release_in_range);
     RUN_TEST(an_undeclared_resolver_is_refused_naming_it);
     RUN_TEST(a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests);

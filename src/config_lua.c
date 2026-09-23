@@ -528,6 +528,18 @@ static int chunk_declared_other;
    reports true for an earlier, unrelated chunk. */
 static int resolver_declared;
 
+/* Whether the chunk now running was acquired AS a resolver, which is the only
+   way a resolver may be declared. Without it any plugin chunk could call
+   daukle.resolver and replace the callback a later, memoized entry resolves
+   through, so an unpinned plugin would decide where a pinned resolver's
+   plugins come from: the pin a resolver is required to carry governs the
+   whole acquisition path only if nothing else can install one. */
+static int acquiring_resolver;
+
+void fr_lua_set_acquiring_resolver(int acquiring) {
+    acquiring_resolver = acquiring;
+}
+
 static int lua_declare_language(lua_State *state) {
     if (fr_lua_verbs_env_declared_exec()) {
         return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
@@ -573,6 +585,10 @@ static int lua_declare_source(lua_State *state) {
 }
 
 static int lua_declare_resolver(lua_State *state) {
+    if (!acquiring_resolver) {
+        return luaL_error(state, "a resolver may only be declared by a chunk acquired as a"
+                                 " resolver, which this one was not");
+    }
     if (fr_lua_verbs_env_declared_exec()) {
         return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
     }

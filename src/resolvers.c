@@ -160,10 +160,41 @@ static int digest_matches(const char *actual, const char *pinned) {
 }
 
 static char *loaded_label;
+static char *loaded_source;
 
 void fr_resolvers_clear(void) {
     free(loaded_label);
     loaded_label = NULL;
+    free(loaded_source);
+    loaded_source = NULL;
+}
+
+static const char *entry_source(const fr_resolver_entry *entry) {
+    return entry->url != NULL ? entry->url : entry->path;
+}
+
+/* The memo skips acquisition entirely, so it answers "is the callback in the
+   runtime this entry's own?" rather than "has some entry by this name been
+   loaded?": a label alone would let two entries sharing one name, across two
+   manifests read in one process, resolve through each other's chunk. */
+static int is_the_loaded_resolver(const fr_resolver_entry *entry) {
+    return loaded_label != NULL && strcmp(loaded_label, entry->label) == 0
+        && loaded_source != NULL && strcmp(loaded_source, entry_source(entry)) == 0;
+}
+
+static int remember_loaded(const fr_resolver_entry *entry, fr_error *err) {
+    char *label = fr_dup_string(entry->label);
+    char *source = fr_dup_string(entry_source(entry));
+    if (label == NULL || source == NULL) {
+        free(label);
+        free(source);
+        fr_error_set(err, "out of memory recording resolver \"%s\" as loaded", entry->label);
+        return FR_ERR;
+    }
+    fr_resolvers_clear();
+    loaded_label = label;
+    loaded_source = source;
+    return FR_OK;
 }
 
 /* Reads entry's chunk (local path or pinned url), verifies its digest before
@@ -203,7 +234,9 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
     int status = fr_plugins_read_uses(text, origin, "resolver", entry->label, &uses, &uses_count,
                                       err);
     if (status == FR_OK) {
+        fr_lua_set_acquiring_resolver(1);
         status = fr_lua_plugin_load(text, origin, (const char *const *) uses, uses_count, err);
+        fr_lua_set_acquiring_resolver(0);
     }
     fr_plugins_free_uses(uses, uses_count);
     free(text);
@@ -224,16 +257,9 @@ int fr_resolvers_use(const fr_resolver_entry *entry, const char *coordinate, cha
         return FR_ERR;
     }
 
-    if (loaded_label == NULL || strcmp(loaded_label, entry->label) != 0) {
+    if (!is_the_loaded_resolver(entry)) {
         if (acquire(entry, err) != FR_OK) return FR_ERR;
-
-        char *label = fr_dup_string(entry->label);
-        if (label == NULL) {
-            fr_error_set(err, "out of memory recording resolver \"%s\" as loaded", entry->label);
-            return FR_ERR;
-        }
-        free(loaded_label);
-        loaded_label = label;
+        if (remember_loaded(entry, err) != FR_OK) return FR_ERR;
     }
 
     if (fr_lua_resolver_call(coordinate, entry->block, out_url, out_resolved, err) == FR_OK) {
