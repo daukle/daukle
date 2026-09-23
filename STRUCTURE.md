@@ -11,7 +11,7 @@ resolver.
 
 Living document. Update it in the same commit as the change it describes.
 
-Verified against disk on 2026-09-22.
+Verified against disk on 2026-09-23.
 
 ---
 
@@ -68,6 +68,7 @@ the client tier's rules.
 | the whole write pass over a manifest | `sync.c` | per-language. It drives the language plugins |
 | the derived directory: its path, the ledger of what daukle generated, write-if-changed, the sweep, and clean | `derived.c`, tested by `test/test_derived.c` | the generation pass, which is `generate.c`. It is handed a file set and decides only what happens on disk |
 | the generation pass: resolving each declared toolchain, building what its `generate` receives, and validating what it returns | `generate.c`, tested by `test/test_generate.c` | what happens on disk, which is `derived.c` |
+| the task graph: collecting a plugin-declared task together with the manifest task blocks that add edges to it, planning a goal's transitive closure in dependency order, and running that plan | `tasks.c`, `tasks.h`, tested by `test/test_tasks.c` and, end to end, `test/test_e2e.c` | starting a process itself. `fr_tasks_run` ensures a run-bearing task's derived directory exists and calls its plugin's `run`; that callback is what calls `daukle.exec`, not `tasks.c` |
 | HTTP, per platform | `http.c` over `http_curl.c` and `http_winhttp.c` | two implementations to keep in step. One interface, one backend per platform |
 | caching a resolved artifact | `cache.c` | keyed by project and version alone. The artifact string is part of the key, deliberately |
 | version ranges and ordering | `semver.c` | date or tag ordering |
@@ -230,6 +231,14 @@ shared across every project on the machine, is never touched beyond this manifes
 next run re-resolves whatever was removed. `daukle config print` shows every loaded plugin's label,
 its resolved version or local path, its declared verbs and its sha-256 digest, pinned or not, so
 adopting a pin is a copy of that printed digest rather than a separate lookup.
+
+`daukle <task>` plans the named task's transitive closure through `fr_tasks_plan` before syncing or
+running anything, so an unknown goal never triggers the write a real one would have caused; naming a
+goal nothing declares exits 2 and names the plugin count, so "you typed the name wrong" reads
+differently from "this project has no plugins at all". `daukle tasks` lists every task
+`fr_tasks_collect` gathers, from a plugin or from a manifest `[tasks]` block alike, tagging the
+manifest ones `(from the manifest)`; for each task it also prints `pulls in` (what runs before it) and
+`needed by` (what runs after it), the two directions `fr_tasks_joiners` computes.
 
 **Known limitation: `daukle plugin update` cannot read a lua-rooted manifest.** A `[plugins]` table
 loads whatever format the root manifest is written in, so a project authored in `daukle.lua` gets its
