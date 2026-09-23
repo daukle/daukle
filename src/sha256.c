@@ -1,5 +1,6 @@
 #include "sha256.h"
 
+#include <ctype.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -96,4 +97,13 @@ void fr_sha256_hex(const char *data, size_t length, char out_hex[65]) {
         }
     }
     out_hex[64] = '\0';
+}
+
+int fr_sha256_hex_equal(const char *left, const char *right) {
+    size_t length = strlen(left);
+    if (length != strlen(right) || length >= 65) return 0;
+    for (size_t index = 0; index < length; index++) {
+        if (tolower((unsigned char) left[index]) != tolower((unsigned char) right[index])) return 0;
+    }
+    return 1;
 }
