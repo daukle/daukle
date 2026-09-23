@@ -181,6 +181,23 @@ TEST generating_twice_changes_nothing_the_second_time(void) {
     PASS();
 }
 
+TEST a_session_survives_a_sync_and_closes_clean(void) {
+    fr_error err;
+    fr_session session;
+    ASSERT_EQ(FR_OK, fr_session_open("test/fixtures/two-ways/toml/daukle.toml", 1, &session, &err));
+    ASSERT(session.registry != NULL);
+    ASSERT_STR_EQ("forebay/two-ways", session.manifest.self.project);
+
+    fr_sync_report report;
+    ASSERT_EQ(FR_OK, fr_sync_session(&session, 0, &report, &err));
+    /* the runtime is still open here, which is exactly what a task run needs after a sync. */
+    fr_sync_report_free(&report);
+    ASSERT_EQ(FR_OK, fr_sync_session(&session, 0, &report, &err));
+    fr_sync_report_free(&report);
+    fr_session_close(&session);
+    PASS();
+}
+
 TEST check_names_a_stale_derived_tree_without_writing(void) {
     fr_test_remove_tree("test/fixtures/managed/build");
     fr_sync_report report; fr_error err;
@@ -217,5 +234,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_repository_with_no_tool_file_generates_into_the_derived_directory);
     RUN_TEST(generating_twice_changes_nothing_the_second_time);
     RUN_TEST(check_names_a_stale_derived_tree_without_writing);
+    RUN_TEST(a_session_survives_a_sync_and_closes_clean);
     GREATEST_MAIN_END();
 }

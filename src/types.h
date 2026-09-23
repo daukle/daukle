@@ -55,6 +55,16 @@ typedef struct {
     size_t dependency_count;
 } fr_toolchain;
 
+/* part_of is NULL when the task joins no aggregator. A manifest block carries
+   edges only: it never carries a body, because a body is Lua and a manifest
+   is data. */
+typedef struct {
+    char *name;
+    char *part_of;
+    char **depends_on;
+    size_t depends_on_count;
+} fr_task;
+
 /* path is relative to the toolchain's derived directory and uses forward
    slashes only; text is the file's whole content, because a toolchain produces
    a document rather than editing one. */
@@ -77,6 +87,8 @@ typedef struct {
     size_t consumer_count;
     fr_toolchain *toolchains;
     size_t toolchain_count;
+    fr_task *tasks;
+    size_t task_count;
     struct cJSON *document;
 } fr_manifest;
 

@@ -1,9 +1,11 @@
 #include "greatest.h"
 #include "error.h"
 #include "http.h"
+#include "plugins.h"
 #include "region.h"
 #include "support.h"
 #include "sync.h"
+#include "tasks.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -429,9 +431,126 @@ TEST the_same_manifest_in_two_formats_writes_the_same_file(void) {
     PASS();
 }
 
+/* The child writes into whatever directory it was started in, which is the
+   only way to observe cwd: a run that lost the default would write into
+   daukle's own working directory and the assertion below would fail. That is
+   the whole point of this test, and the residual it closes. */
+static int run_as_task_child(void) {
+    FILE *marker = fopen("ran-here.txt", "w");
+    if (marker == NULL) return 1;
+    fputs("ok", marker);
+    fclose(marker);
+    return 0;
+}
+
+/* argv[0] as ctest invokes it, kept so the fixture's plugin can resolve this
+   binary by name through daukle.tool, which searches PATH only. */
+static const char *self_path;
+
+static void put_environment(const char *name, const char *value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+static int file_exists(const char *path) {
+    FILE *handle = fopen(path, "r");
+    if (handle == NULL) return 0;
+    fclose(handle);
+    return 1;
+}
+
+TEST a_task_runs_its_child_in_the_derived_directory(void) {
+    char directory[1024];
+    snprintf(directory, sizeof directory, "%s", self_path);
+    char *last = strrchr(directory, '/');
+    char *last_back = strrchr(directory, '\\');
+    if (last_back != NULL && (last == NULL || last_back > last)) last = last_back;
+    if (last != NULL) *last = '\0';
+
+    fr_error err;
+    fr_session session;
+    ASSERT_EQ(FR_OK, fr_session_open("test/fixtures/task-cwd/daukle.toml", 1, &session, &err));
+
+    fr_sync_report report;
+    ASSERT_EQ(FR_OK, fr_sync_session(&session, 1, &report, &err));
+    fr_sync_report_free(&report);
+
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "runner:touch", &plan, &err));
+
+    const char *original_path = getenv("PATH");
+    char saved_path[4096];
+    snprintf(saved_path, sizeof saved_path, "%s", original_path == NULL ? "" : original_path);
+    char path_value[4096];
+#ifdef _WIN32
+    snprintf(path_value, sizeof path_value, "%s;%s", directory, saved_path);
+#else
+    snprintf(path_value, sizeof path_value, "%s:%s", directory, saved_path);
+#endif
+    put_environment("PATH", path_value);
+    put_environment("DAUKLE_TEST_CHILD", last == NULL ? self_path : last + 1);
+
+    const char *marker = "test/fixtures/task-cwd/build/daukle/runner/ran-here.txt";
+    remove(marker);
+
+    int status = fr_tasks_run(&plan, &session, &err);
+    int ran_here = file_exists(marker);
+
+    put_environment("PATH", saved_path);
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    remove(marker);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(ran_here);
+    PASS();
+}
+
+TEST an_unknown_goal_names_the_plugin_count(void) {
+    fr_error err;
+    fr_session session;
+    ASSERT_EQ(FR_OK, fr_session_open("test/fixtures/task-cwd/daukle.toml", 1, &session, &err));
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
+
+    fr_task_plan plan;
+    int plan_status = fr_tasks_plan(&set, "build", &plan, &err);
+    int found = fr_tasks_find(&set, "build") != NULL;
+    size_t plugin_count = fr_plugins_report()->count;
+
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+
+    ASSERT_EQ(FR_ERR, plan_status);
+    ASSERT(!found);
+    ASSERT_EQ(1u, plugin_count);
+    PASS();
+}
+
+TEST check_runs_no_task(void) {
+    const char *marker = "test/fixtures/task-cwd/build/daukle/runner/ran-here.txt";
+    remove(marker);
+
+    fr_sync_report report; fr_error err;
+    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/task-cwd/daukle.toml", 0, 1, &report, &err));
+    fr_sync_report_free(&report);
+
+    /* Neither check nor sync runs a task: daukle <task> is the only command that starts one. */
+    ASSERT(!file_exists(marker));
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
+    self_path = argv[0];
+    if (argc == 2 && strcmp(argv[1], "--task-child") == 0) return run_as_task_child();
     GREATEST_MAIN_BEGIN();
     RUN_TEST(reproduces_both_real_consumers);
     RUN_TEST(the_second_run_changes_nothing);
@@ -440,5 +559,8 @@ int main(int argc, char **argv) {
     RUN_TEST(check_reports_drift_through_the_github_source);
     RUN_TEST(no_cache_bypasses_both_the_read_and_the_write);
     RUN_TEST(the_same_manifest_in_two_formats_writes_the_same_file);
+    RUN_TEST(a_task_runs_its_child_in_the_derived_directory);
+    RUN_TEST(an_unknown_goal_names_the_plugin_count);
+    RUN_TEST(check_runs_no_task);
     GREATEST_MAIN_END();
 }

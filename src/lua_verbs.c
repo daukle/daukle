@@ -406,6 +406,7 @@ static int verb_exec(lua_State *state) {
             requested_cwd = lua_tostring(state, -1);
         }
     }
+    if (requested_cwd == NULL) requested_cwd = fr_lua_task_cwd();
 
     lua_Integer count = luaL_len(state, 2);
     if (count < 0 || count > FR_VERB_MAX_ARGV) {

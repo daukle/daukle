@@ -11,8 +11,21 @@ typedef struct {
     size_t count;
 } fr_derived_report;
 
+/* The project root as seen from inside build/daukle/<toolchain>/, which is
+   what both generation and a task hand a plugin as "root". A literal in two
+   files is two literals that disagree the day the layout gains a level. */
+#define FR_DERIVED_ROOT_RELATIVE "../../.."
+
 int fr_derived_root(const char *manifest_dir, char **out_dir, fr_error *err);
 int fr_derived_dir(const char *manifest_dir, const char *toolchain, char **out_dir, fr_error *err);
+
+/* The same directory fr_derived_dir builds, but relative to the sandbox base
+   (the manifest directory) rather than a filesystem path built from
+   manifest_dir: "build/daukle/<toolchain>". The two agree only when
+   manifest_dir is ".", so anything that ends up inside
+   fr_lua_sandbox_resolve_dir, which joins onto the sandbox base itself, needs
+   this form instead of fr_derived_dir's. */
+int fr_derived_dir_relative(const char *toolchain, char **out_dir, fr_error *err);
 
 /* Creates derived_root, if needed, and writes "*\n" to
    <derived_root>/.gitignore when that file is absent, never overwriting one
@@ -21,6 +34,16 @@ int fr_derived_dir(const char *manifest_dir, const char *toolchain, char **out_d
    never the toolchain-agnostic root above it; the caller that resolved
    derived_root through fr_derived_root calls this once before generating. */
 int fr_derived_ensure_root(const char *derived_root, fr_error *err);
+
+/* Creates derived_dir itself, if needed. Does not create parents: the caller
+   ensures derived_root (the toolchain-agnostic directory above it) first, so
+   the only missing segment left is the toolchain's own. A plain file or a
+   symlink already sitting at derived_dir is accepted (EEXIST) rather than
+   refused here; a symlink that escapes the base is instead caught downstream,
+   by fr_lua_sandbox_resolve_dir's canonicalisation and containment check
+   (src/lua_sandbox.c), the same place that would catch one handed to it any
+   other way. */
+int fr_derived_ensure_dir(const char *derived_dir, fr_error *err);
 
 /* Deletes fr_derived_root(manifest_dir) and everything beneath it. Existence
    is checked first: a root that does not exist, including a dangling link,

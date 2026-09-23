@@ -147,48 +147,61 @@ static int sync_consumer(const fr_consumer *consumer, const fr_manifest *manifes
     return result;
 }
 
-int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report *report, fr_error *err) {
-    memset(report, 0, sizeof *report);
+int fr_session_open(const char *manifest_path, int use_cache, fr_session *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
     fr_cache_set_enabled(use_cache);
 
-    fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, err) != FR_OK) return FR_ERR;
+    if (fr_build_registry(&out->registry, err) != FR_OK) return FR_ERR;
 
-    fr_manifest manifest;
-    if (fr_config_load_file(manifest_path, registry, &manifest, err) != FR_OK) {
-        fr_registry_destroy(registry);
-        fr_lua_runtime_shutdown();
-        fr_plugins_report_clear();
+    if (fr_config_load_file(manifest_path, out->registry, &out->manifest, err) != FR_OK) {
+        fr_session_close(out);
         return FR_ERR;
     }
+    out->loaded = 1;
 
-    char *manifest_dir = manifest_directory(manifest_path);
-    if (manifest_dir == NULL) {
+    out->manifest_dir = manifest_directory(manifest_path);
+    out->manifest_path = fr_dup_string(manifest_path);
+    if (out->manifest_dir == NULL || out->manifest_path == NULL) {
         fr_error_set(err, "out of memory deriving the manifest directory");
-        fr_manifest_free(&manifest);
-        fr_registry_destroy(registry);
-        fr_lua_runtime_shutdown();
-        fr_plugins_report_clear();
+        fr_session_close(out);
         return FR_ERR;
     }
+    return FR_OK;
+}
 
-    int result = FR_OK;
-    if (fr_generate(&manifest, manifest_path, manifest_dir, registry, write, report, err) != FR_OK) {
-        result = FR_ERR;
-    }
-    for (size_t index = 0; result == FR_OK && index < manifest.consumer_count; index++) {
-        if (sync_consumer(&manifest.consumers[index], &manifest, manifest_path, manifest_dir,
-                          registry, write, report, err) != FR_OK) {
-            result = FR_ERR;
-            break;
-        }
-    }
-
-    fr_registry_destroy(registry);
+void fr_session_close(fr_session *session) {
+    if (session == NULL) return;
+    fr_registry_destroy(session->registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
-    free(manifest_dir);
-    fr_manifest_free(&manifest);
+    free(session->manifest_dir);
+    free(session->manifest_path);
+    if (session->loaded) fr_manifest_free(&session->manifest);
+    memset(session, 0, sizeof *session);
+}
+
+int fr_sync_session(const fr_session *session, int write, fr_sync_report *report, fr_error *err) {
+    memset(report, 0, sizeof *report);
+    if (fr_generate(&session->manifest, session->manifest_path, session->manifest_dir,
+                    session->registry, write, report, err) != FR_OK) {
+        return FR_ERR;
+    }
+    for (size_t index = 0; index < session->manifest.consumer_count; index++) {
+        if (sync_consumer(&session->manifest.consumers[index], &session->manifest,
+                          session->manifest_path, session->manifest_dir,
+                          session->registry, write, report, err) != FR_OK) {
+            return FR_ERR;
+        }
+    }
+    return FR_OK;
+}
+
+int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report *report, fr_error *err) {
+    memset(report, 0, sizeof *report);
+    fr_session session;
+    if (fr_session_open(manifest_path, use_cache, &session, err) != FR_OK) return FR_ERR;
+    int result = fr_sync_session(&session, write, report, err);
+    fr_session_close(&session);
     return result;
 }
 

@@ -11,6 +11,8 @@ typedef enum {
     FR_CLI_PLUGIN_UPDATE,
     FR_CLI_CLEAN,
     FR_CLI_VERSION,
+    FR_CLI_TASK,
+    FR_CLI_TASKS,
     FR_CLI_USAGE
 } fr_cli_command;
 
@@ -31,6 +33,10 @@ typedef struct {
     /* Set only when "plugin" was followed by a word other than "update", so the
        caller can name the mistake rather than print a bare usage line. */
     const char *plugin_unknown_subcommand;
+    /* The word a run names when it matches no built-in command. A task takes
+       no positional manifest path, because two bare words cannot be told
+       apart from a task and a path. */
+    const char *task_name;
 } fr_cli_options;
 
 void fr_cli_parse(int argc, char **argv, fr_cli_options *out);

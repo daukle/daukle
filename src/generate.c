@@ -127,17 +127,10 @@ static int generate_toolchain(const fr_toolchain *toolchain, const fr_manifest *
         return FR_ERR;
     }
 
-    fr_consumer consumer;
-    memset(&consumer, 0, sizeof consumer);
-    consumer.id = toolchain->name;
-    consumer.language = toolchain->name;
-    consumer.dependencies = toolchain->dependencies;
-    consumer.dependency_count = toolchain->dependency_count;
-
     fr_resolved *resolved = NULL;
     size_t resolved_count = 0;
-    if (fr_resolve_consumer(&consumer, manifest, manifest_dir, registry, &resolved, &resolved_count,
-                            err) != FR_OK) {
+    if (fr_resolve_toolchain(toolchain, manifest, manifest_dir, registry, &resolved, &resolved_count,
+                             err) != FR_OK) {
         wrap_error_with_path(err, manifest_path);
         return FR_ERR;
     }
@@ -155,7 +148,7 @@ static int generate_toolchain(const fr_toolchain *toolchain, const fr_manifest *
     fr_generated_file *files = NULL;
     size_t file_count = 0;
     int result = plugin->generate(plugin->state, toolchain, manifest->self.project,
-                                  project_version, "../../..", resolved, resolved_count,
+                                  project_version, FR_DERIVED_ROOT_RELATIVE, resolved, resolved_count,
                                   &files, &file_count, err);
     fr_resolved_free(resolved, resolved_count);
 

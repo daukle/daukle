@@ -293,6 +293,75 @@ static int read_toolchain(const cJSON *entry, const char *name, fr_toolchain *ou
     return FR_OK;
 }
 
+static int read_task(const cJSON *entry, const char *name, fr_task *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+    char path[320];
+    snprintf(path, sizeof path, "tasks.%s", name);
+
+    out->name = duplicate(name);
+    if (out->name == NULL) {
+        fr_error_set(err, "out of memory reading %s", path);
+        return FR_ERR;
+    }
+    if (!cJSON_IsObject(entry)) {
+        fr_error_set(err, "%s must be a table", path);
+        return FR_ERR;
+    }
+
+    const cJSON *member = entry->child;
+    while (member != NULL) {
+        if (strcmp(member->string, "dependsOn") != 0 && strcmp(member->string, "partOf") != 0) {
+            fr_error_set(err, "%s: \"%s\" is not a key a task block defines; only dependsOn and partOf are",
+                         path, member->string);
+            return FR_ERR;
+        }
+        member = member->next;
+    }
+
+    const cJSON *part_of = cJSON_GetObjectItemCaseSensitive(entry, "partOf");
+    if (part_of != NULL) {
+        if (!cJSON_IsString(part_of)) {
+            fr_error_set(err, "%s.partOf must be a string", path);
+            return FR_ERR;
+        }
+        out->part_of = duplicate(part_of->valuestring);
+        if (out->part_of == NULL) {
+            fr_error_set(err, "out of memory reading %s.partOf", path);
+            return FR_ERR;
+        }
+    }
+
+    const cJSON *depends = cJSON_GetObjectItemCaseSensitive(entry, "dependsOn");
+    if (depends == NULL) return FR_OK;
+    if (!cJSON_IsArray(depends)) {
+        fr_error_set(err, "%s.dependsOn must be an array", path);
+        return FR_ERR;
+    }
+    int size = cJSON_GetArraySize(depends);
+    if (size > 0) {
+        out->depends_on = calloc((size_t) size, sizeof *out->depends_on);
+        if (out->depends_on == NULL) {
+            fr_error_set(err, "out of memory reading %s.dependsOn", path);
+            return FR_ERR;
+        }
+    }
+    size_t index = 0;
+    const cJSON *item = NULL;
+    cJSON_ArrayForEach(item, depends) {
+        if (!cJSON_IsString(item)) {
+            fr_error_set(err, "%s.dependsOn must hold strings", path);
+            return FR_ERR;
+        }
+        out->depends_on[index] = duplicate(item->valuestring);
+        if (out->depends_on[index] == NULL) {
+            fr_error_set(err, "out of memory reading %s.dependsOn", path);
+            return FR_ERR;
+        }
+        out->depends_on_count = ++index;
+    }
+    return FR_OK;
+}
+
 static int manifest_from_json(const cJSON *root, const char *file_path, fr_manifest *out, fr_error *err) {
     if (project_from_json(root, file_path, &out->self, err) != FR_OK) return FR_ERR;
 
@@ -363,6 +432,29 @@ static int manifest_from_json(const cJSON *root, const char *file_path, fr_manif
             if (read_toolchain(entry, entry->string, &out->toolchains[index], err) != FR_OK) {
                 return FR_ERR;
             }
+            index++;
+        }
+    }
+
+    const cJSON *tasks_obj = cJSON_GetObjectItemCaseSensitive(root, "tasks");
+    if (tasks_obj != NULL) {
+        if (!cJSON_IsObject(tasks_obj)) {
+            fr_error_set(err, "%s.tasks must be a table", file_path);
+            return FR_ERR;
+        }
+        int size = cJSON_GetArraySize(tasks_obj);
+        if (size > 0) {
+            out->tasks = calloc((size_t) size, sizeof *out->tasks);
+            if (out->tasks == NULL) {
+                fr_error_set(err, "out of memory reading %s.tasks", file_path);
+                return FR_ERR;
+            }
+        }
+        size_t index = 0;
+        const cJSON *entry = NULL;
+        cJSON_ArrayForEach(entry, tasks_obj) {
+            out->task_count = index + 1;
+            if (read_task(entry, entry->string, &out->tasks[index], err) != FR_OK) return FR_ERR;
             index++;
         }
     }
@@ -461,12 +553,22 @@ void fr_manifest_free(fr_manifest *manifest) {
         free(toolchain->dependencies);
     }
     free(manifest->toolchains);
+    for (size_t index = 0; index < manifest->task_count; index++) {
+        fr_task *task = &manifest->tasks[index];
+        free(task->name);
+        free(task->part_of);
+        for (size_t d = 0; d < task->depends_on_count; d++) free(task->depends_on[d]);
+        free(task->depends_on);
+    }
+    free(manifest->tasks);
     manifest->sources = NULL;
     manifest->source_count = 0;
     manifest->consumers = NULL;
     manifest->consumer_count = 0;
     manifest->toolchains = NULL;
     manifest->toolchain_count = 0;
+    manifest->tasks = NULL;
+    manifest->task_count = 0;
     cJSON_Delete(manifest->document);
     manifest->document = NULL;
 }

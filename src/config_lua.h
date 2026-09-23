@@ -52,6 +52,13 @@ int fr_lua_plugin_exec_is_refused(void);
    the user's compiler. */
 int fr_lua_generation_is_running(void);
 
+/* The directory a running task's exec defaults to, or NULL when no task is
+   running. This is what discharges the exec verb's cwd default: child spec 2
+   claimed to and did not, leaving a child inheriting daukle's own working
+   directory. */
+const char *fr_lua_task_cwd(void);
+void fr_lua_set_task_cwd(const char *directory);
+
 /* Sets language, source, toolchain and plugin on the table on top of the
    stack, for lua_verbs.c to build a plugin environment around; the underlying
    functions are file statics here, so this is their only way out. */

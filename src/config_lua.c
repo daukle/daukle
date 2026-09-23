@@ -120,11 +120,15 @@ static void restore_empty_arrays(const cJSON *original, cJSON *converted) {
     }
 }
 
-#define FR_LUA_MAX_PLUGINS 32
+#define FR_LUA_MAX_PLUGINS 128
 
 typedef struct {
     char *capability;
     int callback;
+    char *part_of;
+    char **depends_on;
+    size_t depends_on_count;
+    int has_run;
 } fr_lua_plugin_slot;
 
 static fr_lua_plugin_slot plugin_slots[FR_LUA_MAX_PLUGINS];
@@ -358,6 +362,16 @@ int fr_lua_generation_is_running(void) {
     return generation_is_running;
 }
 
+static const char *task_cwd;
+
+const char *fr_lua_task_cwd(void) {
+    return task_cwd;
+}
+
+void fr_lua_set_task_cwd(const char *directory) {
+    task_cwd = directory;
+}
+
 static int lua_toolchain_generate(void *state, const fr_toolchain *toolchain, const char *project,
                                   const char *version, const char *root,
                                   const fr_resolved *resolved, size_t count,
@@ -437,6 +451,23 @@ static int lua_source_load(void *state, const char *project, const cJSON *block,
     return parse_status;
 }
 
+/* Reads table[index]'s field `key` without honoring a metatable, leaving the
+   value on the stack exactly as lua_getfield would. setmetatable is a
+   reachable base global in this sandbox, so a plugin's declaration table
+   could carry an __index that raises on an ordinary miss, or that answers
+   inconsistently across two reads of the same key; lua_declare_task and
+   lua_declare_toolchain each use this for every field whose value the rest
+   of the function depends on, so nothing they decide can be answered by a
+   plugin-supplied metatable. lua_declare_task's depends_on walk applies the
+   same reasoning to its own table: lua_rawlen in place of luaL_len, because
+   a raw length can report a hole (lua_rawlen({1, nil, 3}) is 3) and a __len
+   metamethod can itself raise; lua_rawgeti in place of lua_geti, so reading
+   that hole cannot dispatch to an __index either. */
+static void raw_getfield(lua_State *state, int index, const char *key) {
+    lua_pushstring(state, key);
+    lua_rawget(state, index);
+}
+
 /* Returns 0 with *out set, or does not return at all: every failure below is
    raised, not reported. Callers still check, because the 0-on-success return
    would otherwise invite a dereference that only longjmp keeps safe. */
@@ -447,7 +478,8 @@ static int take_slot(lua_State *state, const char *prefix, const char *field,
     if (name == NULL) return luaL_error(state, "a %s needs a name", prefix);
 
     if (plugin_slot_count == FR_LUA_MAX_PLUGINS) {
-        return luaL_error(state, "too many plugins declared in one configuration");
+        return luaL_error(state, "too many declarations in one configuration;"
+                          " at most %d are allowed", FR_LUA_MAX_PLUGINS);
     }
 
     char capability[128];
@@ -514,6 +546,29 @@ static int lua_declare_source(lua_State *state) {
     return 0;
 }
 
+/* Which toolchains the chunk now running has declared, so that a task naming
+   "<toolchain>:" can be checked against them. Reset per chunk in
+   fr_lua_plugin_load. The check runs at declaration, so a plugin must declare
+   a toolchain before the tasks that name it. */
+#define FR_LUA_MAX_CHUNK_TOOLCHAINS 8
+static char *chunk_toolchains[FR_LUA_MAX_CHUNK_TOOLCHAINS];
+static size_t chunk_toolchain_count;
+
+static void chunk_toolchains_clear(void) {
+    for (size_t index = 0; index < chunk_toolchain_count; index++) free(chunk_toolchains[index]);
+    chunk_toolchain_count = 0;
+}
+
+static int chunk_declares_toolchain(const char *name, size_t length) {
+    for (size_t index = 0; index < chunk_toolchain_count; index++) {
+        if (strlen(chunk_toolchains[index]) == length
+            && strncmp(chunk_toolchains[index], name, length) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int lua_declare_toolchain(lua_State *state) {
     luaL_checktype(state, 1, LUA_TTABLE);
     fr_lua_plugin_slot *slot = NULL;
@@ -521,9 +576,246 @@ static int lua_declare_toolchain(lua_State *state) {
         return luaL_error(state, "a toolchain plugin could not be declared");
     }
 
+    if (chunk_toolchain_count == FR_LUA_MAX_CHUNK_TOOLCHAINS) {
+        return luaL_error(state, "a plugin chunk may declare at most %d toolchains",
+                          FR_LUA_MAX_CHUNK_TOOLCHAINS);
+    }
+
+    raw_getfield(state, 1, "name");
+    const char *toolchain_name = lua_tostring(state, -1);
+    if (toolchain_name == NULL) return luaL_error(state, "a toolchain needs a name");
+    chunk_toolchains[chunk_toolchain_count] = fr_dup_string(toolchain_name);
+    lua_pop(state, 1);
+    if (chunk_toolchains[chunk_toolchain_count] == NULL) return luaL_error(state, "out of memory");
+    chunk_toolchain_count++;
+
     fr_toolchain_plugin plugin = { slot->capability, lua_toolchain_generate, slot };
     fr_error err;
     if (fr_registry_add_toolchain(registering_into, &plugin, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    return 0;
+}
+
+/* Copies the toolchain-name prefix of a colon-qualified task name into a
+   fixed buffer. luaL_error's format string is Lua's own minimal printf
+   (lua_pushvfstring), which has no precision specifier: "%.*s" raises
+   "invalid option '%.'" at runtime instead of truncating, so the substring
+   has to be built by hand before it can be interpolated with a plain "%s". */
+static void copy_toolchain_prefix(const char *name, const char *colon, char *out, size_t out_size) {
+    size_t length = (size_t) (colon - name);
+    if (length >= out_size) length = out_size - 1;
+    memcpy(out, name, length);
+    out[length] = '\0';
+}
+
+typedef struct {
+    fr_lua_plugin_slot *slot;
+    const fr_task_run_context *context;
+} lua_task_context;
+
+static lua_task_context *task_context;
+
+static int protected_task_run(lua_State *state) {
+    const lua_task_context *wrapper = task_context;
+    const fr_task_run_context *context = wrapper->context;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, wrapper->slot->callback);
+
+    lua_newtable(state);
+    lua_pushstring(state, context->name);
+    lua_setfield(state, -2, "name");
+    lua_pushstring(state, context->project);
+    lua_setfield(state, -2, "project");
+    lua_pushstring(state, context->version);
+    lua_setfield(state, -2, "version");
+    lua_pushstring(state, context->root);
+    lua_setfield(state, -2, "root");
+
+    lua_newtable(state);
+    lua_pushstring(state, host_os());
+    lua_setfield(state, -2, "os");
+    lua_pushstring(state, host_arch());
+    lua_setfield(state, -2, "arch");
+    lua_setfield(state, -2, "host");
+
+    lua_newtable(state);
+    lua_pushstring(state, context->toolchain->name);
+    lua_setfield(state, -2, "name");
+    if (context->toolchain->version != NULL) {
+        lua_pushstring(state, context->toolchain->version);
+        lua_setfield(state, -2, "version");
+    }
+    lua_newtable(state);
+    const cJSON *block = context->toolchain->block;
+    if (block != NULL) {
+        const cJSON *member = block->child;
+        while (member != NULL) {
+            if (strcmp(member->string, "version") != 0 &&
+                strcmp(member->string, "dependencies") != 0) {
+                fr_error push_err;
+                if (fr_lua_push_json(state, member, &push_err) != FR_OK) {
+                    return luaL_error(state, "%s", push_err.message);
+                }
+                lua_setfield(state, -2, member->string);
+            }
+            member = member->next;
+        }
+    }
+    lua_setfield(state, -2, "config");
+    lua_newtable(state);
+    for (size_t index = 0; index < context->resolved_count; index++) {
+        lua_newtable(state);
+        lua_pushstring(state, context->resolved[index].project);
+        lua_setfield(state, -2, "project");
+        lua_pushstring(state, context->resolved[index].module);
+        lua_setfield(state, -2, "module");
+        fr_error push_err;
+        if (fr_lua_push_json(state, context->resolved[index].block, &push_err) != FR_OK) {
+            return luaL_error(state, "%s", push_err.message);
+        }
+        lua_setfield(state, -2, "block");
+        lua_rawseti(state, -2, (lua_Integer) index + 1);
+    }
+    lua_setfield(state, -2, "dependencies");
+    lua_setfield(state, -2, "toolchain");
+
+    /* lua_call, not lua_pcall: see protected_language_apply above. */
+    lua_call(state, 1, 0);
+    return 0;
+}
+
+static int lua_task_run(void *state, const fr_task_run_context *context, fr_error *err) {
+    int top = lua_gettop(runtime_state);
+    lua_task_context wrapper = { state, context };
+    task_context = &wrapper;
+    fr_lua_set_task_cwd(context->derived_dir_relative);
+    lua_pushcfunction(runtime_state, protected_task_run);
+    int status = lua_pcall(runtime_state, 0, 0, 0);
+    fr_lua_set_task_cwd(NULL);
+    task_context = NULL;
+
+    if (status != LUA_OK) {
+        fr_error_set(err, "%s", fr_lua_error_text(runtime_state));
+        lua_settop(runtime_state, top);
+        return FR_ERR;
+    }
+    lua_settop(runtime_state, top);
+    return FR_OK;
+}
+
+/* Frees everything a task slot owns and zeroes it. This is needed only for a
+   raise that happens before plugin_slot_count is incremented: the shutdown
+   loop walks slots by that count, so a slot not yet counted has no other way
+   to be released. Every check in lua_declare_task between slot->capability's
+   allocation and that increment stands in for what would otherwise be a
+   luaL_check* call, specifically so it can call this before raising instead
+   of raising out from under an unfreed slot. */
+static void release_task_slot(fr_lua_plugin_slot *slot) {
+    free(slot->capability);
+    free(slot->part_of);
+    for (size_t index = 0; index < slot->depends_on_count; index++) free(slot->depends_on[index]);
+    free(slot->depends_on);
+    memset(slot, 0, sizeof *slot);
+}
+
+static int lua_declare_task(lua_State *state) {
+    luaL_checktype(state, 1, LUA_TTABLE);
+
+    raw_getfield(state, 1, "name");
+    const char *name = lua_tostring(state, -1);
+    if (name == NULL) return luaL_error(state, "a task needs a name");
+
+    const char *colon = strchr(name, ':');
+    if (colon != NULL && !chunk_declares_toolchain(name, (size_t) (colon - name))) {
+        char toolchain_name[64];
+        copy_toolchain_prefix(name, colon, toolchain_name, sizeof toolchain_name);
+        return luaL_error(state, "task \"%s\" cannot be declared here: this plugin declares no"
+                                 " toolchain \"%s\"", name, toolchain_name);
+    }
+
+    char capability[128];
+    int written = snprintf(capability, sizeof capability, "daukle.task/%s", name);
+    if (written < 0 || (size_t) written >= sizeof capability) {
+        return luaL_error(state, "the task name \"%s\" is too long", name);
+    }
+    lua_pop(state, 1);
+
+    if (slot_for(capability) != NULL) {
+        return luaL_error(state, "\"%s\" is declared twice", capability);
+    }
+    if (plugin_slot_count == FR_LUA_MAX_PLUGINS) {
+        return luaL_error(state, "too many declarations in one configuration;"
+                          " at most %d are allowed", FR_LUA_MAX_PLUGINS);
+    }
+
+    fr_lua_plugin_slot *slot = &plugin_slots[plugin_slot_count];
+    memset(slot, 0, sizeof *slot);
+    slot->capability = fr_dup_string(capability);
+    if (slot->capability == NULL) return luaL_error(state, "out of memory");
+
+    raw_getfield(state, 1, "partOf");
+    if (!lua_isnil(state, -1)) {
+        if (!lua_isstring(state, -1)) {
+            release_task_slot(slot);
+            return luaL_error(state, "\"%s\" needs partOf to be a string", capability);
+        }
+        slot->part_of = fr_dup_string(lua_tostring(state, -1));
+        if (slot->part_of == NULL) {
+            release_task_slot(slot);
+            return luaL_error(state, "out of memory");
+        }
+    }
+    lua_pop(state, 1);
+
+    raw_getfield(state, 1, "dependsOn");
+    if (!lua_isnil(state, -1)) {
+        if (!lua_istable(state, -1)) {
+            release_task_slot(slot);
+            return luaL_error(state, "\"%s\" needs dependsOn to be a table", capability);
+        }
+        lua_Integer length = (lua_Integer) lua_rawlen(state, -1);
+        if (length > 0) {
+            slot->depends_on = calloc((size_t) length, sizeof *slot->depends_on);
+            if (slot->depends_on == NULL) {
+                release_task_slot(slot);
+                return luaL_error(state, "out of memory");
+            }
+        }
+        for (lua_Integer index = 1; index <= length; index++) {
+            lua_rawgeti(state, -1, index);
+            if (!lua_isstring(state, -1)) {
+                release_task_slot(slot);
+                return luaL_error(state, "\"%s\" needs dependsOn to contain only strings", capability);
+            }
+            slot->depends_on[index - 1] = fr_dup_string(lua_tostring(state, -1));
+            if (slot->depends_on[index - 1] == NULL) {
+                release_task_slot(slot);
+                return luaL_error(state, "out of memory");
+            }
+            slot->depends_on_count = (size_t) index;
+            lua_pop(state, 1);
+        }
+    }
+    lua_pop(state, 1);
+
+    raw_getfield(state, 1, "run");
+    if (!lua_isnil(state, -1)) {
+        if (!lua_isfunction(state, -1)) {
+            release_task_slot(slot);
+            return luaL_error(state, "\"%s\" needs run to be a function", capability);
+        }
+        slot->callback = luaL_ref(state, LUA_REGISTRYINDEX);
+        slot->has_run = 1;
+    } else {
+        lua_pop(state, 1);
+    }
+    plugin_slot_count++;
+
+    fr_task_plugin plugin = { slot->capability, slot->part_of,
+                              (const char *const *) slot->depends_on, slot->depends_on_count,
+                              slot->has_run ? lua_task_run : NULL, slot };
+    fr_error err;
+    if (fr_registry_add_task(registering_into, &plugin, &err) != FR_OK) {
         return luaL_error(state, "%s", err.message);
     }
     return 0;
@@ -541,6 +833,8 @@ void fr_lua_verbs_install_registration(lua_State *state) {
     lua_setfield(state, -2, "source");
     lua_pushcfunction(state, lua_declare_toolchain);
     lua_setfield(state, -2, "toolchain");
+    lua_pushcfunction(state, lua_declare_task);
+    lua_setfield(state, -2, "task");
     lua_pushcfunction(state, lua_declare_plugin);
     lua_setfield(state, -2, "plugin");
 }
@@ -691,9 +985,11 @@ int fr_lua_plugin_load(const char *text, const char *origin, const char *const *
     if (fr_lua_verbs_push_env(state, verbs, verb_count, err) != FR_OK) return FR_ERR;
     int env = lua_gettop(state);
 
+    chunk_toolchains_clear();
     plugin_chunk_running = 1;
     int status = fr_lua_run_in_env(state, text, origin, env, err);
     plugin_chunk_running = 0;
+    chunk_toolchains_clear();
     lua_settop(state, top);
     return status;
 }
@@ -731,7 +1027,14 @@ void fr_lua_runtime_shutdown(void) {
         fr_lua_close(runtime_state);
         runtime_state = NULL;
     }
-    for (size_t index = 0; index < plugin_slot_count; index++) free(plugin_slots[index].capability);
+    for (size_t index = 0; index < plugin_slot_count; index++) {
+        free(plugin_slots[index].capability);
+        free(plugin_slots[index].part_of);
+        for (size_t d = 0; d < plugin_slots[index].depends_on_count; d++) {
+            free(plugin_slots[index].depends_on[d]);
+        }
+        free(plugin_slots[index].depends_on);
+    }
     plugin_slot_count = 0;
     free(runtime_base_dir);
     runtime_base_dir = NULL;

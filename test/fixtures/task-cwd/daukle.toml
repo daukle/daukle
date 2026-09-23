@@ -1,0 +1,11 @@
+schema = 1
+project = "forebay/task-cwd"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+runner = "./plugins/runner.lua"
+
+[toolchains.runner]
+version = "1"
