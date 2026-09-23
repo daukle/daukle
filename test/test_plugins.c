@@ -728,21 +728,29 @@ TEST a_resolved_entry_loads_what_its_resolver_names(void) {
     PASS();
 }
 
-/* p.lua is the 1.2.0 asset, in range for "^1.0.0"; q.lua is the 2.0.0 asset,
-   out of range. They register differently named languages so the test can tell
-   which one was fetched rather than only that loading succeeded. A resolver
-   that ignored the range and took the highest tag registers remote-2-0-0,
-   which the positive assertion alone would not catch. This is the same stub
-   shape the deleted C's test used, kept because the property is the same. */
+/* Three releases, two of them in range for "^1.0.0": o.lua (1.1.0, in range
+   but not the highest), p.lua (1.2.0, in range and the highest), and q.lua
+   (2.0.0, out of range). Listing them out of numeric order (1.1.0, 2.0.0,
+   1.2.0) means neither "take the first in-range entry" nor "take the last
+   entry in the array" would accidentally land on the right answer; only
+   comparing every in-range candidate with greater() does. Each registers a
+   differently named language so the test can tell which one was fetched
+   rather than only that loading succeeded. */
 static int stub_releases_index(const char *url, const fr_http_header *headers, size_t header_count,
                                char **out_body, size_t *out_length, fr_error *err) {
     (void) headers; (void) header_count; (void) err;
     release_requests++;
     if (strstr(url, "/releases") != NULL) {
-        *out_body = copy_body("[{\"tag_name\":\"1.2.0\",\"assets\":"
-                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/p.lua\"}]},"
+        *out_body = copy_body("[{\"tag_name\":\"1.1.0\",\"assets\":"
+                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/o.lua\"}]},"
                               "{\"tag_name\":\"2.0.0\",\"assets\":"
-                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/q.lua\"}]}]",
+                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/q.lua\"}]},"
+                              "{\"tag_name\":\"1.2.0\",\"assets\":"
+                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/p.lua\"}]}]",
+                              out_length);
+    } else if (strstr(url, "/o.lua") != NULL) {
+        *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
+                              "daukle.language{ name = 'remote-1-1-0', apply = function() return '' end }\n",
                               out_length);
     } else if (strstr(url, "/p.lua") != NULL) {
         *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
@@ -756,12 +764,24 @@ static int stub_releases_index(const char *url, const fr_http_header *headers, s
     return FR_OK;
 }
 
+/* Both daukle.cache (the releases index, keyed by repo/range) and
+   fr_plugin_fetch (the winning asset, keyed by its url) persist to disk by
+   default, so an unisolated run here would leave entries in the developer's
+   real cache root and, worse, keep serving them if the stub bodies above ever
+   change. Isolated the way plugin_update_re_resolves_and_takes_the_new_url
+   isolates its own persistent cache writes. */
 TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     fr_error err;
     const char *document_json =
         "{\"resolvers\":{\"gh\":{\"path\":\"./github-releases.lua\"}},"
         "\"plugins\":{\"r\":\"gh:daukle/remote@^1.0.0\"}}";
 
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_github_resolver_%d",
+            fr_test_temp_base(), fr_test_process_id());
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
+    release_requests = 0;
     fr_http_fn previous = fr_http_set_backend(stub_releases_index);
     fr_registry *registry = NULL;
     int built = fr_build_registry(&registry, &err) == FR_OK;
@@ -769,8 +789,10 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
 
     int began = fr_lua_runtime_begin("test/fixtures/github-resolver", registry, &err) == FR_OK;
     int loaded = fr_plugins_load(registry, document, "test/fixtures/github-resolver", &err) == FR_OK;
-    int in_range = fr_registry_language(registry, "daukle.language/remote-1-2-0") != NULL;
+    int highest_in_range = fr_registry_language(registry, "daukle.language/remote-1-2-0") != NULL;
+    int lower_in_range = fr_registry_language(registry, "daukle.language/remote-1-1-0") != NULL;
     int out_of_range = fr_registry_language(registry, "daukle.language/remote-2-0-0") != NULL;
+    int requests = release_requests;
 
     cJSON_Delete(document);
     fr_registry_destroy(registry);
@@ -778,12 +800,15 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     fr_plugins_report_clear();
     fr_resolvers_clear();
     fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
 
     ASSERT(built);
     ASSERT(began);
     ASSERT(loaded);
-    ASSERT(in_range);
+    ASSERT(highest_in_range);
+    ASSERT_FALSE(lower_in_range);
     ASSERT_FALSE(out_of_range);
+    ASSERT_EQ(2, requests);
     PASS();
 }
 

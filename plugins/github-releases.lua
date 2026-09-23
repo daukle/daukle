@@ -56,6 +56,18 @@ local function greater(a, b)
   return a.patch > b.patch
 end
 
+--- An absent key takes the fallback, but a key written with the wrong type is
+--- the manifest author's mistake and must name where, since a non-string would
+--- otherwise surface only as a concatenation failure inside this plugin.
+local function optional_string(block, key, repo, fallback)
+  local value = block[key]
+  if value == nil then return fallback end
+  if type(value) ~= "string" then
+    error("the resolver block for \"" .. repo .. "\" has a non-string \"" .. key .. "\"")
+  end
+  return value
+end
+
 local function asset_url(release, name)
   local assets = release.assets
   if type(assets) ~= "table" then return nil end
@@ -76,16 +88,19 @@ daukle.resolver{
     end
 
     local range = parse_range(range_text)
-    if range == nil then error("\"" .. range_text .. "\" is not a version range") end
+    if range == nil then
+      error("\"" .. range_text .. "\" is not a version range; write an exact version like"
+            .. " \"1.2.3\", a caret range like \"^1.2.3\", or a tilde range like \"~1.2.3\"")
+    end
 
-    local api = block.api or "https://api.github.com"
-    local asset = block.asset or "plugin.lua"
+    local api = optional_string(block, "api", repo, "https://api.github.com")
+    local asset = optional_string(block, "asset", repo, "plugin.lua")
     local index = api .. "/repos/" .. repo .. "/releases"
 
-    -- repo is "owner/name", the one interior slash daukle.cache's project slot
-    -- allows; a "github-releases/" prefix here would add a second and every
-    -- call would be refused as an unsafe cache path.
-    local body = daukle.cache(repo, range_text, index, function()
+    --- The one interior slash daukle.cache's project slot permits, exactly the "owner/name" shape.
+    local cache_project = repo
+
+    local body = daukle.cache(cache_project, range_text, index, function()
       return daukle.fetch(index, authorization())
     end)
 
