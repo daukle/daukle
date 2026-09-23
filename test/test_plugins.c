@@ -497,7 +497,8 @@ TEST fr_plugins_read_uses_rejects_a_closed_runtime(void) {
     fr_error err;
     char **uses = NULL;
     size_t uses_count = 0;
-    int status = fr_plugins_read_uses("daukle.plugin{ api = 1 }", "test.lua", "resolver", "t",
+    static const char chunk[] = "daukle.plugin{ api = 1 }";
+    int status = fr_plugins_read_uses(chunk, sizeof chunk - 1, "test.lua", "resolver", "t",
                                       &uses, &uses_count, &err);
 
     ASSERT_EQ(FR_ERR, status);
@@ -1192,7 +1193,8 @@ TEST a_failed_pin_discards_the_cached_artifact(void) {
 
     fr_http_fn previous = fr_http_set_backend(stub_refuses_every_request);
     char *after = NULL;
-    int served_from_cache = fr_plugin_fetch(url, NULL, 0, &after, &err) == FR_OK;
+    size_t after_length = 0;
+    int served_from_cache = fr_plugin_fetch(url, NULL, 0, &after, &after_length, &err) == FR_OK;
     free(after);
 
     fr_http_set_backend(previous);
@@ -1226,7 +1228,8 @@ static int stub_named_artifacts(const char *url, const fr_http_header *headers,
 static int seed_cached_artifact(const char *url) {
     fr_error err;
     char *text = NULL;
-    int status = fr_plugin_fetch(url, NULL, 0, &text, &err) == FR_OK;
+    size_t length = 0;
+    int status = fr_plugin_fetch(url, NULL, 0, &text, &length, &err) == FR_OK;
     free(text);
     return status;
 }
@@ -1238,7 +1241,8 @@ static int artifact_survived(const char *url, fr_http_fn restore) {
     fr_error err;
     fr_http_set_backend(stub_refuses_every_request);
     char *text = NULL;
-    int served = fr_plugin_fetch(url, NULL, 0, &text, &err) == FR_OK;
+    size_t length = 0;
+    int served = fr_plugin_fetch(url, NULL, 0, &text, &length, &err) == FR_OK;
     free(text);
     fr_http_set_backend(restore);
     return served;
@@ -1731,6 +1735,343 @@ TEST a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_
     PASS();
 }
 
+/* Serves bytes carrying a NUL, which is what every tar archive does. The body
+   is built here rather than taken from a literal so the length is the thing
+   under test rather than something strlen could re-derive. */
+static int stub_body_with_a_nul(const char *url, const fr_http_header *headers,
+                                size_t header_count, char **out_body, size_t *out_length,
+                                fr_error *err) {
+    (void) url; (void) headers; (void) header_count; (void) err;
+    static const char body[] = "daukle.plugin{ api = 1 }\n\0 trailing";
+    size_t length = sizeof body - 1;
+    char *copy = malloc(length + 1);
+    if (copy == NULL) return FR_ERR;
+    memcpy(copy, body, length + 1);
+    *out_body = copy;
+    *out_length = length;
+    return FR_OK;
+}
+
+TEST fetched_bytes_carry_their_length_past_an_embedded_nul(void) {
+    static const char body[] = "daukle.plugin{ api = 1 }\n\0 trailing";
+    size_t body_length = sizeof body - 1;
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    fr_http_fn previous = fr_http_set_backend(stub_body_with_a_nul);
+
+    char *text = NULL;
+    size_t length = 0;
+    fr_error err;
+    int status = fr_plugin_fetch("https://x/artifact", NULL, 0, &text, &length, &err);
+
+    char expected[65];
+    fr_sha256_hex(body, body_length, expected);
+    char actual[65];
+    actual[0] = '\0';
+    if (status == FR_OK) fr_sha256_hex(text, length, actual);
+
+    free(text);
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+
+    ASSERT_EQm(err.message, FR_OK, status);
+    ASSERT_EQ(body_length, length);
+    ASSERT_STR_EQ(expected, actual);
+    PASS();
+}
+
+/* greatest's ASSERT_*m keeps the message POINTER and prints it once the test has
+   returned, so the buffer it names cannot live on the test's stack. */
+static char directory_message[512];
+
+static int loads_directory_plugin(const char *json) {
+    fr_error err;
+    err.message[0] = '\0';
+    directory_message[0] = '\0';
+
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, &err) != FR_OK) return FR_ERR;
+
+    cJSON *document = document_from(json);
+    int status = FR_ERR;
+    if (fr_lua_runtime_begin("test/fixtures/plugin-directory", registry, &err) == FR_OK) {
+        status = fr_plugins_load(registry, document, "test/fixtures/plugin-directory", &err);
+    }
+    snprintf(directory_message, sizeof directory_message, "%s", err.message);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    return status;
+}
+
+TEST a_directory_path_loads_the_plugin_lua_inside_it(void) {
+    int status = loads_directory_plugin("{\"plugins\":{\"hello\":{\"path\":\"./plugin\"}}}");
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    char digest[65];
+    snprintf(digest, sizeof digest, "%s", count == 1 ? report->entries[0].sha256 : "missing");
+
+    fr_plugins_report_clear();
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQm(directory_message, FR_OK, status);
+    ASSERT_EQ(1u, count);
+    /* A directory has no byte string to digest, so the report carries none
+       rather than a number nothing could reproduce. */
+    ASSERT_STR_EQ("", digest);
+    PASS();
+}
+
+TEST a_directory_path_may_not_carry_a_sha256(void) {
+    int status = loads_directory_plugin(
+        "{\"plugins\":{\"hello\":{\"path\":\"./plugin\",\"sha256\":"
+        "\"0000000000000000000000000000000000000000000000000000000000000000\"}}}");
+    char message[512];
+    snprintf(message, sizeof message, "%s", directory_message);
+
+    fr_plugins_report_clear();
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "is a directory and cannot carry a sha256") != NULL);
+    PASS();
+}
+
+/* The refusal above is about directories, not about paths: a single-file path
+   keeps its pin exactly as it had it. */
+TEST a_single_file_path_with_a_sha256_still_loads(void) {
+    fr_error err;
+    err.message[0] = '\0';
+    char *text = NULL;
+    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/plugin-local/plugins/hello.lua", &text,
+                                       &err));
+    char digest[65];
+    fr_sha256_hex(text, strlen(text), digest);
+    free(text);
+
+    char json[512];
+    snprintf(json, sizeof json,
+             "{\"plugins\":{\"hello\":{\"path\":\"./plugins/hello.lua\",\"sha256\":\"%s\"}}}",
+             digest);
+
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    cJSON *document = document_from(json);
+    int status = FR_ERR;
+    if (fr_lua_runtime_begin("test/fixtures/plugin-local", registry, &err) == FR_OK) {
+        status = fr_plugins_load(registry, document, "test/fixtures/plugin-local", &err);
+    }
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_plugins_report_clear();
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQm(message, FR_OK, status);
+    PASS();
+}
+
+static char served_archive[8192];
+static size_t served_archive_length;
+static int archive_requests;
+
+static int stub_serves_the_archive(const char *url, const fr_http_header *headers,
+                                   size_t header_count, char **out_body, size_t *out_length,
+                                   fr_error *err) {
+    (void) url; (void) headers; (void) header_count; (void) err;
+    archive_requests++;
+    char *copy = malloc(served_archive_length + 1);
+    if (copy == NULL) return FR_ERR;
+    memcpy(copy, served_archive, served_archive_length);
+    copy[served_archive_length] = '\0';
+    *out_body = copy;
+    *out_length = served_archive_length;
+    return FR_OK;
+}
+
+static const char ARCHIVE_ENTRY[] =
+    "daukle.plugin{ api = 1, uses = {} }\n"
+    "local greeting = daukle.require(\"lib/greeting\")\n"
+    "daukle.language{ name = greeting.name,\n"
+    "                 apply = function(consumer, resolved, text) return text end }\n";
+static const char ARCHIVE_MODULE[] = "return { name = \"from-archive\" }\n";
+
+static void build_served_archive(int with_entry) {
+    memset(served_archive, 0, sizeof served_archive);
+    size_t offset = 0;
+    if (with_entry) {
+        offset = fr_test_tar_append(served_archive, offset, "plugin.lua", '0', ARCHIVE_ENTRY,
+                                    sizeof ARCHIVE_ENTRY - 1);
+    }
+    offset = fr_test_tar_append(served_archive, offset, "lib/greeting.lua", '0', ARCHIVE_MODULE,
+                                sizeof ARCHIVE_MODULE - 1);
+    served_archive_length = fr_test_tar_end(served_archive, offset);
+}
+
+static char archive_message[512];
+
+/* Loads one url-form plugin against the archive the stub serves, inside its own
+   cache directory: the fetch cache is keyed by url and survives between runs, so
+   a test meaning to reach the network can otherwise be answered from a previous
+   run's cache and pass for the wrong reason. */
+static int loads_served_archive(const char *pin, int *out_registered) {
+    fr_error err;
+    err.message[0] = '\0';
+    archive_message[0] = '\0';
+    *out_registered = 0;
+
+    char json[512];
+    if (pin != NULL) {
+        snprintf(json, sizeof json,
+                 "{\"plugins\":{\"a\":{\"url\":\"https://x/plugin.tar\",\"sha256\":\"%s\"}}}", pin);
+    } else {
+        snprintf(json, sizeof json, "{\"plugins\":{\"a\":\"https://x/plugin.tar\"}}");
+    }
+
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, &err) != FR_OK) return FR_ERR;
+    cJSON *document = document_from(json);
+
+    int status = FR_ERR;
+    if (fr_lua_runtime_begin(".", registry, &err) == FR_OK) {
+        status = fr_plugins_load(registry, document, ".", &err);
+        *out_registered = fr_registry_language(registry, "daukle.language/from-archive") != NULL;
+    }
+    snprintf(archive_message, sizeof archive_message, "%s", err.message);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_plugins_report_clear();
+    fr_lua_runtime_shutdown();
+    return status;
+}
+
+TEST an_archive_plugin_loads_from_a_url_under_its_pin(void) {
+    build_served_archive(1);
+
+    char digest[65];
+    /* Computed from the bytes actually served rather than pasted: a digest
+       written into a test is pinned against that checkout's line endings, which
+       is how the suite went red on a merge once already. */
+    fr_sha256_hex(served_archive, served_archive_length, digest);
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_archive_pin_%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
+    fr_http_fn previous = fr_http_set_backend(stub_serves_the_archive);
+    int registered = 0;
+    int status = loads_served_archive(digest, &registered);
+    fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
+
+    ASSERT_EQm(archive_message, FR_OK, status);
+    ASSERT(registered);
+    PASS();
+}
+
+/* The second load reaches a backend that refuses everything, so it can only
+   come from the cache. This is also the only test that would catch the cache
+   entry's rename being half done. */
+TEST an_archive_plugin_loads_again_from_the_cache(void) {
+    build_served_archive(1);
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_archive_cache_%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
+    archive_requests = 0;
+    fr_http_fn previous = fr_http_set_backend(stub_serves_the_archive);
+    int first_registered = 0;
+    int first = loads_served_archive(NULL, &first_registered);
+    int requests_after_first = archive_requests;
+
+    fr_http_set_backend(stub_refuses_every_request);
+    int second_registered = 0;
+    int second = loads_served_archive(NULL, &second_registered);
+
+    fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
+
+    ASSERT_EQm(archive_message, FR_OK, first);
+    ASSERT(first_registered);
+    ASSERT_EQ(1, requests_after_first);
+    ASSERT_EQm(archive_message, FR_OK, second);
+    ASSERT(second_registered);
+    PASS();
+}
+
+TEST an_archive_without_a_plugin_lua_is_refused(void) {
+    build_served_archive(0);
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_archive_noentry_%d",
+             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
+    fr_http_fn previous = fr_http_set_backend(stub_serves_the_archive);
+    int registered = 0;
+    int status = loads_served_archive(NULL, &registered);
+    char message[512];
+    snprintf(message, sizeof message, "%s", archive_message);
+    fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "no plugin.lua") != NULL);
+    PASS();
+}
+
+/* A pin covers the archive as a whole, so a mismatch is reported against the
+   artifact and the bytes are not kept for the next run to trust. */
+TEST an_archive_whose_pin_does_not_match_is_refused_and_discarded(void) {
+    build_served_archive(1);
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_archive_badpin_%d",
+             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
+    archive_requests = 0;
+    fr_http_fn previous = fr_http_set_backend(stub_serves_the_archive);
+    int registered = 0;
+    int status = loads_served_archive(
+        "0000000000000000000000000000000000000000000000000000000000000000", &registered);
+    char message[512];
+    snprintf(message, sizeof message, "%s", archive_message);
+
+    /* A second load with a correct pin must fetch again rather than be served
+       the bytes the first one rejected. */
+    char digest[65];
+    fr_sha256_hex(served_archive, served_archive_length, digest);
+    int second_registered = 0;
+    int second = loads_served_archive(digest, &second_registered);
+    int requests = archive_requests;
+
+    fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "expected sha256") != NULL);
+    ASSERT_EQ(FR_OK, second);
+    ASSERT(second_registered);
+    ASSERT_EQ(2, requests);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -1769,6 +2110,14 @@ int main(int argc, char **argv) {
     RUN_TEST(the_github_plugin_authenticates_from_either_token_variable);
     RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
     RUN_TEST(a_url_entry_fetches_and_loads);
+    RUN_TEST(fetched_bytes_carry_their_length_past_an_embedded_nul);
+    RUN_TEST(a_directory_path_loads_the_plugin_lua_inside_it);
+    RUN_TEST(a_directory_path_may_not_carry_a_sha256);
+    RUN_TEST(a_single_file_path_with_a_sha256_still_loads);
+    RUN_TEST(an_archive_plugin_loads_from_a_url_under_its_pin);
+    RUN_TEST(an_archive_plugin_loads_again_from_the_cache);
+    RUN_TEST(an_archive_without_a_plugin_lua_is_refused);
+    RUN_TEST(an_archive_whose_pin_does_not_match_is_refused_and_discarded);
     RUN_TEST(a_resolved_entry_loads_what_its_resolver_names);
     RUN_TEST(a_plugin_chunk_may_not_declare_a_resolver);
     RUN_TEST(the_headers_a_resolver_returns_reach_the_artifact_fetch);

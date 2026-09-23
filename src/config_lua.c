@@ -8,6 +8,7 @@
 #include "manifest.h"
 #include "plugins.h"
 #include "resolve.h"
+#include "tar.h"
 
 #include "cJSON.h"
 #include "lauxlib.h"
@@ -1037,7 +1038,121 @@ static int lua_declare_plugin(lua_State *state) {
     return 0;
 }
 
+/* Where a module runs: the entry chunk's own environment table, held under the
+   address of this file static so no plugin can name the key. */
+static const char module_env_key = 0;
+static fr_plugin_source *loading_source;
+
+/* Declared here rather than beside fr_lua_plugin_exec_is_refused, which is
+   further down the file than the first use below. */
+static int plugin_chunk_running;
+
+/* Not a verb and not declared in "uses": reading a member of the artifact the
+   manifest already pinned grants nothing the digest does not already cover.
+   Reaching ANOTHER plugin's code is the edge that has to be declared, and that
+   is child spec 6's to design. */
+#define FR_PLUGIN_MODULE_LIMIT 64
+
+typedef struct {
+    char name[FR_TAR_MAX_NAME + 1];
+    int value;   /* LUA_NOREF until the module has returned */
+    int running;
+} module_slot;
+
+static module_slot module_slots[FR_PLUGIN_MODULE_LIMIT];
+static size_t module_slot_count;
+
+static void modules_clear(lua_State *state) {
+    for (size_t index = 0; index < module_slot_count; index++) {
+        if (module_slots[index].value != LUA_NOREF) {
+            luaL_unref(state, LUA_REGISTRYINDEX, module_slots[index].value);
+        }
+    }
+    module_slot_count = 0;
+}
+
+static module_slot *module_slot_for(const char *name) {
+    for (size_t index = 0; index < module_slot_count; index++) {
+        if (strcmp(module_slots[index].name, name) == 0) return &module_slots[index];
+    }
+    return NULL;
+}
+
+/* Names the chain rather than only the module that closed it, in the manner of
+   tasks.c's report_cycle: the slots still running ARE the chain, in order. */
+static int report_module_cycle(lua_State *state, const char *name) {
+    char trail[400];
+    size_t filled = 0;
+    trail[0] = '\0';
+    for (size_t index = 0; index < module_slot_count; index++) {
+        if (!module_slots[index].running) continue;
+        int written = snprintf(trail + filled, sizeof trail - filled, "%s%s",
+                               filled == 0 ? "" : " -> ", module_slots[index].name);
+        if (written < 0 || (size_t) written >= sizeof trail - filled) break;
+        filled += (size_t) written;
+    }
+    return luaL_error(state, "daukle.require(\"%s\") is a cycle: %s -> %s", name, trail, name);
+}
+
+static int lua_require_module(lua_State *state) {
+    const char *name = luaL_checkstring(state, 1);
+    /* One condition rather than two: a source is held only while a plugin chunk
+       runs, so this covers both a single-file plugin and a call from outside a
+       load, which the "daukle.plugin must be the first call" refusal already
+       reaches first. */
+    if (loading_source == NULL) {
+        return luaL_error(state, "daukle.require(\"%s\"): this plugin has no modules", name);
+    }
+
+    module_slot *slot = module_slot_for(name);
+    if (slot != NULL) {
+        if (slot->running) return report_module_cycle(state, name);
+        lua_rawgeti(state, LUA_REGISTRYINDEX, slot->value);
+        return 1;
+    }
+
+    const char *text = NULL;
+    size_t length = 0;
+    fr_error err;
+    if (fr_plugin_source_member(loading_source, name, &text, &length, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    if (module_slot_count == FR_PLUGIN_MODULE_LIMIT) {
+        return luaL_error(state, "a plugin may require at most %d modules",
+                          FR_PLUGIN_MODULE_LIMIT);
+    }
+    slot = &module_slots[module_slot_count++];
+    snprintf(slot->name, sizeof slot->name, "%s", name);
+    slot->value = LUA_NOREF;
+    slot->running = 1;
+
+    char chunk_name[FR_TAR_MAX_NAME + 8];
+    snprintf(chunk_name, sizeof chunk_name, "@%s.lua", name);
+    if (fr_lua_load_named(state, text, length, chunk_name) != LUA_OK) return lua_error(state);
+
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &module_env_key);
+    if (lua_setupvalue(state, -2, 1) == NULL) {
+        /* Never reached for a chunk compiled from source, and checked anyway:
+           failing here silently would run the module against the globals rather
+           than against what the plugin declared. */
+        return luaL_error(state, "daukle.require(\"%s\") could not be given its environment", name);
+    }
+
+    lua_call(state, 0, 1);
+
+    /* luaL_ref stores nil perfectly well, so a module that returns nothing is
+       remembered as having returned nothing rather than run again. It pops the
+       value, so it is pushed back for the caller. */
+    lua_pushvalue(state, -1);
+    slot->value = luaL_ref(state, LUA_REGISTRYINDEX);
+    slot->running = 0;
+    return 1;
+}
+
 void fr_lua_verbs_install_registration(lua_State *state) {
+    lua_pushcfunction(state, lua_require_module);
+    lua_setfield(state, -2, "require");
     lua_pushcfunction(state, lua_declare_language);
     lua_setfield(state, -2, "language");
     lua_pushcfunction(state, lua_declare_source);
@@ -1180,8 +1295,6 @@ fr_registry *fr_lua_registering_registry(void) {
     return registering_into;
 }
 
-static int plugin_chunk_running;
-
 int fr_lua_plugin_exec_is_refused(void) {
     return plugin_chunk_running;
 }
@@ -1212,8 +1325,9 @@ static void settle_resolver_callback(lua_State *state, int chunk_succeeded, int 
     release_reference(state, backup);
 }
 
-int fr_lua_plugin_load(const char *text, const char *origin, const char *const *verbs,
-                       size_t verb_count, fr_error *err) {
+int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
+                       const char *const *verbs, size_t verb_count, fr_plugin_source *source,
+                       fr_error *err) {
     lua_State *state = fr_lua_runtime_state();
     if (state == NULL) {
         fr_error_set(err, "no lua runtime is open for \"%s\"", origin);
@@ -1227,9 +1341,21 @@ int fr_lua_plugin_load(const char *text, const char *origin, const char *const *
     int backup_resolver_callback = hold_second_reference(state, resolver_callback);
 
     chunk_state_clear();
+    /* The memo is per load, so two plugins that both carry a module of the same
+       name get their own copy each. */
+    modules_clear(state);
+    loading_source = source;
+    lua_pushvalue(state, env);
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &module_env_key);
+
     plugin_chunk_running = 1;
-    int status = fr_lua_run_in_env(state, text, origin, env, err);
+    int status = fr_lua_run_in_env_bytes(state, text, length, origin, env, err);
     plugin_chunk_running = 0;
+
+    loading_source = NULL;
+    modules_clear(state);
+    lua_pushnil(state);
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &module_env_key);
 
     resolver_declared = status == FR_OK ? chunk_declared_resolver : 0;
     settle_resolver_callback(state, status == FR_OK, backup_resolver_callback);

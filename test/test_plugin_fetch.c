@@ -13,6 +13,10 @@ GREATEST_MAIN_DEFS();
 
 static int requests;
 
+/* Every test in this file is about which bytes come back rather than how many,
+   which test_plugins.c covers over content holding a NUL. */
+static size_t ignored_length;
+
 static char *copy_body(const char *text, size_t *out_length) {
     size_t length = strlen(text);
     char *copy = malloc(length + 1);
@@ -48,7 +52,7 @@ TEST the_floor_fetches_the_bytes_at_a_url(void) {
 
     fr_http_fn previous = fr_http_set_backend(stub_bytes);
     char *text = NULL;
-    int status = fr_plugin_fetch(url, NULL, 0, &text, &err);
+    int status = fr_plugin_fetch(url, NULL, 0, &text, &ignored_length, &err);
     fr_http_set_backend(previous);
 
     int matched = status == FR_OK && text != NULL && strcmp(text, "the artifact") == 0;
@@ -67,13 +71,13 @@ TEST a_second_fetch_is_served_from_cache_without_the_network(void) {
     fr_http_fn previous = fr_http_set_backend(stub_bytes);
     requests = 0;
     char *first = NULL;
-    int first_status = fr_plugin_fetch(url, NULL, 0, &first, &err);
+    int first_status = fr_plugin_fetch(url, NULL, 0, &first, &ignored_length, &err);
     int first_requests = requests;
     free(first);
 
     fr_http_set_backend(stub_refuses);
     char *second = NULL;
-    int second_status = fr_plugin_fetch(url, NULL, 0, &second, &err);
+    int second_status = fr_plugin_fetch(url, NULL, 0, &second, &ignored_length, &err);
     int matched = second_status == FR_OK && second != NULL && strcmp(second, "the artifact") == 0;
     free(second);
 
@@ -93,13 +97,13 @@ TEST discarding_an_entry_forces_the_next_fetch_to_the_network(void) {
 
     fr_http_fn previous = fr_http_set_backend(stub_bytes);
     char *first = NULL;
-    int first_status = fr_plugin_fetch(url, NULL, 0, &first, &err);
+    int first_status = fr_plugin_fetch(url, NULL, 0, &first, &ignored_length, &err);
     free(first);
 
     fr_plugin_fetch_discard(url);
     requests = 0;
     char *second = NULL;
-    int second_status = fr_plugin_fetch(url, NULL, 0, &second, &err);
+    int second_status = fr_plugin_fetch(url, NULL, 0, &second, &ignored_length, &err);
     int second_requests = requests;
     free(second);
 
@@ -122,12 +126,12 @@ TEST two_urls_do_not_share_a_cache_entry(void) {
 
     fr_http_fn previous = fr_http_set_backend(stub_bytes);
     char *first = NULL;
-    fr_plugin_fetch(one, NULL, 0, &first, &err);
+    fr_plugin_fetch(one, NULL, 0, &first, &ignored_length, &err);
     free(first);
 
     requests = 0;
     char *second = NULL;
-    int status = fr_plugin_fetch(two, NULL, 0, &second, &err);
+    int status = fr_plugin_fetch(two, NULL, 0, &second, &ignored_length, &err);
     int second_requests = requests;
     free(second);
 
@@ -147,7 +151,7 @@ TEST a_failed_fetch_reports_the_backend_error(void) {
 
     fr_http_fn previous = fr_http_set_backend(stub_refuses);
     char *text = NULL;
-    int status = fr_plugin_fetch(url, NULL, 0, &text, &err);
+    int status = fr_plugin_fetch(url, NULL, 0, &text, &ignored_length, &err);
     fr_http_set_backend(previous);
     free(text);
     fr_plugin_fetch_discard(url);

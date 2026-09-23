@@ -2,6 +2,7 @@
 #define DAUKLE_CONFIG_LUA_H
 
 #include "http.h"
+#include "plugin_modules.h"
 #include "registry.h"
 
 #include "lua.h"
@@ -28,8 +29,9 @@ lua_State *fr_lua_runtime_state(void);
 
 /* Runs one plugin chunk in the shared state, in an environment holding the
    registration functions and exactly the verbs named in verbs. */
-int fr_lua_plugin_load(const char *text, const char *origin, const char *const *verbs,
-                       size_t verb_count, fr_error *err);
+int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
+                       const char *const *verbs, size_t verb_count, fr_plugin_source *source,
+                       fr_error *err);
 
 /* The registry the runtime is currently loading plugins into, or NULL when no
    load phase is open. */

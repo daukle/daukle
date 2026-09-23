@@ -23,4 +23,19 @@ long long fr_test_file_mtime(const char *path);
    the two writes landed in one tick. */
 void fr_test_sleep_past_mtime_resolution(void);
 
+/* Writes one ustar member into buffer at offset and returns the offset after
+   it, so a test states what it is testing instead of spelling out a header.
+   This is daukle's own idea of a tar and a reader tested only against it would
+   share any mistake it makes, which is why test_tar.c also carries bytes a real
+   tar produced. */
+size_t fr_test_tar_append(char *buffer, size_t offset, const char *name, char typeflag,
+                          const char *content, size_t content_length);
+
+/* The two zero blocks that end an archive. */
+size_t fr_test_tar_end(char *buffer, size_t offset);
+
+/* Recomputes the header checksum of the member whose header begins at offset,
+   for a test that edited a field after appending it. */
+void fr_test_tar_fix_checksum(char *buffer, size_t offset);
+
 #endif

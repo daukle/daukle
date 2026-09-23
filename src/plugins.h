@@ -57,7 +57,7 @@ char *fr_dup_prefix(const char *text, size_t length);
    error is reported against. *out_uses is NULL when uses is empty or absent,
    not an error. A lua runtime must already be open. Shared with resolvers.c,
    whose chunks are acquired the same way a plugin's is. */
-int fr_plugins_read_uses(const char *text, const char *origin, const char *kind,
+int fr_plugins_read_uses(const char *text, size_t length, const char *origin, const char *kind,
                          const char *label, char ***out_uses, size_t *out_uses_count,
                          fr_error *err);
 

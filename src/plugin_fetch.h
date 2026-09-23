@@ -5,8 +5,12 @@
 #include "types.h"
 
 /* Core's entire acquisition floor: the bytes at url, cached under
-   <cache-root>/plugins/<sha256 of url>/plugin.lua and served from there on a
-   later run, so a repeated build is offline. The caller owns *out_text.
+   <cache-root>/plugins/<sha256 of url>/artifact and served from there on a
+   later run, so a repeated build is offline. The caller owns *out_text, and
+   *out_length is what the digest and the loader must use: an artifact may be a
+   tar archive, whose NUL padding strlen would stop at. The entry is named for
+   being opaque bytes rather than Lua, so one written by an older daukle under
+   the old name is not found and is fetched once more.
    Core never parses what comes back: what the bytes must be in order to load
    is the plugin loader's question, not this module's.
    headers are sent with the request verbatim and never interpreted: a private
@@ -21,7 +25,7 @@
    and bypassing reads as well would re-download every chunk in the manifest,
    including the ones that command was not asked about. */
 int fr_plugin_fetch(const char *url, const fr_http_header *headers, size_t header_count,
-                    char **out_text, fr_error *err);
+                    char **out_text, size_t *out_length, fr_error *err);
 
 /* Removes the entry fr_plugin_fetch would serve for url, so bytes that failed
    a digest pin are not handed to the next run. Best effort: an absent entry is
