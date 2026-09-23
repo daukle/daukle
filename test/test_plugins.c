@@ -8,10 +8,11 @@
 #include "error.h"
 #include "http.h"
 #include "manifest.h"
+#include "plugin_fetch.h"
 #include "plugins.h"
-#include "plugins_remote.h"
 #include "region.h"
 #include "registry.h"
+#include "resolvers.h"
 #include "sha256.h"
 #include "support.h"
 #include "sync.h"
@@ -26,16 +27,15 @@ static cJSON *document_from(const char *json) {
     return document;
 }
 
-TEST parses_the_string_coordinate_form(void) {
-    cJSON *document = document_from("{\"plugins\":{\"npm\":\"daukle/npm@^1.0.0\"}}");
+TEST parses_the_string_url_form(void) {
+    cJSON *document = document_from("{\"plugins\":{\"remote\":\"https://example.invalid/p.lua\"}}");
     fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
 
-    ASSERT_EQ(FR_OK, fr_plugins_parse(document, &entries, &count, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
     ASSERT_EQ(1, (int) count);
-    ASSERT_STR_EQ("npm", entries[0].label);
-    ASSERT_EQ(FR_PLUGIN_REMOTE, entries[0].kind);
-    ASSERT_STR_EQ("daukle/npm", entries[0].repo);
-    ASSERT_STR_EQ("^1.0.0", entries[0].version);
+    ASSERT_STR_EQ("remote", entries[0].label);
+    ASSERT_EQ(FR_PLUGIN_URL, entries[0].kind);
+    ASSERT_STR_EQ("https://example.invalid/p.lua", entries[0].url);
     ASSERT(entries[0].sha256 == NULL);
 
     fr_plugins_free(entries, count);
@@ -45,15 +45,31 @@ TEST parses_the_string_coordinate_form(void) {
 
 TEST parses_the_table_form_with_a_pin(void) {
     cJSON *document = document_from(
-        "{\"plugins\":{\"gradle\":{\"repo\":\"daukle/gradle\",\"version\":\"^2.0.0\","
+        "{\"plugins\":{\"gradle\":{\"url\":\"https://example.invalid/g.lua\","
         "\"sha256\":\"abc123\"}}}");
     fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
 
-    ASSERT_EQ(FR_OK, fr_plugins_parse(document, &entries, &count, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
     ASSERT_EQ(1, (int) count);
-    ASSERT_EQ(FR_PLUGIN_REMOTE, entries[0].kind);
-    ASSERT_STR_EQ("daukle/gradle", entries[0].repo);
+    ASSERT_EQ(FR_PLUGIN_URL, entries[0].kind);
+    ASSERT_STR_EQ("https://example.invalid/g.lua", entries[0].url);
     ASSERT_STR_EQ("abc123", entries[0].sha256);
+
+    fr_plugins_free(entries, count);
+    cJSON_Delete(document);
+    PASS();
+}
+
+TEST parses_the_table_form_naming_a_resolver_and_a_coordinate(void) {
+    cJSON *document = document_from(
+        "{\"plugins\":{\"g\":{\"resolver\":\"maven\",\"coordinate\":\"org.example:widget\"}}}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERT_EQ(1, (int) count);
+    ASSERT_EQ(FR_PLUGIN_RESOLVED, entries[0].kind);
+    ASSERT_STR_EQ("maven", entries[0].resolver);
+    ASSERT_STR_EQ("org.example:widget", entries[0].coordinate);
 
     fr_plugins_free(entries, count);
     cJSON_Delete(document);
@@ -64,8 +80,8 @@ TEST parses_a_local_path(void) {
     cJSON *document = document_from("{\"plugins\":{\"mine\":\"./plugins/mine.lua\"}}");
     fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
 
-    ASSERT_EQ(FR_OK, fr_plugins_parse(document, &entries, &count, &err));
-    ASSERT_EQ(FR_PLUGIN_LOCAL, entries[0].kind);
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERT_EQ(FR_PLUGIN_PATH, entries[0].kind);
     ASSERT_STR_EQ("./plugins/mine.lua", entries[0].path);
 
     fr_plugins_free(entries, count);
@@ -73,28 +89,35 @@ TEST parses_a_local_path(void) {
     PASS();
 }
 
-TEST a_table_entry_naming_both_path_and_repo_is_refused(void) {
+TEST a_table_entry_naming_two_forms_is_refused(void) {
     cJSON *document = document_from(
-        "{\"plugins\":{\"both\":{\"path\":\"./x.lua\",\"repo\":\"daukle/x\",\"version\":\"^1.0.0\"}}}");
+        "{\"plugins\":{\"two\":{\"path\":\"./x.lua\",\"url\":\"https://example.invalid/x.lua\"}}}");
     fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
 
-    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, &entries, &count, &err));
-    ASSERT(strstr(err.message, "both") != NULL);
-    ASSERT(strstr(err.message, "path") != NULL);
-    ASSERT(strstr(err.message, "repo") != NULL);
+    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERT(strstr(err.message, "not several") != NULL);
 
     cJSON_Delete(document);
     PASS();
 }
 
-TEST a_table_entry_naming_neither_path_nor_repo_is_refused(void) {
-    cJSON *document = document_from("{\"plugins\":{\"neither\":{\"version\":\"^1.0.0\"}}}");
+TEST a_table_entry_naming_no_form_is_refused(void) {
+    cJSON *document = document_from("{\"plugins\":{\"none\":{\"sha256\":\"abc123\"}}}");
     fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
 
-    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, &entries, &count, &err));
-    ASSERT(strstr(err.message, "neither") != NULL);
-    ASSERT(strstr(err.message, "path") != NULL);
-    ASSERT(strstr(err.message, "repo") != NULL);
+    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERT(strstr(err.message, "needs one of") != NULL);
+
+    cJSON_Delete(document);
+    PASS();
+}
+
+TEST a_table_entry_naming_a_resolver_without_a_coordinate_is_refused(void) {
+    cJSON *document = document_from("{\"plugins\":{\"half\":{\"resolver\":\"maven\"}}}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERT(strstr(err.message, "\"coordinate\" is missing") != NULL);
 
     cJSON_Delete(document);
     PASS();
@@ -104,7 +127,7 @@ TEST an_absent_plugins_table_yields_no_entries(void) {
     cJSON *document = document_from("{\"schema\":1}");
     fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
 
-    ASSERT_EQ(FR_OK, fr_plugins_parse(document, &entries, &count, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
     ASSERT_EQ(0, (int) count);
 
     fr_plugins_free(entries, count);
@@ -112,14 +135,74 @@ TEST an_absent_plugins_table_yields_no_entries(void) {
     PASS();
 }
 
-TEST rejects_a_coordinate_with_no_version(void) {
-    cJSON *document = document_from("{\"plugins\":{\"npm\":\"daukle/npm\"}}");
-    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
-
-    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, &entries, &count, &err));
-    ASSERT(strstr(err.message, "npm") != NULL);
-
+TEST the_old_bare_coordinate_form_names_the_fix(void) {
+    fr_error err;
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"npm\":\"daukle/npm@^1.0.0\"}}");
+    int status = fr_plugins_parse(document, NULL, 0, &entries, &count, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
     cJSON_Delete(document);
+    fr_plugins_free(entries, count);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "names no resolver") != NULL);
+    ASSERT(strstr(message, "Declared resolvers: none") != NULL);
+    PASS();
+}
+
+TEST the_declared_resolvers_are_named_when_a_value_names_none(void) {
+    fr_error err;
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"npm\":\"daukle/npm@^1.0.0\"}}");
+    fr_resolver_entry resolvers[] = { { (char *) "maven", NULL, (char *) "./r.lua", NULL, NULL },
+                                      { (char *) "forge", NULL, (char *) "./f.lua", NULL, NULL } };
+    int status = fr_plugins_parse(document, resolvers, 2, &entries, &count, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+    cJSON_Delete(document);
+    fr_plugins_free(entries, count);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "Declared resolvers: maven, forge") != NULL);
+    PASS();
+}
+
+/* The list is bounded, so a manifest with many resolvers has to be cut. It is
+   cut after a whole label and says so, because a name ending mid-word reads as
+   a resolver the reader does not have rather than as a list that ran out. */
+TEST an_overlong_resolver_list_is_cut_after_a_whole_label(void) {
+    fr_error err;
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    char labels[40][16];
+    fr_resolver_entry resolvers[40];
+    memset(resolvers, 0, sizeof resolvers);
+    for (size_t index = 0; index < 40; index++) {
+        snprintf(labels[index], sizeof labels[index], "resolver-%02zu", index);
+        resolvers[index].label = labels[index];
+    }
+
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"npm\":\"daukle/npm@^1.0.0\"}}");
+    int status = fr_plugins_parse(document, resolvers, 40, &entries, &count, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+    cJSON_Delete(document);
+    fr_plugins_free(entries, count);
+
+    const char *list = strstr(message, "Declared resolvers: ");
+    size_t list_length = list != NULL ? strlen(list) : 0;
+    /* Every label ends in a digit, so the character before the cut marker is a
+       digit only when a whole label survived. */
+    char before_the_cut = list_length >= 6 ? list[list_length - 6] : '\0';
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(list != NULL);
+    ASSERT(strstr(list, "resolver-00, resolver-01") != NULL);
+    ASSERT_STR_EQ(", ...", list + list_length - 5);
+    ASSERT(isdigit((unsigned char) before_the_cut));
     PASS();
 }
 
@@ -127,31 +210,73 @@ TEST rejects_a_plugins_member_that_is_not_a_table(void) {
     cJSON *document = document_from("{\"plugins\":[1,2]}");
     fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
 
-    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, &entries, &count, &err));
+    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
     ASSERT(strstr(err.message, "plugins") != NULL);
 
     cJSON_Delete(document);
     PASS();
 }
 
-TEST rejects_a_coordinate_with_an_empty_half(void) {
-    const char *bad[] = { "{\"plugins\":{\"a\":\"@\"}}",
-                          "{\"plugins\":{\"a\":\"owner@\"}}",
-                          "{\"plugins\":{\"a\":\"@1.0.0\"}}" };
+TEST rejects_a_string_with_an_empty_half_around_the_colon(void) {
+    const char *bad[] = { "{\"plugins\":{\"a\":\":\"}}",
+                          "{\"plugins\":{\"a\":\"maven:\"}}",
+                          "{\"plugins\":{\"a\":\":org.example\"}}" };
     for (size_t index = 0; index < 3; index++) {
         cJSON *document = document_from(bad[index]);
         fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
-        ASSERT_EQ(FR_ERR, fr_plugins_parse(document, &entries, &count, &err));
-        ASSERT(strstr(err.message, "a") != NULL);
+        ASSERT_EQ(FR_ERR, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+        ASSERT(strstr(err.message, "names no resolver") != NULL);
         cJSON_Delete(document);
     }
+    PASS();
+}
+
+TEST a_windows_drive_letter_string_is_a_path(void) {
+    fr_error err;
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"p\":\"C:/plugins/mine.lua\"}}");
+    int status = fr_plugins_parse(document, NULL, 0, &entries, &count, &err);
+    int kind = (status == FR_OK && count == 1) ? (int) entries[0].kind : -1;
+    char path[256] = "";
+    if (status == FR_OK && count == 1 && entries[0].path != NULL) {
+        snprintf(path, sizeof path, "%s", entries[0].path);
+    }
+    cJSON_Delete(document);
+    fr_plugins_free(entries, count);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_EQ((int) FR_PLUGIN_PATH, kind);
+    ASSERT_STR_EQ("C:/plugins/mine.lua", path);
+    PASS();
+}
+
+TEST a_coordinate_containing_colons_reaches_the_resolver_whole(void) {
+    fr_error err;
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"p\":\"maven:org.example:widget:1.2.3\"}}");
+    fr_resolver_entry resolver = { (char *) "maven", NULL, (char *) "./r.lua", NULL, NULL };
+    int status = fr_plugins_parse(document, &resolver, 1, &entries, &count, &err);
+    char label[64] = "";
+    char coordinate[128] = "";
+    if (status == FR_OK && count == 1 && entries[0].kind == FR_PLUGIN_RESOLVED) {
+        snprintf(label, sizeof label, "%s", entries[0].resolver);
+        snprintf(coordinate, sizeof coordinate, "%s", entries[0].coordinate);
+    }
+    cJSON_Delete(document);
+    fr_plugins_free(entries, count);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_STR_EQ("maven", label);
+    ASSERT_STR_EQ("org.example:widget:1.2.3", coordinate);
     PASS();
 }
 
 TEST a_fetched_manifest_may_not_declare_plugins(void) {
     cJSON *document = document_from(
         "{\"schema\":1,\"project\":\"forebay/evil\",\"version\":\"1.0.0\","
-        "\"plugins\":{\"x\":\"someone/x@^1.0.0\"}}");
+        "\"plugins\":{\"x\":\"https://example.invalid/x.lua\"}}");
     fr_error err;
 
     ASSERT_EQ(FR_ERR, fr_plugins_reject_in_fetched(document, "forebay/evil", &err));
@@ -177,7 +302,7 @@ TEST fr_project_parse_refuses_a_fetched_manifest_declaring_plugins(void) {
     fr_project project;
     fr_error err;
     const char *text = "{\"schema\":1,\"project\":\"forebay/evil\",\"version\":\"1.0.0\","
-                       "\"plugins\":{\"x\":\"someone/x@^1.0.0\"}}";
+                       "\"plugins\":{\"x\":\"https://example.invalid/x.lua\"}}";
 
     ASSERT_EQ(FR_ERR, fr_project_parse(text, "forebay/evil", &project, &err));
     ASSERT(strstr(err.message, "forebay/evil") != NULL);
@@ -364,6 +489,24 @@ TEST a_verb_used_before_the_declaration_says_so(void) {
     PASS();
 }
 
+/* read_declaration's first line touches the lua_State it is given, so a caller
+   reaching fr_plugins_read_uses with no runtime open (resolvers.c's acquire,
+   before fr_lua_plugin_load, is the one that matters) needs a real error back,
+   not a crash. No runtime is open here between tests, so this needs no setup. */
+TEST fr_plugins_read_uses_rejects_a_closed_runtime(void) {
+    fr_error err;
+    char **uses = NULL;
+    size_t uses_count = 0;
+    int status = fr_plugins_read_uses("daukle.plugin{ api = 1 }", "test.lua", "resolver", "t",
+                                      &uses, &uses_count, &err);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(err.message, "no lua runtime is open") != NULL);
+    ASSERT(uses == NULL);
+    ASSERT_EQ(0u, uses_count);
+    PASS();
+}
+
 static char AUTH_VALUE_SEEN[256];
 static int AUTH_HEADER_PRESENT = 0;
 
@@ -487,21 +630,244 @@ static char *copy_body(const char *text, size_t *out_length) {
     return copy;
 }
 
-/* p.lua (the 1.2.0 asset, in range for "^1.0.0") and q.lua (the 2.0.0 asset,
-   out of range) register differently-named languages, so a test can tell
-   which one was actually fetched rather than only that loading succeeded. A
-   selection bug that ignored fr_range_satisfies and always took the highest
-   tag would register remote-2-0-0 instead, which the positive assertion
-   alone would not catch. */
-static int stub_releases(const char *url, const fr_http_header *headers, size_t header_count,
-                         char **out_body, size_t *out_length, fr_error *err) {
+/* A resolver that answers from the coordinate alone, so a test needs no
+   fixture file on disk to exercise the resolved form. */
+static const char *INLINE_RESOLVER =
+    "daukle.plugin{ api = 1, uses = {} }\n"
+    "daukle.resolver{ resolve = function(c)\n"
+    "  return { url = 'https://x/' .. c .. '.lua', resolved = c }\n"
+    "end }\n";
+
+/* The sha256 of INLINE_RESOLVER, computed over those exact bytes rather than
+   guessed, the same arrangement test_resolvers.c uses for its fixture. */
+#define INLINE_DIGEST "b01452e414d56fd9900067c3a9d1724fa4300fc35632addf8cb2c03052e76acd"
+
+static const char *ARTIFACT_BODY =
+    "daukle.plugin{ api = 1, uses = {} }\n"
+    "daukle.language{ name = 'from-url', apply = function() return '' end }\n";
+
+/* Which url was asked for, so a test can assert that the url the resolver
+   named is the url that was fetched. Without it the stub answers every url
+   alike and a fetch of the raw coordinate, or of a stale origin, would load
+   just as happily. */
+static char LAST_FETCHED_URL[256];
+
+static int stub_inline(const char *url, const fr_http_header *headers, size_t header_count,
+                       char **out_body, size_t *out_length, fr_error *err) {
+    (void) headers; (void) header_count; (void) err;
+    release_requests++;
+    snprintf(LAST_FETCHED_URL, sizeof LAST_FETCHED_URL, "%s", url);
+    *out_body = copy_body(strstr(url, "/resolver.lua") != NULL ? INLINE_RESOLVER : ARTIFACT_BODY,
+                          out_length);
+    return FR_OK;
+}
+
+/* Loads document_json with stub_inline installed, reports the load's status
+   through out_status and returns whether the language a fetched artifact
+   registers arrived. Every caller below needs the same setup and the same
+   teardown, and a helper is how the teardown stops being the thing a new test
+   forgets. */
+static int loads_from_url(const char *document_json, int *out_status, fr_error *err) {
+    fr_http_fn previous = fr_http_set_backend(stub_inline);
+    fr_registry *registry = NULL;
+    int registered = 0;
+    *out_status = FR_ERR;
+
+    if (fr_build_registry(&registry, err) == FR_OK) {
+        cJSON *document = cJSON_Parse(document_json);
+        if (fr_lua_runtime_begin(".", registry, err) == FR_OK) {
+            *out_status = fr_plugins_load(registry, document, ".", err);
+            registered = fr_registry_language(registry, "daukle.language/from-url") != NULL;
+        }
+        cJSON_Delete(document);
+        fr_registry_destroy(registry);
+        fr_lua_runtime_shutdown();
+    }
+
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+    return registered;
+}
+
+/* The fetch cache is keyed by url and survives between runs, so a test that
+   asserts WHICH url was fetched has to make every fetch reach the stub or
+   LAST_FETCHED_URL is whatever the run before it happened to leave. */
+static int loads_reaching_the_network(const char *document_json, int *out_status, fr_error *err) {
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    LAST_FETCHED_URL[0] = '\0';
+    int registered = loads_from_url(document_json, out_status, err);
+    fr_cache_set_enabled(cache_was_enabled);
+    return registered;
+}
+
+TEST a_url_entry_fetches_and_loads(void) {
+    fr_error err;
+    int status = FR_ERR;
+    int registered = loads_reaching_the_network("{\"plugins\":{\"p\":\"https://x/plain.lua\"}}",
+                                                &status, &err);
+    ASSERT_EQm(err.message, FR_OK, status);
+    ASSERT(registered);
+    ASSERT_STR_EQ("https://x/plain.lua", LAST_FETCHED_URL);
+    PASS();
+}
+
+/* The resolver returns "https://x/" .. coordinate .. ".lua", so the url that
+   reaches the network is the one assertion that separates "the resolver ran"
+   from "what the resolver named is what was fetched". */
+TEST a_resolved_entry_loads_what_its_resolver_names(void) {
+    fr_error err;
+    int status = FR_ERR;
+    int registered = loads_reaching_the_network(
+        "{\"resolvers\":{\"t\":{\"url\":\"https://x/resolver.lua\",\"sha256\":\"" INLINE_DIGEST
+        "\"}},\"plugins\":{\"p\":\"t:a/b\"}}", &status, &err);
+    ASSERT_EQm(err.message, FR_OK, status);
+    ASSERT(registered);
+    ASSERT_STR_EQ("https://x/a/b.lua", LAST_FETCHED_URL);
+    PASS();
+}
+
+static char FETCH_LOG[1024];
+
+static int stub_logs_every_url(const char *url, const fr_http_header *headers,
+                               size_t header_count, char **out_body, size_t *out_length,
+                               fr_error *err) {
+    (void) headers; (void) header_count; (void) err;
+    size_t used = strlen(FETCH_LOG);
+    snprintf(FETCH_LOG + used, sizeof FETCH_LOG - used, "%s\n", url);
+    *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n", out_length);
+    return FR_OK;
+}
+
+/* A resolver governs every unpinned acquisition, so it is the one thing a
+   manifest must pin; an ordinary plugin entry may be an unpinned local path.
+   "evil" here is exactly that: a path-form plugin whose chunk declares a
+   resolver. It is loaded between two entries that name the resolver "t", so
+   if its declaration were accepted the later entry would resolve through it
+   while skipping acquisition entirely, and an unpinned chunk would decide
+   where a pinned one's plugins come from. */
+TEST a_plugin_chunk_may_not_declare_a_resolver(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"}},"
+        "\"plugins\":{\"a\":\"t:x/y\",\"evil\":\"./test/fixtures/resolver/hijacks.lua\","
+        "\"b\":\"t:z/w\"}}";
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    FETCH_LOG[0] = '\0';
+    fr_http_fn previous = fr_http_set_backend(stub_logs_every_url);
+    fr_registry *registry = NULL;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = fr_plugins_load(registry, document, ".", &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+    char log[sizeof FETCH_LOG];
+    snprintf(log, sizeof log, "%s", FETCH_LOG);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+
+    ASSERT(built && began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "acquired as a resolver") != NULL);
+    ASSERT(strstr(log, "hijacked") == NULL);
+    PASS();
+}
+
+static char ARTIFACT_AUTHORIZATION[128];
+
+static int stub_records_authorization(const char *url, const fr_http_header *headers,
+                                      size_t header_count, char **out_body, size_t *out_length,
+                                      fr_error *err) {
+    (void) url; (void) err;
+    ARTIFACT_AUTHORIZATION[0] = '\0';
+    for (size_t index = 0; index < header_count; index++) {
+        if (strcmp(headers[index].name, "Authorization") != 0) continue;
+        snprintf(ARTIFACT_AUTHORIZATION, sizeof ARTIFACT_AUTHORIZATION, "%s",
+                 headers[index].value);
+    }
+    *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n", out_length);
+    return FR_OK;
+}
+
+/* A private artifact needs the same credential its index did, and core names
+   no authentication scheme of its own: what reaches the request is whatever
+   opaque strings the resolver returned beside the url. */
+TEST the_headers_a_resolver_returns_reach_the_artifact_fetch(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/with-headers.lua\"}},"
+        "\"plugins\":{\"p\":\"t:a/b\"}}";
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    ARTIFACT_AUTHORIZATION[0] = '\0';
+    fr_http_fn previous = fr_http_set_backend(stub_records_authorization);
+    fr_registry *registry = NULL;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = fr_plugins_load(registry, document, ".", &err);
+    char seen[128];
+    snprintf(seen, sizeof seen, "%s", ARTIFACT_AUTHORIZATION);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+
+    ASSERT(built && began);
+    ASSERT_EQm(err.message, FR_OK, status);
+    ASSERT_STR_EQ("Bearer secret", seen);
+    PASS();
+}
+
+/* Four releases: o.lua (1.1.0, in range but not the highest), q.lua (2.0.0,
+   out of range), p.lua (1.2.0, in range and the true highest), and p2.lua (a
+   second "1.2.0" tag, in range and tied with p.lua). The true highest is
+   listed neither first nor last among the in-range entries, so "keep the
+   first in-range entry seen" and "keep the last in-range entry seen" cannot
+   degenerate into the right answer by coincidence; only comparing every
+   in-range candidate with greater() lands on p.lua. The tied duplicate is
+   synthetic (a real repository cannot have two releases sharing one tag) and
+   exists only so a comparison weakened from strict "greater than" to
+   non-strict "greater than or equal" has something to expose: it would pull
+   in p2.lua, the later of the tied pair, instead of leaving p.lua's earlier
+   win alone. Each tag registers a differently named language so the test can
+   tell exactly which asset was fetched. */
+static int stub_releases_index(const char *url, const fr_http_header *headers, size_t header_count,
+                               char **out_body, size_t *out_length, fr_error *err) {
     (void) headers; (void) header_count; (void) err;
     release_requests++;
     if (strstr(url, "/releases") != NULL) {
-        *out_body = copy_body("[{\"tag_name\":\"1.2.0\",\"assets\":"
-                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/p.lua\"}]},"
+        *out_body = copy_body("[{\"tag_name\":\"1.1.0\",\"assets\":"
+                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/o.lua\"}]},"
                               "{\"tag_name\":\"2.0.0\",\"assets\":"
-                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/q.lua\"}]}]",
+                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/q.lua\"}]},"
+                              "{\"tag_name\":\"1.2.0\",\"assets\":"
+                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/p.lua\"}]},"
+                              "{\"tag_name\":\"1.2.0\",\"assets\":"
+                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/p2.lua\"}]}]",
+                              out_length);
+    } else if (strstr(url, "/o.lua") != NULL) {
+        *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
+                              "daukle.language{ name = 'remote-1-1-0', apply = function() return '' end }\n",
+                              out_length);
+    } else if (strstr(url, "/p2.lua") != NULL) {
+        *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
+                              "daukle.language{ name = 'remote-1-2-0-again', apply = function() return '' end }\n",
                               out_length);
     } else if (strstr(url, "/p.lua") != NULL) {
         *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
@@ -515,175 +881,104 @@ static int stub_releases(const char *url, const fr_http_header *headers, size_t 
     return FR_OK;
 }
 
-static void remote_coordinate(char *out, size_t out_size, const char *owner, const char *name) {
-    snprintf(out, out_size, "{\"plugins\":{\"r\":\"%s/%s@^1.0.0\"}}", owner, name);
-}
-
-/* Owner is unique to this test AND this process (fr_test_process_id), so
-   neither a developer's real cache nor a previous test run can already hold
-   an entry that would satisfy the resolve for the wrong reason. Removing the
-   whole owner directory, not just the name below it, leaves nothing behind:
-   the owner is unique to this test alone, so nothing else could be living
-   next to it under the same owner. */
-static void remove_plugin_cache(const char *owner) {
-    fr_error ignored;
-    char root[1024];
-    if (fr_cache_root(root, sizeof root, &ignored) != FR_OK) return;
-    char dir[1024];
-    snprintf(dir, sizeof dir, "%s/plugins/%s", root, owner);
-    fr_test_remove_tree(dir);
-}
-
-static int cached_plugin_files(const char *owner) {
-    fr_error ignored;
-    char root[1024];
-    if (fr_cache_root(root, sizeof root, &ignored) != FR_OK) return -1;
-    char dir[1024];
-    snprintf(dir, sizeof dir, "%s/plugins/%s", root, owner);
-    return fr_test_count_files(dir, "plugin.lua");
-}
-
-TEST a_remote_coordinate_picks_the_highest_release_in_range(void) {
+/* Both daukle.cache (the releases index, keyed by repo/range) and
+   fr_plugin_fetch (the winning asset, keyed by its url) persist to disk by
+   default, so an unisolated run here would leave entries in the developer's
+   real cache root and, worse, keep serving them if the stub bodies above ever
+   change. Isolated the way plugin_update_re_resolves_and_takes_the_new_url
+   isolates its own persistent cache writes. */
+TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     fr_error err;
-    char owner[64];
-    snprintf(owner, sizeof owner, "daukle-test-%d-highest", fr_test_process_id());
-    const char *name = "remote";
-    remove_plugin_cache(owner);
+    const char *document_json =
+        "{\"resolvers\":{\"gh\":{\"path\":\"./github-releases.lua\"}},"
+        "\"plugins\":{\"r\":\"gh:daukle/remote@^1.0.0\"}}";
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_github_resolver_%d",
+            fr_test_temp_base(), fr_test_process_id());
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
 
     release_requests = 0;
-    fr_http_fn previous = fr_http_set_backend(stub_releases);
-
+    fr_http_fn previous = fr_http_set_backend(stub_releases_index);
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
 
-    char coordinate[256];
-    remote_coordinate(coordinate, sizeof coordinate, owner, name);
-    cJSON *document = cJSON_Parse(coordinate);
+    int began = fr_lua_runtime_begin("test/fixtures/github-resolver", registry, &err) == FR_OK;
+    int loaded = fr_plugins_load(registry, document, "test/fixtures/github-resolver", &err) == FR_OK;
+    int highest_in_range = fr_registry_language(registry, "daukle.language/remote-1-2-0") != NULL;
+    int lower_in_range = fr_registry_language(registry, "daukle.language/remote-1-1-0") != NULL;
+    int out_of_range = fr_registry_language(registry, "daukle.language/remote-2-0-0") != NULL;
+    int tied_duplicate = fr_registry_language(registry, "daukle.language/remote-1-2-0-again") != NULL;
+    int requests = release_requests;
 
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
-    ASSERT(fr_registry_language(registry, "daukle.language/remote-1-2-0") != NULL);
-    ASSERT(fr_registry_language(registry, "daukle.language/remote-2-0-0") == NULL);
+    /* Every other fixture resolves a coordinate to itself, so this is the one
+       place that separates "resolved holds the resolver's answer" from
+       "resolved echoes the coordinate back". */
+    const fr_plugin_report *report = fr_plugins_report();
+    char resolved[64] = "";
+    if (report->count == 1) snprintf(resolved, sizeof resolved, "%s", report->entries[0].resolved);
 
     cJSON_Delete(document);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
     fr_http_set_backend(previous);
-    remove_plugin_cache(owner);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+
+    ASSERT(built);
+    ASSERT(began);
+    ASSERT(loaded);
+    ASSERT(highest_in_range);
+    ASSERT_FALSE(lower_in_range);
+    ASSERT_FALSE(out_of_range);
+    ASSERT_FALSE(tied_duplicate);
+    ASSERT_EQ(2, requests);
+    ASSERT_STR_EQ("1.2.0", resolved);
     PASS();
 }
 
-TEST a_cached_plugin_is_used_without_touching_the_network(void) {
+TEST an_undeclared_resolver_is_refused_naming_it(void) {
     fr_error err;
-    char owner[64];
-    snprintf(owner, sizeof owner, "daukle-test-%d-cache", fr_test_process_id());
-    const char *name = "remote";
-    remove_plugin_cache(owner);
+    int status = FR_OK;
+    loads_from_url("{\"resolvers\":{\"known\":{\"path\":\"./r.lua\"}},"
+                   "\"plugins\":{\"p\":\"missing:a/b\"}}", &status, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
 
-    char coordinate[256];
-    remote_coordinate(coordinate, sizeof coordinate, owner, name);
-    cJSON *document = cJSON_Parse(coordinate);
-
-    fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
-
-    fr_http_fn previous = fr_http_set_backend(stub_releases);
-    release_requests = 0;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
-    ASSERT(release_requests > 0);
-    fr_registry_destroy(registry);
-    fr_lua_runtime_shutdown();
-
-    fr_registry *second = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&second, &err));
-    release_requests = 0;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", second, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(second, document, ".", &err));
-    ASSERT_EQ(0, release_requests);
-    ASSERT(fr_registry_language(second, "daukle.language/remote-1-2-0") != NULL);
-
-    cJSON_Delete(document);
-    fr_registry_destroy(second);
-    fr_lua_runtime_shutdown();
-    fr_http_set_backend(previous);
-    remove_plugin_cache(owner);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "no resolver \"missing\" is declared") != NULL);
+    ASSERT(strstr(message, "known") != NULL);
     PASS();
-}
-
-/* Its own stub rather than reusing stub_releases above: a single release with
-   a single asset keeps the fetched body exactly this literal, so
-   fr_sha256_hex over it is provably the digest the pin check will compute,
-   with nothing else contributing to what gets hashed. */
-static int stub_pin_release(const char *url, const fr_http_header *headers, size_t header_count,
-                            char **out_body, size_t *out_length, fr_error *err) {
-    (void) headers; (void) header_count; (void) err;
-    if (strstr(url, "/releases") != NULL) {
-        *out_body = copy_body("[{\"tag_name\":\"1.0.0\",\"assets\":"
-                              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/plugin.lua\"}]}]",
-                              out_length);
-    } else {
-        *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
-                              "daukle.language{ name = 'remote', apply = function() return '' end }\n",
-                              out_length);
-    }
-    return FR_OK;
 }
 
 TEST a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests(void) {
     fr_error err;
-    fr_http_fn previous = fr_http_set_backend(stub_pin_release);
-
-    const char *body = "daukle.plugin{ api = 1, uses = {} }\n"
-                       "daukle.language{ name = 'remote', apply = function() return '' end }\n";
     char expected[65];
-    fr_sha256_hex(body, strlen(body), expected);
-
-    char owner_good[64];
-    snprintf(owner_good, sizeof owner_good, "daukle-test-%d-pin-good", fr_test_process_id());
-    remove_plugin_cache(owner_good);
+    fr_sha256_hex(ARTIFACT_BODY, strlen(ARTIFACT_BODY), expected);
 
     char good[320];
     snprintf(good, sizeof good,
-             "{\"plugins\":{\"r\":{\"repo\":\"%s/remote\",\"version\":\"^1.0.0\","
-             "\"sha256\":\"%s\"}}}", owner_good, expected);
-
-    fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
-    cJSON *ok_document = cJSON_Parse(good);
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(registry, ok_document, ".", &err));
-    ASSERT_EQ(1, cached_plugin_files(owner_good));
-    cJSON_Delete(ok_document);
-    fr_registry_destroy(registry);
-    fr_lua_runtime_shutdown();
-    remove_plugin_cache(owner_good);
-
-    char owner_bad[64];
-    snprintf(owner_bad, sizeof owner_bad, "daukle-test-%d-pin-bad", fr_test_process_id());
-    remove_plugin_cache(owner_bad);
+             "{\"plugins\":{\"r\":{\"url\":\"https://x/pin-good.lua\",\"sha256\":\"%s\"}}}",
+             expected);
+    int good_status = FR_ERR;
+    int registered = loads_from_url(good, &good_status, &err);
 
     const char *wrong = "0000000000000000000000000000000000000000000000000000000000000000";
     char bad[320];
     snprintf(bad, sizeof bad,
-             "{\"plugins\":{\"r\":{\"repo\":\"%s/remote\",\"version\":\"^1.0.0\","
-             "\"sha256\":\"%s\"}}}", owner_bad, wrong);
+             "{\"plugins\":{\"r\":{\"url\":\"https://x/pin-bad.lua\",\"sha256\":\"%s\"}}}", wrong);
+    int bad_status = FR_OK;
+    loads_from_url(bad, &bad_status, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry *second = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&second, &err));
-    cJSON *bad_document = cJSON_Parse(bad);
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", second, &err));
-    ASSERT_EQ(FR_ERR, fr_plugins_load(second, bad_document, ".", &err));
-    ASSERT(strstr(err.message, expected) != NULL);
-    ASSERT(strstr(err.message, "0000000000") != NULL);
-    ASSERT(strstr(err.message, "r") != NULL);
-    ASSERT_EQ(0, cached_plugin_files(owner_bad));
-    cJSON_Delete(bad_document);
-    fr_registry_destroy(second);
-    fr_lua_runtime_shutdown();
-    remove_plugin_cache(owner_bad);
-
-    fr_http_set_backend(previous);
+    ASSERT_EQ(FR_OK, good_status);
+    ASSERT(registered);
+    ASSERT_EQ(FR_ERR, bad_status);
+    ASSERT(strstr(message, expected) != NULL);
+    ASSERT(strstr(message, wrong) != NULL);
     PASS();
 }
 
@@ -692,12 +987,8 @@ TEST a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests(void) {
    still match the lowercase digest fr_sha256_hex computes. */
 TEST an_uppercase_pin_still_matches_the_lowercase_digest(void) {
     fr_error err;
-    fr_http_fn previous = fr_http_set_backend(stub_pin_release);
-
-    const char *body = "daukle.plugin{ api = 1, uses = {} }\n"
-                       "daukle.language{ name = 'remote', apply = function() return '' end }\n";
     char expected[65];
-    fr_sha256_hex(body, strlen(body), expected);
+    fr_sha256_hex(ARTIFACT_BODY, strlen(ARTIFACT_BODY), expected);
 
     char uppercase[65];
     for (size_t index = 0; index < 64; index++) {
@@ -705,27 +996,15 @@ TEST an_uppercase_pin_still_matches_the_lowercase_digest(void) {
     }
     uppercase[64] = '\0';
 
-    char owner[64];
-    snprintf(owner, sizeof owner, "daukle-test-%d-pin-upper", fr_test_process_id());
-    remove_plugin_cache(owner);
-
     char good[320];
     snprintf(good, sizeof good,
-             "{\"plugins\":{\"r\":{\"repo\":\"%s/remote\",\"version\":\"^1.0.0\","
-             "\"sha256\":\"%s\"}}}", owner, uppercase);
+             "{\"plugins\":{\"r\":{\"url\":\"https://x/pin-upper.lua\",\"sha256\":\"%s\"}}}",
+             uppercase);
+    int status = FR_ERR;
+    int registered = loads_from_url(good, &status, &err);
 
-    fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
-    cJSON *document = cJSON_Parse(good);
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
-    ASSERT(fr_registry_language(registry, "daukle.language/remote") != NULL);
-
-    cJSON_Delete(document);
-    fr_registry_destroy(registry);
-    fr_lua_runtime_shutdown();
-    remove_plugin_cache(owner);
-    fr_http_set_backend(previous);
+    ASSERT_EQm(err.message, FR_OK, status);
+    ASSERT(registered);
     PASS();
 }
 
@@ -765,7 +1044,7 @@ TEST the_report_names_a_plugins_declared_verbs(void) {
     const fr_plugin_report *report = fr_plugins_report();
     ASSERT_EQ(1, (int) report->count);
     ASSERT_STR_EQ("brew", report->entries[0].label);
-    ASSERT_EQ(FR_PLUGIN_LOCAL, report->entries[0].kind);
+    ASSERT_EQ(FR_PLUGIN_PATH, report->entries[0].kind);
     ASSERT_EQ(1, (int) report->entries[0].uses_count);
     ASSERT_STR_EQ("env", report->entries[0].uses[0]);
 
@@ -779,7 +1058,9 @@ TEST the_report_names_a_plugins_declared_verbs(void) {
 /* The report is read only after the entries fr_plugins_load parsed, the
    manifest built from them, the registry and the lua runtime are all freed:
    under a sanitizer this is exactly the sequence that would surface a report
-   holding borrowed pointers rather than its own copies. */
+   holding borrowed pointers rather than its own copies. The resolved form is
+   loaded as well as the local one because resolver and url are NULL for a
+   path entry, so a path-only fixture leaves half the strings untested. */
 TEST the_report_survives_the_entries_it_describes_being_freed(void) {
     fr_error err;
     fr_registry *registry = NULL;
@@ -798,6 +1079,32 @@ TEST the_report_survives_the_entries_it_describes_being_freed(void) {
     ASSERT_STR_EQ("hello", report->entries[0].label);
     ASSERT(report->entries[0].resolved != NULL);
     ASSERT_EQ(64, (int) strlen(report->entries[0].sha256));
+    fr_plugins_report_clear();
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    fr_http_fn previous = fr_http_set_backend(stub_inline);
+    fr_registry *resolved_registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&resolved_registry, &err));
+    cJSON *document = cJSON_Parse(
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"}},"
+        "\"plugins\":{\"p\":\"t:a/b\"}}");
+    int began = fr_lua_runtime_begin(".", resolved_registry, &err) == FR_OK;
+    int loaded = fr_plugins_load(resolved_registry, document, ".", &err) == FR_OK;
+
+    cJSON_Delete(document);
+    fr_registry_destroy(resolved_registry);
+    fr_lua_runtime_shutdown();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+
+    report = fr_plugins_report();
+    ASSERT(began && loaded);
+    ASSERT_EQ(1, (int) report->count);
+    ASSERT_STR_EQ("t", report->entries[0].resolver);
+    ASSERT_STR_EQ("https://example.invalid/a/b.lua", report->entries[0].url);
+    ASSERT_STR_EQ("a/b", report->entries[0].resolved);
 
     fr_plugins_report_clear();
     PASS();
@@ -822,37 +1129,40 @@ TEST fr_plugins_report_clear_empties_the_report(void) {
     PASS();
 }
 
-TEST the_report_names_the_resolved_version_for_a_remote_plugin(void) {
+/* The report shows what the resolver answered, not the url it answered with:
+   a coordinate is what the manifest wrote and what a reader recognises, while
+   the url is wherever that resolver happens to keep its artifacts. */
+TEST the_report_names_what_the_resolver_resolved(void) {
     fr_error err;
-    char owner[64];
-    snprintf(owner, sizeof owner, "daukle-test-%d-report", fr_test_process_id());
-    const char *name = "remote";
-    remove_plugin_cache(owner);
-
-    release_requests = 0;
-    fr_http_fn previous = fr_http_set_backend(stub_releases);
-
+    fr_http_fn previous = fr_http_set_backend(stub_inline);
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
-
-    char coordinate[256];
-    remote_coordinate(coordinate, sizeof coordinate, owner, name);
-    cJSON *document = cJSON_Parse(coordinate);
-
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(
+        "{\"resolvers\":{\"t\":{\"url\":\"https://x/resolver.lua\",\"sha256\":\"" INLINE_DIGEST
+        "\"}},\"plugins\":{\"p\":\"t:a/b\"}}");
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = fr_plugins_load(registry, document, ".", &err);
 
     const fr_plugin_report *report = fr_plugins_report();
-    ASSERT_EQ(1, (int) report->count);
-    ASSERT_EQ(FR_PLUGIN_REMOTE, report->entries[0].kind);
-    ASSERT_STR_EQ("1.2.0", report->entries[0].resolved);
+    int count = (int) report->count;
+    int kind = count == 1 ? (int) report->entries[0].kind : -1;
+    char resolved[128] = "";
+    if (count == 1 && report->entries[0].resolved != NULL) {
+        snprintf(resolved, sizeof resolved, "%s", report->entries[0].resolved);
+    }
 
     cJSON_Delete(document);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
-    fr_http_set_backend(previous);
-    remove_plugin_cache(owner);
     fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+
+    ASSERT(built && began);
+    ASSERT_EQm(err.message, FR_OK, status);
+    ASSERT_EQ(1, count);
+    ASSERT_EQ((int) FR_PLUGIN_RESOLVED, kind);
+    ASSERT_STR_EQ("a/b", resolved);
     PASS();
 }
 
@@ -864,251 +1174,482 @@ static int stub_refuses_every_request(const char *url, const fr_http_header *hea
     return FR_ERR;
 }
 
-/* "a/../x" satisfies a check that only looks for one interior slash, so the
-   refusal must come from the containment rule and must come before any path
-   is built: the stub backend proves no request was made, and the message
-   naming the repo proves nothing downstream produced the failure. */
-TEST a_remote_repo_that_escapes_the_cache_root_is_refused(void) {
+/* The cached artifact must be gone after a pin fails, or the next run is served
+   the bytes that failed their integrity check. Asserting the load failed proves
+   nothing about that: the discard is only visible in what the cache holds
+   afterwards, which is why this test reaches for the cache directly. */
+TEST a_failed_pin_discards_the_cached_artifact(void) {
     fr_error err;
+    const char *url = "https://x/discarded.lua";
+    char document_json[256];
+    snprintf(document_json, sizeof document_json,
+             "{\"plugins\":{\"p\":{\"url\":\"%s\",\"sha256\":\"%s\"}}}", url,
+             "0000000000000000000000000000000000000000000000000000000000000000");
+
+    fr_plugin_fetch_discard(url);
+    int status = FR_OK;
+    loads_from_url(document_json, &status, &err);
+
     fr_http_fn previous = fr_http_set_backend(stub_refuses_every_request);
-
-    char label[] = "escape";
-    char repo[] = "a/../../../../daukle-test-escape";
-    char version[] = "^1.0.0";
-    fr_plugin_entry entry;
-    memset(&entry, 0, sizeof entry);
-    entry.label = label;
-    entry.kind = FR_PLUGIN_REMOTE;
-    entry.repo = repo;
-    entry.version = version;
-
-    char *text = NULL;
-    char *origin = NULL;
-    ASSERT_EQ(FR_ERR, fr_plugins_resolve_remote(&entry, &text, &origin, &err));
-    ASSERT(strstr(err.message, repo) != NULL);
-    ASSERT(text == NULL);
+    char *after = NULL;
+    int served_from_cache = fr_plugin_fetch(url, NULL, 0, &after, &err) == FR_OK;
+    free(after);
 
     fr_http_set_backend(previous);
+    fr_plugin_fetch_discard(url);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT_FALSE(served_from_cache);
     PASS();
 }
 
-/* Windows collapses the ".." lexically before touching disk, so the directory
-   the traversal passes through need never exist for the victim beside the
-   plugin cache to be deleted. It is written inside the cache root so the
-   traversal has a real target, and it must still be there afterwards. */
-TEST fr_plugins_remove_cache_refuses_a_repo_that_escapes_the_plugin_cache(void) {
-    fr_error err;
-    char root[1024];
-    ASSERT_EQ(FR_OK, fr_cache_root(root, sizeof root, &err));
-
-    char victim_file[1200];
-    snprintf(victim_file, sizeof victim_file, "%s/plugins/daukle-test-%d-victim/keep.txt",
-             root, fr_test_process_id());
-    ASSERT_EQ(FR_OK, fr_cache_write_atomic(victim_file, "keep", 4));
-
-    char repo[256];
-    snprintf(repo, sizeof repo, "a/../daukle-test-%d-victim", fr_test_process_id());
-    ASSERT_EQ(FR_ERR, fr_plugins_remove_cache(repo, &err));
-    ASSERT(strstr(err.message, repo) != NULL);
-
-    char *kept = NULL;
-    ASSERT_EQ(FR_OK, fr_file_read_text(victim_file, &kept, &err));
-    free(kept);
-
-    char victim_dir[1200];
-    snprintf(victim_dir, sizeof victim_dir, "%s/plugins/daukle-test-%d-victim", root,
-             fr_test_process_id());
-    fr_test_remove_tree(victim_dir);
-    PASS();
+/* Follows the shape of ARTIFACT_BODY above, but the language name encodes which
+   url was fetched, so a test can tell "target-one" (the resolver's first,
+   cached answer) apart from "target-two" (the answer only an update that
+   disables the cache can reach). */
+static int stub_named_artifacts(const char *url, const fr_http_header *headers,
+                                size_t header_count, char **out_body, size_t *out_length,
+                                fr_error *err) {
+    (void) headers; (void) header_count; (void) err;
+    const char *name = strstr(url, "/one.lua") != NULL ? "target-one" : "target-two";
+    char body[256];
+    snprintf(body, sizeof body,
+            "daukle.plugin{ api = 1, uses = {} }\n"
+            "daukle.language{ name = '%s', apply = function() return '' end }\n", name);
+    *out_body = copy_body(body, out_length);
+    return FR_OK;
 }
 
-TEST fr_plugins_remove_cache_of_an_uncached_repo_is_not_an_error(void) {
+/* Fetches url once and discards the text, so a cached artifact for it exists
+   for a later discard to find: without this, "the artifact is gone" would be
+   true whether or not the discard ever ran. */
+static int seed_cached_artifact(const char *url) {
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_plugins_remove_cache("daukle-test-nobody/nothing-here-ever", &err));
-    PASS();
+    char *text = NULL;
+    int status = fr_plugin_fetch(url, NULL, 0, &text, &err) == FR_OK;
+    free(text);
+    return status;
 }
 
-TEST fr_plugins_remove_cache_forces_the_next_resolve_to_refetch(void) {
+/* Swaps in a backend that refuses every request, fetches url, and restores
+   restore: true only if url is still served, since a cache miss here has
+   nowhere else to come from and fails outright. */
+static int artifact_survived(const char *url, fr_http_fn restore) {
     fr_error err;
-    char owner[64];
-    snprintf(owner, sizeof owner, "daukle-test-%d-remove-cache", fr_test_process_id());
-    const char *name = "remote";
-    remove_plugin_cache(owner);
+    fr_http_set_backend(stub_refuses_every_request);
+    char *text = NULL;
+    int served = fr_plugin_fetch(url, NULL, 0, &text, &err) == FR_OK;
+    free(text);
+    fr_http_set_backend(restore);
+    return served;
+}
 
-    char coordinate[256];
-    remote_coordinate(coordinate, sizeof coordinate, owner, name);
-    cJSON *document = cJSON_Parse(coordinate);
+/* The report is what "daukle config print" reads, and main.c has no test binary,
+   so the report is where this property can be asserted at all. Printing is
+   covered by eye; what must not silently change is what the report holds. */
+TEST the_report_names_the_resolver_and_the_url(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"}},"
+        "\"plugins\":{\"p\":\"t:a/b\"}}";
 
-    fr_http_fn previous = fr_http_set_backend(stub_releases);
-
+    fr_http_fn previous = fr_http_set_backend(stub_named_artifacts);
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
-    release_requests = 0;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
-    ASSERT(release_requests > 0);
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int loaded = fr_plugins_load(registry, document, ".", &err) == FR_OK;
+
+    const fr_plugin_report *report = fr_plugins_report();
+    char label[64] = "";
+    char resolver[64] = "";
+    char url[256] = "";
+    char resolved[64] = "";
+    size_t reported = report->count;
+    if (reported == 1) {
+        snprintf(label, sizeof label, "%s", report->entries[0].label);
+        snprintf(resolver, sizeof resolver, "%s",
+                 report->entries[0].resolver != NULL ? report->entries[0].resolver : "");
+        snprintf(url, sizeof url, "%s",
+                 report->entries[0].url != NULL ? report->entries[0].url : "");
+        snprintf(resolved, sizeof resolved, "%s", report->entries[0].resolved);
+    }
+
+    cJSON_Delete(document);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
 
-    char repo[128];
-    snprintf(repo, sizeof repo, "%s/%s", owner, name);
-    ASSERT_EQ(FR_OK, fr_plugins_remove_cache(repo, &err));
+    ASSERT(built && began && loaded);
+    ASSERT_EQ(1u, reported);
+    ASSERT_STR_EQ("p", label);
+    ASSERT_STR_EQ("t", resolver);
+    ASSERT_STR_EQ("https://example.invalid/a/b.lua", url);
+    ASSERT_STR_EQ("a/b", resolved);
+    PASS();
+}
 
-    fr_registry *second = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&second, &err));
-    release_requests = 0;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", second, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(second, document, ".", &err));
-    ASSERT(release_requests > 0);
+/* The spare resolver is the url form, so acquiring it needs the network, and
+   the backend installed for the load refuses every request: the load succeeds
+   only if the spare is neither fetched nor run. The used resolver is a local
+   path and the artifact it names is seeded into the fetch cache first, so
+   nothing the load legitimately does reaches the network either. A spare in
+   the path form, or a backend that answers, would leave the same report
+   whether or not the unreferenced resolver had been acquired. */
+TEST the_report_names_a_declared_unused_resolver(void) {
+    fr_error err;
+    const char *artifact_url = "https://example.invalid/a/b.lua";
+    const char *document_json =
+        "{\"resolvers\":{\"used\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"},"
+        "\"spare\":{\"url\":\"https://example.invalid/spare-resolver.lua\",\"sha256\":"
+        "\"0000000000000000000000000000000000000000000000000000000000000000\"}},"
+        "\"plugins\":{\"p\":\"used:a/b\"}}";
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_unused_resolver_%d",
+            fr_test_temp_base(), fr_test_process_id());
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
+    fr_http_fn previous = fr_http_set_backend(stub_named_artifacts);
+    int seeded = seed_cached_artifact(artifact_url);
+    fr_http_set_backend(stub_refuses_every_request);
+
+    fr_registry *registry = NULL;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int loaded = fr_plugins_load(registry, document, ".", &err) == FR_OK;
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    const fr_plugin_report *report = fr_plugins_report();
+    char unused[64] = "";
+    size_t unused_count = report->unused_resolver_count;
+    if (unused_count == 1) snprintf(unused, sizeof unused, "%s", report->unused_resolvers[0]);
 
     cJSON_Delete(document);
-    fr_registry_destroy(second);
+    fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
-    fr_http_set_backend(previous);
-    remove_plugin_cache(owner);
     fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_plugin_fetch_discard(artifact_url);
+    fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+
+    ASSERT(built && began && seeded);
+    ASSERTm(message, loaded);
+    ASSERT_EQ(1u, unused_count);
+    ASSERT_STR_EQ("spare", unused);
+    PASS();
+}
+
+/* The resolver answers from an environment variable, so the test changes what a
+   coordinate means without touching the manifest. That is what separates the
+   two things being tested: an ordinary run must keep serving the old answer
+   from the resolver's cache, and only the update may go past it.
+   fr_plugins_update_cache runs the resolve step with reads bypassed but
+   writes kept on, so the resolver's own coordinate-to-url mapping is
+   overwritten, not just ignored for the one call: that is why a THIRD,
+   ordinary load after the update is expected to see the new target, not just
+   the update's own internal resolve. */
+TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/from-env.lua\"}},"
+        "\"plugins\":{\"p\":\"t:a/b\"}}";
+    const char *fresh_url = "https://example.invalid/two.lua";
+
+    /* Isolated from the real cache root, the way test_cache.c and test_e2e.c
+       isolate theirs, since this test writes a persistent on-disk mapping. */
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_plugin_update_cache_%d",
+            fr_test_temp_base(), fr_test_process_id());
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+
+    fr_plugin_fetch_discard(fresh_url);
+    fr_http_fn previous = fr_http_set_backend(stub_named_artifacts);
+    fr_test_set_env("RESOLVER_TARGET", "one");
+
+    fr_registry *first_registry = NULL;
+    int built_first = fr_build_registry(&first_registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
+    int first_load = fr_lua_runtime_begin(".", first_registry, &err) == FR_OK
+                  && fr_plugins_load(first_registry, document, ".", &err) == FR_OK;
+    int got_one = fr_registry_language(first_registry, "daukle.language/target-one") != NULL;
+    fr_registry_destroy(first_registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+
+    fr_test_set_env("RESOLVER_TARGET", "two");
+
+    fr_registry *second_registry = NULL;
+    int built_second = fr_build_registry(&second_registry, &err) == FR_OK;
+    int second_load = fr_lua_runtime_begin(".", second_registry, &err) == FR_OK
+                   && fr_plugins_load(second_registry, document, ".", &err) == FR_OK;
+    int still_one = fr_registry_language(second_registry, "daukle.language/target-one") != NULL;
+    fr_registry_destroy(second_registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+
+    int seeded = seed_cached_artifact(fresh_url);
+
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    fr_resolver_entry *resolvers = NULL;
+    size_t resolver_count = 0;
+    fr_resolvers_parse(document, &resolvers, &resolver_count, &err);
+    fr_plugins_parse(document, resolvers, resolver_count, &entries, &count, &err);
+
+    fr_registry *update_registry = NULL;
+    int update_began = fr_build_registry(&update_registry, &err) == FR_OK
+                    && fr_lua_runtime_begin(".", update_registry, &err) == FR_OK;
+    size_t removed = 0;
+    int updated = update_began
+              && fr_plugins_update_cache(entries, count, resolvers, resolver_count, NULL,
+                                        &removed, &err) == FR_OK;
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(update_registry);
+    fr_plugins_free(entries, count);
+    fr_resolvers_free(resolvers, resolver_count);
+    fr_resolvers_clear();
+
+    int served_stale = artifact_survived(fresh_url, stub_named_artifacts);
+
+    fr_registry *third_registry = NULL;
+    int built_third = fr_build_registry(&third_registry, &err) == FR_OK;
+    int third_load = fr_lua_runtime_begin(".", third_registry, &err) == FR_OK
+                  && fr_plugins_load(third_registry, document, ".", &err) == FR_OK;
+    int got_two = fr_registry_language(third_registry, "daukle.language/target-two") != NULL;
+    fr_registry_destroy(third_registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+
+    fr_http_set_backend(previous);
+    fr_plugin_fetch_discard(fresh_url);
+    cJSON_Delete(document);
+    fr_test_set_env("RESOLVER_TARGET", NULL);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+
+    ASSERT(built_first && built_second && built_third);
+    ASSERT(first_load && second_load && third_load);
+    ASSERT(seeded);
+    ASSERT(update_began);
+    ASSERT(got_one);
+    ASSERT(still_one);
+    ASSERT(updated);
+    ASSERT_EQ(1u, removed);
+    ASSERT_FALSE(served_stale);
+    ASSERT(got_two);
+    PASS();
+}
+
+/* One resolve through a runtime of its own, so what comes back is the
+   resolver's persisted answer rather than a memo an earlier call left behind. */
+static int resolve_once(const fr_resolver_entry *resolver, const char *coordinate,
+                        char *out_url, size_t out_size, fr_error *err) {
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, err) != FR_OK) return 0;
+
+    int status = FR_ERR;
+    char *url = NULL;
+    char *resolved = NULL;
+    fr_http_headers headers = { { { NULL, NULL } }, 0 };
+    if (fr_lua_runtime_begin(".", registry, err) == FR_OK) {
+        status = fr_resolvers_use(resolver, coordinate, &url, &resolved, &headers, err);
+    }
+    if (status == FR_OK) snprintf(out_url, out_size, "%s", url);
+
+    fr_http_headers_free(&headers);
+    free(url);
+    free(resolved);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_resolvers_clear();
+    return status == FR_OK;
+}
+
+/* "daukle plugin update" IS a cache refresh, so --no-cache must not be allowed
+   to turn off the write that persists the fresh mapping. With writes off the
+   resolver re-resolves and the stale answer survives, and the next ordinary
+   run fetches the old url whose artifact this command just discarded: a
+   silent no-op on the one entry kind the command exists for. */
+TEST plugin_update_persists_the_fresh_url_with_the_cache_disabled(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/from-env.lua\"}},"
+        "\"plugins\":{\"p\":\"t:c/d\"}}";
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_update_no_cache_%d",
+            fr_test_temp_base(), fr_test_process_id());
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+    fr_test_set_env("RESOLVER_TARGET", "one");
+
+    cJSON *document = cJSON_Parse(document_json);
+    fr_resolver_entry *resolvers = NULL;
+    size_t resolver_count = 0;
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    fr_resolvers_parse(document, &resolvers, &resolver_count, &err);
+    fr_plugins_parse(document, resolvers, resolver_count, &entries, &count, &err);
+
+    char before[256] = "";
+    int resolved_before = resolve_once(&resolvers[0], "c/d", before, sizeof before, &err);
+
+    fr_test_set_env("RESOLVER_TARGET", "two");
+
+    fr_registry *update_registry = NULL;
+    int update_began = fr_build_registry(&update_registry, &err) == FR_OK
+                    && fr_lua_runtime_begin(".", update_registry, &err) == FR_OK;
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    size_t removed = 0;
+    int updated = update_began
+               && fr_plugins_update_cache(entries, count, resolvers, resolver_count, NULL,
+                                         &removed, &err) == FR_OK;
+    fr_cache_set_enabled(cache_was_enabled);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(update_registry);
+    fr_resolvers_clear();
+
+    char after[256] = "";
+    int resolved_after = resolve_once(&resolvers[0], "c/d", after, sizeof after, &err);
+
+    fr_plugins_free(entries, count);
+    fr_resolvers_free(resolvers, resolver_count);
+    cJSON_Delete(document);
+    fr_test_set_env("RESOLVER_TARGET", NULL);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+
+    ASSERT(update_began);
+    ASSERTm(err.message, updated);
+    ASSERT(resolved_before && resolved_after);
+    ASSERT_STR_EQ("https://example.invalid/one.lua", before);
+    ASSERT_STR_EQ("https://example.invalid/two.lua", after);
     PASS();
 }
 
 /* This is the property "daukle plugin update" with no label must have: the plugin
-   cache root is shared across every project on the machine, so removing the
-   cache for entries a manifest declares must never reach a repo it does not,
+   cache root is shared across every project on the machine, so discarding the
+   artifacts of entries a manifest declares must never reach a url it does not,
    the way the earlier fr_plugins_remove_all_cache implementation did. "o" here
    stands in for a plugin some OTHER project cached, never named in the
    manifest entries this call is given. */
 TEST fr_plugins_update_cache_with_no_label_touches_only_the_given_entries(void) {
     fr_error err;
-    char owner[64];
-    snprintf(owner, sizeof owner, "daukle-test-%d-scope", fr_test_process_id());
-    remove_plugin_cache(owner);
+    char declared_url[128];
+    char other_url[128];
+    snprintf(declared_url, sizeof declared_url, "https://x/%d-declared.lua", fr_test_process_id());
+    snprintf(other_url, sizeof other_url, "https://x/%d-other.lua", fr_test_process_id());
+    fr_plugin_fetch_discard(declared_url);
+    fr_plugin_fetch_discard(other_url);
 
-    fr_http_fn previous = fr_http_set_backend(stub_releases);
-
-    /* Cached with two separate fr_plugins_load calls, each its own registry:
-       both fetch the same stub body, which registers one fixed language name,
-       and loading them together in one call would collide on that name. Two
-       calls sidestep that and are still enough to cache both repos. */
     char declared_only[256];
-    snprintf(declared_only, sizeof declared_only, "{\"plugins\":{\"d\":\"%s/declared@^1.0.0\"}}",
-            owner);
     char other_only[256];
-    snprintf(other_only, sizeof other_only, "{\"plugins\":{\"o\":\"%s/other@^1.0.0\"}}", owner);
+    snprintf(declared_only, sizeof declared_only, "{\"plugins\":{\"d\":\"%s\"}}", declared_url);
+    snprintf(other_only, sizeof other_only, "{\"plugins\":{\"o\":\"%s\"}}", other_url);
 
-    cJSON *seed_declared = cJSON_Parse(declared_only);
-    fr_registry *seed_registry_d = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&seed_registry_d, &err));
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", seed_registry_d, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(seed_registry_d, seed_declared, ".", &err));
-    cJSON_Delete(seed_declared);
-    fr_registry_destroy(seed_registry_d);
-    fr_lua_runtime_shutdown();
-    fr_plugins_report_clear();
-
-    cJSON *seed_other = cJSON_Parse(other_only);
-    fr_registry *seed_registry_o = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&seed_registry_o, &err));
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", seed_registry_o, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(seed_registry_o, seed_other, ".", &err));
-    cJSON_Delete(seed_other);
-    fr_registry_destroy(seed_registry_o);
-    fr_lua_runtime_shutdown();
-    fr_plugins_report_clear();
+    /* Seeded with two separate loads, each its own registry: both fetch the
+       same stub body, which registers one fixed language name, and loading
+       them together in one call would collide on that name. */
+    int declared_seeded = FR_ERR;
+    int other_seeded = FR_ERR;
+    loads_from_url(declared_only, &declared_seeded, &err);
+    loads_from_url(other_only, &other_seeded, &err);
 
     cJSON *declared_document = cJSON_Parse(declared_only);
     fr_plugin_entry *entries = NULL;
     size_t count = 0;
-    ASSERT_EQ(FR_OK, fr_plugins_parse(declared_document, &entries, &count, &err));
-    ASSERT_EQ(1, (int) count);
-
+    int parsed = fr_plugins_parse(declared_document, NULL, 0, &entries, &count, &err);
     size_t removed_count = 0;
-    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, NULL, &removed_count, &err));
-    ASSERT_EQ(1, (int) removed_count);
-
+    int updated = fr_plugins_update_cache(entries, count, NULL, 0, NULL, &removed_count, &err);
     fr_plugins_free(entries, count);
     cJSON_Delete(declared_document);
 
-    /* "d" was in the entries fr_plugins_update_cache was given: its cache must
-       be gone, so loading it again reaches the network. */
-    cJSON *reload_declared = cJSON_Parse(declared_only);
-    fr_registry *second = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&second, &err));
+    /* "d" was in the entries fr_plugins_update_cache was given: its artifact
+       must be gone, so loading it again reaches the network. */
+    int declared_reloaded = FR_ERR;
     release_requests = 0;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", second, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(second, reload_declared, ".", &err));
-    ASSERT(release_requests > 0);
-    cJSON_Delete(reload_declared);
-    fr_registry_destroy(second);
-    fr_lua_runtime_shutdown();
-    fr_plugins_report_clear();
+    loads_from_url(declared_only, &declared_reloaded, &err);
+    int declared_requests = release_requests;
 
-    /* "o" was never in the entries fr_plugins_update_cache was given: its cache
-       must survive, so loading it again makes zero requests. */
-    cJSON *reload_other = cJSON_Parse(other_only);
-    fr_registry *third = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&third, &err));
+    /* "o" was never in those entries: its artifact must survive, so loading it
+       again makes zero requests. Both reloads are asserted to have SUCCEEDED,
+       or a zero request count would also be what a reload that failed before
+       asking for anything produces. */
+    int other_reloaded = FR_ERR;
     release_requests = 0;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", third, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(third, reload_other, ".", &err));
-    ASSERT_EQ(0, release_requests);
-    cJSON_Delete(reload_other);
-    fr_registry_destroy(third);
-    fr_lua_runtime_shutdown();
-    fr_plugins_report_clear();
+    loads_from_url(other_only, &other_reloaded, &err);
+    int other_requests = release_requests;
 
-    fr_http_set_backend(previous);
-    remove_plugin_cache(owner);
+    fr_plugin_fetch_discard(declared_url);
+    fr_plugin_fetch_discard(other_url);
+
+    ASSERT_EQm(err.message, FR_OK, declared_seeded);
+    ASSERT_EQ(FR_OK, other_seeded);
+    ASSERT_EQ(FR_OK, parsed);
+    ASSERT_EQ(FR_OK, updated);
+    ASSERT_EQ(1, (int) removed_count);
+    ASSERT_EQ(FR_OK, declared_reloaded);
+    ASSERT_EQ(FR_OK, other_reloaded);
+    ASSERT(declared_requests > 0);
+    ASSERT_EQ(0, other_requests);
     PASS();
 }
 
-/* The other half of the honesty fix: a label matching a REAL remote entry must
+/* The other half of the honesty fix: a label matching a REAL fetched entry must
    report removed_count 1, not just the local no-op case reporting 0. */
-TEST fr_plugins_update_cache_with_a_label_matching_a_remote_entry_removes_it(void) {
+TEST fr_plugins_update_cache_with_a_label_matching_a_url_entry_removes_it(void) {
     fr_error err;
-    char owner[64];
-    snprintf(owner, sizeof owner, "daukle-test-%d-label-remote", fr_test_process_id());
-    remove_plugin_cache(owner);
+    char url[128];
+    snprintf(url, sizeof url, "https://x/%d-labelled.lua", fr_test_process_id());
+    fr_plugin_fetch_discard(url);
 
-    fr_http_fn previous = fr_http_set_backend(stub_releases);
+    char document_json[256];
+    snprintf(document_json, sizeof document_json, "{\"plugins\":{\"r\":\"%s\"}}", url);
 
-    char coordinate[256];
-    remote_coordinate(coordinate, sizeof coordinate, owner, "remote");
-    cJSON *document = cJSON_Parse(coordinate);
+    int seeded = FR_ERR;
+    loads_from_url(document_json, &seeded, &err);
 
-    fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
-    ASSERT_EQ(FR_OK, fr_plugins_load(registry, document, ".", &err));
-    cJSON_Delete(document);
-    fr_registry_destroy(registry);
-    fr_lua_runtime_shutdown();
-    fr_plugins_report_clear();
-
-    cJSON *reparsed = cJSON_Parse(coordinate);
+    cJSON *document = cJSON_Parse(document_json);
     fr_plugin_entry *entries = NULL;
     size_t count = 0;
-    ASSERT_EQ(FR_OK, fr_plugins_parse(reparsed, &entries, &count, &err));
-
+    int parsed = fr_plugins_parse(document, NULL, 0, &entries, &count, &err);
     size_t removed_count = 0;
-    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, "r", &removed_count, &err));
-    ASSERT_EQ(1, (int) removed_count);
-
+    int updated = fr_plugins_update_cache(entries, count, NULL, 0, "r", &removed_count, &err);
     fr_plugins_free(entries, count);
-    cJSON_Delete(reparsed);
-    fr_http_set_backend(previous);
-    remove_plugin_cache(owner);
+    cJSON_Delete(document);
+
+    int reloaded = FR_ERR;
+    release_requests = 0;
+    loads_from_url(document_json, &reloaded, &err);
+    int requests_after = release_requests;
+    fr_plugin_fetch_discard(url);
+
+    ASSERT_EQm(err.message, FR_OK, seeded);
+    ASSERT_EQ(FR_OK, parsed);
+    ASSERT_EQ(FR_OK, updated);
+    ASSERT_EQ(1, (int) removed_count);
+    ASSERT_EQ(FR_OK, reloaded);
+    ASSERT(requests_after > 0);
     PASS();
 }
 
 TEST fr_plugins_update_cache_with_an_unknown_label_errors_naming_it(void) {
     fr_error err;
-    cJSON *document = cJSON_Parse("{\"plugins\":{\"npm\":\"daukle/npm@^1.0.0\"}}");
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"npm\":\"https://example.invalid/npm.lua\"}}");
     fr_plugin_entry *entries = NULL;
     size_t count = 0;
-    ASSERT_EQ(FR_OK, fr_plugins_parse(document, &entries, &count, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
 
     size_t removed_count = 0;
-    ASSERT_EQ(FR_ERR, fr_plugins_update_cache(entries, count, "gradle", &removed_count, &err));
+    ASSERT_EQ(FR_ERR,
+              fr_plugins_update_cache(entries, count, NULL, 0, "gradle", &removed_count, &err));
     ASSERT(strstr(err.message, "gradle") != NULL);
     ASSERT_EQ(0, (int) removed_count);
 
@@ -1117,10 +1658,10 @@ TEST fr_plugins_update_cache_with_an_unknown_label_errors_naming_it(void) {
     PASS();
 }
 
-/* A local match has nothing cached, so the removal is a no-op: *out_removed_count
+/* A path match has nothing cached, so the removal is a no-op: *out_removed_count
    must come back 0, which is what lets main.c's plugin_update tell this case
    apart from a real removal and report honestly rather than claiming to have
-   cleared a cache that never existed. The same entries, all local, also pin the
+   cleared a cache that never existed. The same entries, all paths, also pin the
    no-label case: a manifest with nothing but local plugins must report 0
    removed there too, not the unconditional "cleared" main.c used to print
    regardless of what fr_plugins_update_cache actually did. */
@@ -1129,14 +1670,16 @@ TEST fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error
     cJSON *document = cJSON_Parse("{\"plugins\":{\"hello\":\"./plugins/hello.lua\"}}");
     fr_plugin_entry *entries = NULL;
     size_t count = 0;
-    ASSERT_EQ(FR_OK, fr_plugins_parse(document, &entries, &count, &err));
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
 
     size_t removed_count = 1;
-    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, "hello", &removed_count, &err));
+    ASSERT_EQ(FR_OK,
+              fr_plugins_update_cache(entries, count, NULL, 0, "hello", &removed_count, &err));
     ASSERT_EQ(0, (int) removed_count);
 
     removed_count = 1;
-    ASSERT_EQ(FR_OK, fr_plugins_update_cache(entries, count, NULL, &removed_count, &err));
+    ASSERT_EQ(FR_OK,
+              fr_plugins_update_cache(entries, count, NULL, 0, NULL, &removed_count, &err));
     ASSERT_EQ(0, (int) removed_count);
 
     fr_plugins_free(entries, count);
@@ -1192,15 +1735,21 @@ GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
-    RUN_TEST(parses_the_string_coordinate_form);
+    RUN_TEST(parses_the_string_url_form);
     RUN_TEST(parses_the_table_form_with_a_pin);
+    RUN_TEST(parses_the_table_form_naming_a_resolver_and_a_coordinate);
     RUN_TEST(parses_a_local_path);
-    RUN_TEST(a_table_entry_naming_both_path_and_repo_is_refused);
-    RUN_TEST(a_table_entry_naming_neither_path_nor_repo_is_refused);
+    RUN_TEST(a_table_entry_naming_two_forms_is_refused);
+    RUN_TEST(a_table_entry_naming_no_form_is_refused);
+    RUN_TEST(a_table_entry_naming_a_resolver_without_a_coordinate_is_refused);
     RUN_TEST(an_absent_plugins_table_yields_no_entries);
-    RUN_TEST(rejects_a_coordinate_with_no_version);
+    RUN_TEST(the_old_bare_coordinate_form_names_the_fix);
+    RUN_TEST(the_declared_resolvers_are_named_when_a_value_names_none);
+    RUN_TEST(an_overlong_resolver_list_is_cut_after_a_whole_label);
     RUN_TEST(rejects_a_plugins_member_that_is_not_a_table);
-    RUN_TEST(rejects_a_coordinate_with_an_empty_half);
+    RUN_TEST(rejects_a_string_with_an_empty_half_around_the_colon);
+    RUN_TEST(a_windows_drive_letter_string_is_a_path);
+    RUN_TEST(a_coordinate_containing_colons_reaches_the_resolver_whole);
     RUN_TEST(a_fetched_manifest_may_not_declare_plugins);
     RUN_TEST(a_fetched_manifest_without_plugins_is_accepted);
     RUN_TEST(fr_project_parse_refuses_a_fetched_manifest_declaring_plugins);
@@ -1216,23 +1765,29 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_written_against_a_later_api_says_which);
     RUN_TEST(a_uses_entry_that_is_not_a_string_is_refused);
     RUN_TEST(a_verb_used_before_the_declaration_says_so);
+    RUN_TEST(fr_plugins_read_uses_rejects_a_closed_runtime);
     RUN_TEST(the_github_plugin_authenticates_from_either_token_variable);
     RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
-    RUN_TEST(a_remote_coordinate_picks_the_highest_release_in_range);
-    RUN_TEST(a_cached_plugin_is_used_without_touching_the_network);
+    RUN_TEST(a_url_entry_fetches_and_loads);
+    RUN_TEST(a_resolved_entry_loads_what_its_resolver_names);
+    RUN_TEST(a_plugin_chunk_may_not_declare_a_resolver);
+    RUN_TEST(the_headers_a_resolver_returns_reach_the_artifact_fetch);
+    RUN_TEST(the_github_resolver_picks_the_highest_release_in_range);
+    RUN_TEST(an_undeclared_resolver_is_refused_naming_it);
     RUN_TEST(a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests);
     RUN_TEST(an_uppercase_pin_still_matches_the_lowercase_digest);
     RUN_TEST(config_print_reports_each_plugin_with_its_verbs_and_digest);
     RUN_TEST(the_report_names_a_plugins_declared_verbs);
     RUN_TEST(the_report_survives_the_entries_it_describes_being_freed);
     RUN_TEST(fr_plugins_report_clear_empties_the_report);
-    RUN_TEST(the_report_names_the_resolved_version_for_a_remote_plugin);
-    RUN_TEST(a_remote_repo_that_escapes_the_cache_root_is_refused);
-    RUN_TEST(fr_plugins_remove_cache_refuses_a_repo_that_escapes_the_plugin_cache);
-    RUN_TEST(fr_plugins_remove_cache_of_an_uncached_repo_is_not_an_error);
-    RUN_TEST(fr_plugins_remove_cache_forces_the_next_resolve_to_refetch);
+    RUN_TEST(the_report_names_what_the_resolver_resolved);
+    RUN_TEST(a_failed_pin_discards_the_cached_artifact);
+    RUN_TEST(the_report_names_the_resolver_and_the_url);
+    RUN_TEST(the_report_names_a_declared_unused_resolver);
+    RUN_TEST(plugin_update_re_resolves_and_takes_the_new_url);
+    RUN_TEST(plugin_update_persists_the_fresh_url_with_the_cache_disabled);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);
-    RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_remote_entry_removes_it);
+    RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_url_entry_removes_it);
     RUN_TEST(fr_plugins_update_cache_with_an_unknown_label_errors_naming_it);
     RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error);
     RUN_TEST(a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_digests);

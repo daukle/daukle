@@ -34,6 +34,12 @@ int fr_lua_verbs_is_known(const char *name);
    answer from a previously loaded plugin's chunk. */
 int fr_lua_verbs_env_declared_exec(void);
 
+/* Whether the environment just pushed installed daukle.tool. Only
+   daukle.resolver consults it: tool is otherwise unrestricted, and a language
+   plugin declaring it without exec still loads. A resolver turns a string into
+   a url, and daukle.tool's version probe starts a process to answer. */
+int fr_lua_verbs_env_declared_tool(void);
+
 /* A known name that this version does not implement, such as publish. */
 int fr_lua_verbs_is_reserved(const char *name);
 

@@ -1,8 +1,11 @@
-# plugins.c/.h stay out: their own manifest-table key text collides with a forbidden literal below
+# plugins.c/.h and resolvers.c/.h stay out: their own manifest-table key text collides with a
+# forbidden literal below. The forge-host rule further down reads every file in src/, so they are
+# still covered against naming a forge.
 set(CORE_FILES
     resolve.c resolve.h manifest.c manifest.h registry.c registry.h
     types.h sync.c sync.h main.c cli.c cli.h config.c config.h
-    derived.c derived.h generate.c generate.h tasks.c tasks.h)
+    derived.c derived.h generate.c generate.h tasks.c tasks.h
+    plugin_fetch.c plugin_fetch.h)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
@@ -24,6 +27,31 @@ if(FINDINGS)
         message(STATUS "agnostic-core: ${finding}")
     endforeach()
     message(FATAL_ERROR "core names a plugin")
+endif()
+
+# Every file in src/, not just CORE_FILES: the three files excluded above for
+# carrying the "path" key are exactly the ones that decide where a plugin comes
+# from, so the list that catches a hardcoded host cannot be the list that
+# excludes them.
+file(GLOB ALL_SOURCES "${SOURCE_DIR}/src/*.c" "${SOURCE_DIR}/src/*.h")
+set(FORBIDDEN_HOSTS "api\\.github\\.com" "github\\.com" "gitlab" "bitbucket")
+
+set(HOST_FINDINGS "")
+foreach(source ${ALL_SOURCES})
+    file(READ "${source}" content)
+    get_filename_component(source_name "${source}" NAME)
+    foreach(pattern ${FORBIDDEN_HOSTS})
+        if(content MATCHES "${pattern}")
+            list(APPEND HOST_FINDINGS "${source_name} matches ${pattern}")
+        endif()
+    endforeach()
+endforeach()
+
+if(HOST_FINDINGS)
+    foreach(finding ${HOST_FINDINGS})
+        message(STATUS "agnostic-core: ${finding}")
+    endforeach()
+    message(FATAL_ERROR "core names a forge")
 endif()
 
 # A fixture that needs a staged plugin carries its own copy, because a local

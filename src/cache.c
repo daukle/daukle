@@ -16,6 +16,7 @@
 #endif
 
 static int CACHE_ENABLED = 1;
+static int CACHE_REFRESHING = 0;
 
 void fr_cache_set_enabled(int enabled) {
     CACHE_ENABLED = enabled;
@@ -23,6 +24,14 @@ void fr_cache_set_enabled(int enabled) {
 
 int fr_cache_enabled(void) {
     return CACHE_ENABLED;
+}
+
+void fr_cache_set_refreshing(int refreshing) {
+    CACHE_REFRESHING = refreshing;
+}
+
+int fr_cache_refreshing(void) {
+    return CACHE_REFRESHING;
 }
 
 /* Windows silently strips a trailing dot from a path component, so
@@ -138,6 +147,7 @@ int fr_cache_read(const char *project, const char *version, const char *artifact
                   char **out_text, fr_error *err) {
     *out_text = NULL;
     if (!CACHE_ENABLED) return FR_OK;
+    if (CACHE_REFRESHING) return FR_OK;
 
     char *path = NULL;
     if (fr_cache_path(project, version, artifact, &path, err) != FR_OK) return FR_ERR;

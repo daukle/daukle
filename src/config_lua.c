@@ -510,10 +510,44 @@ static int take_slot(lua_State *state, const char *prefix, const char *field,
     return 0;
 }
 
+/* The most recently declared resolver's resolve callback. Unlike
+   chunk_declared_resolver and chunk_declared_other below, this is not cleared
+   per chunk: it must outlive the chunk that declared it, since
+   fr_lua_resolver_call runs later, after the chunk that declared it has
+   finished running. It is released by fr_lua_runtime_shutdown and replaced
+   whenever a later chunk declares another resolver. */
+static int resolver_callback = LUA_NOREF;
+static int chunk_declared_resolver;
+static int chunk_declared_other;
+
+/* Whether the chunk fr_lua_plugin_load most recently ran declared a resolver
+   and was itself accepted. Unlike resolver_callback, this does not survive a
+   chunk that declared one and then failed: fr_lua_plugin_load sets it once
+   the chunk's outcome (and any rollback of resolver_callback) is known, so it
+   never reports true for a declaration that was rolled back, and never
+   reports true for an earlier, unrelated chunk. */
+static int resolver_declared;
+
+/* Whether the chunk now running was acquired AS a resolver, which is the only
+   way a resolver may be declared. Without it any plugin chunk could call
+   daukle.resolver and replace the callback a later, memoized entry resolves
+   through, so an unpinned plugin would decide where a pinned resolver's
+   plugins come from: the pin a resolver is required to carry governs the
+   whole acquisition path only if nothing else can install one. */
+static int acquiring_resolver;
+
+void fr_lua_set_acquiring_resolver(int acquiring) {
+    acquiring_resolver = acquiring;
+}
+
 static int lua_declare_language(lua_State *state) {
     if (fr_lua_verbs_env_declared_exec()) {
         return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
     }
+    if (chunk_declared_resolver) {
+        return luaL_error(state, "a resolver chunk declares only a resolver");
+    }
+    chunk_declared_other = 1;
     luaL_checktype(state, 1, LUA_TTABLE);
     fr_lua_plugin_slot *slot = NULL;
     if (take_slot(state, "daukle.language/", "apply", &slot) != 0 || slot == NULL) {
@@ -532,6 +566,10 @@ static int lua_declare_source(lua_State *state) {
     if (fr_lua_verbs_env_declared_exec()) {
         return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
     }
+    if (chunk_declared_resolver) {
+        return luaL_error(state, "a resolver chunk declares only a resolver");
+    }
+    chunk_declared_other = 1;
     luaL_checktype(state, 1, LUA_TTABLE);
     fr_lua_plugin_slot *slot = NULL;
     if (take_slot(state, "daukle.source/", "load", &slot) != 0 || slot == NULL) {
@@ -544,6 +582,164 @@ static int lua_declare_source(lua_State *state) {
         return luaL_error(state, "%s", err.message);
     }
     return 0;
+}
+
+static int lua_declare_resolver(lua_State *state) {
+    if (!acquiring_resolver) {
+        return luaL_error(state, "a resolver may only be declared by a chunk acquired as a"
+                                 " resolver, which this one was not");
+    }
+    if (fr_lua_verbs_env_declared_exec()) {
+        return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+    }
+    if (fr_lua_verbs_env_declared_tool()) {
+        return luaL_error(state, "a resolver may not start a process, so it may not declare"
+                                 " daukle.tool");
+    }
+    luaL_checktype(state, 1, LUA_TTABLE);
+    if (chunk_declared_other || chunk_declared_resolver) {
+        return luaL_error(state, "a resolver chunk declares only a resolver");
+    }
+
+    raw_getfield(state, 1, "resolve");
+    if (!lua_isfunction(state, -1)) {
+        return luaL_error(state, "a resolver needs a resolve function");
+    }
+    if (resolver_callback != LUA_NOREF) luaL_unref(state, LUA_REGISTRYINDEX, resolver_callback);
+    resolver_callback = luaL_ref(state, LUA_REGISTRYINDEX);
+    chunk_declared_resolver = 1;
+    return 0;
+}
+
+int fr_lua_resolver_declared(void) {
+    return resolver_declared;
+}
+
+typedef struct {
+    const char *coordinate;
+    const cJSON *block;
+    char **out_url;
+    char **out_resolved;
+    fr_http_headers *out_headers;
+} lua_resolver_context;
+
+static lua_resolver_context *resolver_context;
+
+/* lua_next is itself raw, so an __index or __pairs on the returned table is
+   never consulted here either. A number key would be coerced to a string by
+   reading it, which breaks the traversal, so a non-string key is refused
+   rather than read. */
+static int read_resolver_headers(lua_State *state, int result, fr_http_headers *out) {
+    raw_getfield(state, result, "headers");
+    if (lua_isnil(state, -1)) {
+        lua_pop(state, 1);
+        return 0;
+    }
+    if (!lua_istable(state, -1)) {
+        return luaL_error(state, "the resolver returned %s headers, expected a table",
+                          luaL_typename(state, -1));
+    }
+
+    int table = lua_gettop(state);
+    lua_pushnil(state);
+    while (lua_next(state, table) != 0) {
+        if (lua_type(state, -2) != LUA_TSTRING) {
+            return luaL_error(state, "a header name must be a string, not %s",
+                              luaL_typename(state, -2));
+        }
+        if (lua_type(state, -1) != LUA_TSTRING) {
+            return luaL_error(state, "the \"%s\" header value must be a string, not %s",
+                              lua_tostring(state, -2), luaL_typename(state, -1));
+        }
+        size_t name_length = 0;
+        size_t value_length = 0;
+        const char *name = lua_tolstring(state, -2, &name_length);
+        const char *value = lua_tolstring(state, -1, &value_length);
+        fr_error add_err;
+        if (fr_http_headers_add(out, name, name_length, value, value_length, &add_err) != FR_OK) {
+            return luaL_error(state, "%s", add_err.message);
+        }
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+    return 0;
+}
+
+static int protected_resolver_call(lua_State *state) {
+    const lua_resolver_context *context = resolver_context;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, resolver_callback);
+    lua_pushstring(state, context->coordinate);
+    fr_error push_err;
+    if (fr_lua_push_json(state, context->block, &push_err) != FR_OK) {
+        return luaL_error(state, "%s", push_err.message);
+    }
+
+    /* lua_call, not lua_pcall: see protected_language_apply above. */
+    lua_call(state, 2, 1);
+
+    if (!lua_istable(state, -1)) {
+        return luaL_error(state, "the resolver returned %s, expected a table",
+                          luaL_typename(state, -1));
+    }
+    int result = lua_gettop(state);
+
+    raw_getfield(state, result, "url");
+    if (lua_type(state, -1) == LUA_TSTRING) {
+        *context->out_url = fr_dup_string(lua_tostring(state, -1));
+        if (*context->out_url == NULL) return luaL_error(state, "out of memory");
+    }
+    lua_pop(state, 1);
+
+    raw_getfield(state, result, "resolved");
+    if (lua_type(state, -1) == LUA_TSTRING) {
+        *context->out_resolved = fr_dup_string(lua_tostring(state, -1));
+        if (*context->out_resolved == NULL) return luaL_error(state, "out of memory");
+    }
+    lua_pop(state, 1);
+
+    return read_resolver_headers(state, result, context->out_headers);
+}
+
+int fr_lua_resolver_call(const char *coordinate, const cJSON *block, char **out_url,
+                         char **out_resolved, fr_http_headers *out_headers, fr_error *err) {
+    *out_url = NULL;
+    *out_resolved = NULL;
+    out_headers->count = 0;
+    if (runtime_state == NULL) {
+        fr_error_set(err, "no lua runtime is open to call a resolver");
+        return FR_ERR;
+    }
+    if (resolver_callback == LUA_NOREF) {
+        fr_error_set(err, "no resolver is declared");
+        return FR_ERR;
+    }
+    int top = lua_gettop(runtime_state);
+    lua_resolver_context context = { coordinate, block, out_url, out_resolved, out_headers };
+    resolver_context = &context;
+    lua_pushcfunction(runtime_state, protected_resolver_call);
+    int status = lua_pcall(runtime_state, 0, 0, 0);
+    resolver_context = NULL;
+
+    if (status != LUA_OK) {
+        fr_error_set(err, "%s", fr_lua_error_text(runtime_state));
+        lua_settop(runtime_state, top);
+        free(*out_url);
+        *out_url = NULL;
+        free(*out_resolved);
+        *out_resolved = NULL;
+        fr_http_headers_free(out_headers);
+        return FR_ERR;
+    }
+    lua_settop(runtime_state, top);
+
+    if (*out_url == NULL) {
+        free(*out_resolved);
+        *out_resolved = NULL;
+        fr_http_headers_free(out_headers);
+        fr_error_set(err, "the resolver returned no url");
+        return FR_ERR;
+    }
+    return FR_OK;
 }
 
 /* Which toolchains the chunk now running has declared, so that a task naming
@@ -559,6 +755,13 @@ static void chunk_toolchains_clear(void) {
     chunk_toolchain_count = 0;
 }
 
+/* resolver_callback is deliberately excluded here; see its own comment. */
+static void chunk_state_clear(void) {
+    chunk_toolchains_clear();
+    chunk_declared_resolver = 0;
+    chunk_declared_other = 0;
+}
+
 static int chunk_declares_toolchain(const char *name, size_t length) {
     for (size_t index = 0; index < chunk_toolchain_count; index++) {
         if (strlen(chunk_toolchains[index]) == length
@@ -570,6 +773,10 @@ static int chunk_declares_toolchain(const char *name, size_t length) {
 }
 
 static int lua_declare_toolchain(lua_State *state) {
+    if (chunk_declared_resolver) {
+        return luaL_error(state, "a resolver chunk declares only a resolver");
+    }
+    chunk_declared_other = 1;
     luaL_checktype(state, 1, LUA_TTABLE);
     fr_lua_plugin_slot *slot = NULL;
     if (take_slot(state, "daukle.toolchain/", "generate", &slot) != 0 || slot == NULL) {
@@ -719,6 +926,10 @@ static void release_task_slot(fr_lua_plugin_slot *slot) {
 }
 
 static int lua_declare_task(lua_State *state) {
+    if (chunk_declared_resolver) {
+        return luaL_error(state, "a resolver chunk declares only a resolver");
+    }
+    chunk_declared_other = 1;
     luaL_checktype(state, 1, LUA_TTABLE);
 
     raw_getfield(state, 1, "name");
@@ -835,6 +1046,8 @@ void fr_lua_verbs_install_registration(lua_State *state) {
     lua_setfield(state, -2, "toolchain");
     lua_pushcfunction(state, lua_declare_task);
     lua_setfield(state, -2, "task");
+    lua_pushcfunction(state, lua_declare_resolver);
+    lua_setfield(state, -2, "resolver");
     lua_pushcfunction(state, lua_declare_plugin);
     lua_setfield(state, -2, "plugin");
 }
@@ -973,6 +1186,32 @@ int fr_lua_plugin_exec_is_refused(void) {
     return plugin_chunk_running;
 }
 
+/* A second registry reference to the same value, under a key nothing else can
+   reuse. Holding the reference rather than the slot number is what makes a
+   rollback restore the right closure: by the time one is needed the original
+   slot may already have been freed and handed to an unrelated luaL_ref. */
+static int hold_second_reference(lua_State *state, int reference) {
+    if (reference == LUA_NOREF) return LUA_NOREF;
+    lua_rawgeti(state, LUA_REGISTRYINDEX, reference);
+    return luaL_ref(state, LUA_REGISTRYINDEX);
+}
+
+static void release_reference(lua_State *state, int reference) {
+    if (reference != LUA_NOREF) luaL_unref(state, LUA_REGISTRYINDEX, reference);
+}
+
+/* lua_declare_resolver replaces resolver_callback while the chunk is still
+   running, so a chunk that declared one and then failed has to put back what
+   it displaced; every other outcome just drops the spare reference. */
+static void settle_resolver_callback(lua_State *state, int chunk_succeeded, int backup) {
+    if (!chunk_succeeded && chunk_declared_resolver) {
+        release_reference(state, resolver_callback);
+        resolver_callback = backup;
+        return;
+    }
+    release_reference(state, backup);
+}
+
 int fr_lua_plugin_load(const char *text, const char *origin, const char *const *verbs,
                        size_t verb_count, fr_error *err) {
     lua_State *state = fr_lua_runtime_state();
@@ -985,11 +1224,17 @@ int fr_lua_plugin_load(const char *text, const char *origin, const char *const *
     if (fr_lua_verbs_push_env(state, verbs, verb_count, err) != FR_OK) return FR_ERR;
     int env = lua_gettop(state);
 
-    chunk_toolchains_clear();
+    int backup_resolver_callback = hold_second_reference(state, resolver_callback);
+
+    chunk_state_clear();
     plugin_chunk_running = 1;
     int status = fr_lua_run_in_env(state, text, origin, env, err);
     plugin_chunk_running = 0;
-    chunk_toolchains_clear();
+
+    resolver_declared = status == FR_OK ? chunk_declared_resolver : 0;
+    settle_resolver_callback(state, status == FR_OK, backup_resolver_callback);
+
+    chunk_state_clear();
     lua_settop(state, top);
     return status;
 }
@@ -1027,6 +1272,8 @@ void fr_lua_runtime_shutdown(void) {
         fr_lua_close(runtime_state);
         runtime_state = NULL;
     }
+    resolver_callback = LUA_NOREF;
+    resolver_declared = 0;
     for (size_t index = 0; index < plugin_slot_count; index++) {
         free(plugin_slots[index].capability);
         free(plugin_slots[index].part_of);

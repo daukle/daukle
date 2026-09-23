@@ -1,6 +1,7 @@
 #ifndef DAUKLE_CONFIG_LUA_H
 #define DAUKLE_CONFIG_LUA_H
 
+#include "http.h"
 #include "registry.h"
 
 #include "lua.h"
@@ -52,6 +53,28 @@ int fr_lua_plugin_exec_is_refused(void);
    the user's compiler. */
 int fr_lua_generation_is_running(void);
 
+/* Whether the chunk that fr_lua_plugin_load most recently ran declared a
+   resolver. */
+int fr_lua_resolver_declared(void);
+
+/* Marks the chunk about to run as one being acquired as a resolver, which is
+   the only state in which daukle.resolver may be called. Set around the
+   fr_lua_plugin_load that runs a [resolvers] entry's own chunk and cleared
+   immediately after, so an ordinary plugin chunk can neither install a
+   resolver nor replace the one a later entry resolves through. */
+void fr_lua_set_acquiring_resolver(int acquiring);
+
+/* Calls the most recently declared resolver's resolve function with
+   coordinate and block, and reads url, resolved and headers (if present) from
+   the table it returns. Every read of that table is raw, because a plugin
+   keeps setmetatable and an __index could otherwise answer for a key the
+   resolver never wrote. headers are copied out as opaque strings for the
+   fetch to send verbatim; the caller owns them and frees them with
+   fr_http_headers_free. The caller adds the label and coordinate to any error
+   this raises. */
+int fr_lua_resolver_call(const char *coordinate, const struct cJSON *block, char **out_url,
+                         char **out_resolved, fr_http_headers *out_headers, fr_error *err);
+
 /* The directory a running task's exec defaults to, or NULL when no task is
    running. This is what discharges the exec verb's cwd default: child spec 2
    claimed to and did not, leaving a child inheriting daukle's own working
@@ -59,9 +82,9 @@ int fr_lua_generation_is_running(void);
 const char *fr_lua_task_cwd(void);
 void fr_lua_set_task_cwd(const char *directory);
 
-/* Sets language, source, toolchain and plugin on the table on top of the
-   stack, for lua_verbs.c to build a plugin environment around; the underlying
-   functions are file statics here, so this is their only way out. */
+/* Sets language, source, toolchain, task, resolver and plugin on the table on
+   top of the stack, for lua_verbs.c to build a plugin environment around; the
+   underlying functions are file statics here, so this is their only way out. */
 void fr_lua_verbs_install_registration(lua_State *state);
 
 /* The registry stores plugin structs by value and does not own their capability

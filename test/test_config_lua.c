@@ -823,6 +823,258 @@ TEST a_hostile_index_metatable_on_the_toolchain_table_is_never_consulted(void) {
     PASS();
 }
 
+/* resolvers.c marks a resolver entry's own chunk as acquired as a resolver
+   before it runs it, which is the only state daukle.resolver may be called
+   in. These tests load such a chunk directly, so they set the same flag. */
+static int load_resolver_chunk(const char *text, const char *origin,
+                               const char *const *verbs, size_t verb_count,
+                               fr_error *err) {
+    fr_lua_set_acquiring_resolver(1);
+    int status = fr_lua_plugin_load(text, origin, verbs, verb_count, err);
+    fr_lua_set_acquiring_resolver(0);
+    return status;
+}
+
+/* The guard load_resolver_chunk exists for: an ordinary plugin chunk reaches
+   fr_lua_plugin_load without the flag, and a resolver it declared would
+   replace the callback every later resolved entry is served through. */
+TEST a_chunk_not_acquired_as_a_resolver_may_not_declare_one(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "daukle.resolver{ resolve = function(c) return { url = c } end }\n";
+    int status = fr_lua_plugin_load(chunk, "ordinary.lua", NULL, 0, &err);
+    int declared = fr_lua_resolver_declared();
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "acquired as a resolver") != NULL);
+    ASSERT_EQ(0, declared);
+    PASS();
+}
+
+TEST a_resolver_chunk_declares_a_resolver(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "daukle.resolver{ resolve = function(c) return { url = 'https://h/' .. c } end }\n";
+    int loaded = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err) == FR_OK;
+    int declared = fr_lua_resolver_declared();
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT(loaded);
+    ASSERT(declared);
+    PASS();
+}
+
+TEST a_resolver_chunk_may_not_also_declare_a_language(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "daukle.resolver{ resolve = function(c) return { url = c } end }\n"
+        "daukle.language{ name = 'x', apply = function() return '' end }\n";
+    int status = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "a resolver chunk declares only a resolver") != NULL);
+    PASS();
+}
+
+TEST a_chunk_that_declared_a_language_may_not_then_declare_a_resolver(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "daukle.language{ name = 'x', apply = function() return '' end }\n"
+        "daukle.resolver{ resolve = function(c) return { url = c } end }\n";
+    int status = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "a resolver chunk declares only a resolver") != NULL);
+    PASS();
+}
+
+TEST a_resolver_may_not_declare_exec(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *uses[] = { "exec" };
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = { 'exec' } }\n"
+        "daukle.resolver{ resolve = function(c) return { url = c } end }\n";
+    int status = load_resolver_chunk(chunk, "r.lua", uses, 1, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "available only to a toolchain plugin") != NULL);
+    PASS();
+}
+
+TEST a_resolver_may_not_declare_tool(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *uses[] = { "tool" };
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = { 'tool' } }\n"
+        "daukle.resolver{ resolve = function(c) return { url = c } end }\n";
+    int status = load_resolver_chunk(chunk, "r.lua", uses, 1, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "a resolver may not start a process") != NULL);
+    PASS();
+}
+
+TEST a_resolver_needs_a_resolve_function(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "daukle.resolver{ }\n";
+    int status = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "needs a resolve function") != NULL);
+    PASS();
+}
+
+TEST a_hostile_metatable_cannot_supply_the_resolve_function(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "local t = setmetatable({}, { __index = function() error('boom') end })\n"
+        "daukle.resolver(t)\n";
+    int status = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "needs a resolve function") != NULL);
+    ASSERT(strstr(message, "boom") == NULL);
+    PASS();
+}
+
+/* The dangerous hostile-metatable case, unlike the one above: __index does
+   not raise, it RETURNS a function. lua_isfunction alone cannot tell that
+   function apart from a real "resolve" field, so a lua_getfield read here
+   would succeed and hand daukle a resolver whose behavior a plugin-supplied
+   metamethod chose. raw_getfield never reaches __index at all, so it finds
+   no raw "resolve" key and refuses, and no resolver is left declared. */
+TEST a_hostile_metatable_returning_a_function_is_never_used_as_resolve(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "local t = setmetatable({}, { __index = function() return function()"
+        " return { url = 'x' } end end })\n"
+        "daukle.resolver(t)\n";
+    int status = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err);
+    int declared = fr_lua_resolver_declared();
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "needs a resolve function") != NULL);
+    ASSERT_EQ(0, declared);
+    PASS();
+}
+
+/* A second chunk that declares no resolver at all must not inherit the
+   first's: fr_lua_resolver_declared reports whether the chunk that JUST ran
+   declared one, not whether any chunk ever has. */
+TEST a_chunk_declaring_no_resolver_reports_none_declared(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *first_chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "daukle.resolver{ resolve = function(c) return { url = c } end }\n";
+    int first_loaded = load_resolver_chunk(first_chunk, "first.lua", NULL, 0, &err) == FR_OK;
+
+    const char *second_chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "daukle.language{ name = 'x', apply = function() return '' end }\n";
+    int second_loaded = fr_lua_plugin_load(second_chunk, "second.lua", NULL, 0, &err) == FR_OK;
+    int declared = fr_lua_resolver_declared();
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT(first_loaded);
+    ASSERT(second_loaded);
+    ASSERT_EQ(0, declared);
+    PASS();
+}
+
+/* A chunk that declares a resolver and is then refused must leave neither a
+   live resolver_callback (Critical: leak/inheritance) nor a "declared" answer
+   behind for the next fr_lua_resolver_declared caller. */
+TEST a_refused_resolver_chunk_reports_none_declared(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "daukle.resolver{ resolve = function(c) return { url = c } end }\n"
+        "daukle.language{ name = 'x', apply = function() return '' end }\n";
+    int status = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err);
+    int declared = fr_lua_resolver_declared();
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT_EQ(0, declared);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -864,5 +1116,16 @@ int main(int argc, char **argv) {
     RUN_TEST(a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain);
     RUN_TEST(a_hostile_index_metatable_on_the_task_table_is_never_consulted);
     RUN_TEST(a_hostile_index_metatable_on_the_toolchain_table_is_never_consulted);
+    RUN_TEST(a_chunk_not_acquired_as_a_resolver_may_not_declare_one);
+    RUN_TEST(a_resolver_chunk_declares_a_resolver);
+    RUN_TEST(a_resolver_chunk_may_not_also_declare_a_language);
+    RUN_TEST(a_chunk_that_declared_a_language_may_not_then_declare_a_resolver);
+    RUN_TEST(a_resolver_may_not_declare_exec);
+    RUN_TEST(a_resolver_may_not_declare_tool);
+    RUN_TEST(a_resolver_needs_a_resolve_function);
+    RUN_TEST(a_hostile_metatable_cannot_supply_the_resolve_function);
+    RUN_TEST(a_hostile_metatable_returning_a_function_is_never_used_as_resolve);
+    RUN_TEST(a_chunk_declaring_no_resolver_reports_none_declared);
+    RUN_TEST(a_refused_resolver_chunk_reports_none_declared);
     GREATEST_MAIN_END();
 }

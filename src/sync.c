@@ -11,6 +11,7 @@
 #include "region.h"
 #include "registry.h"
 #include "resolve.h"
+#include "resolvers.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -174,6 +175,7 @@ void fr_session_close(fr_session *session) {
     fr_registry_destroy(session->registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
+    fr_resolvers_clear();
     free(session->manifest_dir);
     free(session->manifest_path);
     if (session->loaded) fr_manifest_free(&session->manifest);

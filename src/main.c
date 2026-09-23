@@ -10,6 +10,7 @@
 #include "plugins.h"
 #include "region.h"
 #include "registry.h"
+#include "resolvers.h"
 #include "sync.h"
 #include "tasks.h"
 #include "tomledit.h"
@@ -80,6 +81,7 @@ static int resolve_manifest_path(const char *manifest_path, char **out_path, fr_
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
+    fr_resolvers_clear();
     return status;
 }
 
@@ -138,12 +140,17 @@ static void print_env_reads(const cJSON *env_reads) {
    separate lookup. Reads fr_plugins_report before it is cleared, never after. */
 static void print_plugin_report(void) {
     const fr_plugin_report *report = fr_plugins_report();
-    if (report->count == 0) return;
+    if (report->count == 0 && report->unused_resolver_count == 0) return;
 
     printf("daukle: plugins\n");
     for (size_t index = 0; index < report->count; index++) {
         const fr_plugin_report_entry *entry = &report->entries[index];
-        printf("  %s: %s, sha256 %s", entry->label, entry->resolved, entry->sha256);
+        if (entry->kind == FR_PLUGIN_RESOLVED) {
+            printf("  %s: %s via %s, %s, sha256 %s", entry->label, entry->resolved,
+                   entry->resolver, entry->url, entry->sha256);
+        } else {
+            printf("  %s: %s, sha256 %s", entry->label, entry->resolved, entry->sha256);
+        }
         if (entry->uses_count == 0) {
             printf(", uses none\n");
             continue;
@@ -153,6 +160,10 @@ static void print_plugin_report(void) {
             printf("%s%s", use_index == 0 ? "" : ",", entry->uses[use_index]);
         }
         printf("\n");
+    }
+
+    for (size_t index = 0; index < report->unused_resolver_count; index++) {
+        printf("  resolver %s: declared, unused\n", report->unused_resolvers[index]);
     }
 }
 
@@ -186,6 +197,7 @@ static int print_config(const char *manifest_path, int use_cache, int verbose) {
         fr_manifest_free(&manifest);
         free(resolved);
         fr_plugins_report_clear();
+        fr_resolvers_clear();
         return 1;
     }
 
@@ -196,6 +208,7 @@ static int print_config(const char *manifest_path, int use_cache, int verbose) {
         fr_manifest_free(&manifest);
         free(resolved);
         fr_plugins_report_clear();
+        fr_resolvers_clear();
         return 1;
     }
 
@@ -205,6 +218,7 @@ static int print_config(const char *manifest_path, int use_cache, int verbose) {
     cJSON_Delete(env_reads);
     print_plugin_report();
     fr_plugins_report_clear();
+    fr_resolvers_clear();
     fr_manifest_free(&manifest);
     free(resolved);
     return 0;
@@ -356,14 +370,33 @@ static int add_dependency(const fr_cli_options *options) {
     return 0;
 }
 
+/* The document outlives the entries parsed from it because
+   fr_resolver_entry.block borrows from it, and a resolver reached after it was
+   freed would read freed memory. */
+typedef struct {
+    cJSON *document;
+    fr_plugin_entry *entries;
+    size_t count;
+    fr_resolver_entry *resolvers;
+    size_t resolver_count;
+} manifest_plugins;
+
+static void manifest_plugins_free(manifest_plugins *plugins) {
+    fr_plugins_free(plugins->entries, plugins->count);
+    fr_resolvers_free(plugins->resolvers, plugins->resolver_count);
+    cJSON_Delete(plugins->document);
+    memset(plugins, 0, sizeof *plugins);
+}
+
 /* Reads only the manifest's own document, never fr_config_load_file: that also
    runs fr_plugins_load, which resolves and executes every declared plugin, the
    opposite of what "plugin update" wants when a plugin's current cache is what
    it is trying to discard. The load call therefore passes no registry, and an
    overlay format is refused outright, since executing one is precisely what
    dispatching on its extension would do. */
-static int read_manifest_plugins(const char *manifest_path, fr_plugin_entry **out_entries,
-                                 size_t *out_count, fr_error *err) {
+static int read_manifest_plugins(const char *manifest_path, manifest_plugins *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+
     fr_registry *registry = NULL;
     if (fr_build_registry(&registry, err) != FR_OK) return FR_ERR;
 
@@ -385,15 +418,19 @@ static int read_manifest_plugins(const char *manifest_path, fr_plugin_entry **ou
         return FR_ERR;
     }
 
-    cJSON *document = NULL;
-    int status = plugin->load(plugin->state, text, manifest_path, ".", NULL, NULL, &document, err);
+    int status = plugin->load(plugin->state, text, manifest_path, ".", NULL, NULL,
+                              &out->document, err);
     free(text);
     fr_registry_destroy(registry);
     if (status != FR_OK) return FR_ERR;
 
-    status = fr_plugins_parse(document, out_entries, out_count, err);
-    cJSON_Delete(document);
-    return status;
+    if (fr_resolvers_parse(out->document, &out->resolvers, &out->resolver_count, err) != FR_OK
+        || fr_plugins_parse(out->document, out->resolvers, out->resolver_count, &out->entries,
+                            &out->count, err) != FR_OK) {
+        manifest_plugins_free(out);
+        return FR_ERR;
+    }
+    return FR_OK;
 }
 
 /* "update which plugins?" has no answer without a manifest in scope, so every
@@ -403,7 +440,11 @@ static int read_manifest_plugins(const char *manifest_path, fr_plugin_entry **ou
    label-less update in one project would silently discard every other
    project's cached plugins too. The scoping rule itself lives in
    fr_plugins_update_cache, shared with, and covered directly by, test_plugins.c,
-   since main.c has no test binary of its own. */
+   since main.c has no test binary of its own.
+   A lua runtime is opened here, around the update_cache call, rather than
+   inside it: fr_plugins_update_cache re-resolves an FR_PLUGIN_RESOLVED entry
+   through fr_resolvers_use, which needs one open, and only this function
+   knows the manifest's own directory a path-form resolver resolves against. */
 static int plugin_update(const char *label, int use_cache, int verbose) {
     fr_error err;
     fr_cache_set_enabled(use_cache);
@@ -414,18 +455,41 @@ static int plugin_update(const char *label, int use_cache, int verbose) {
         return 1;
     }
 
-    fr_plugin_entry *entries = NULL;
-    size_t count = 0;
-    int status = read_manifest_plugins(resolved, &entries, &count, &err);
-    free(resolved);
+    manifest_plugins plugins;
+    int status = read_manifest_plugins(resolved, &plugins, &err);
     if (status != FR_OK) {
+        free(resolved);
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    char *directory = manifest_directory(resolved);
+    free(resolved);
+    if (directory == NULL) {
+        manifest_plugins_free(&plugins);
+        fprintf(stderr, "daukle: out of memory finding the manifest directory\n");
+        return 1;
+    }
+
+    fr_registry *registry = NULL;
+    status = fr_build_registry(&registry, &err);
+    if (status == FR_OK) status = fr_lua_runtime_begin(directory, registry, &err);
+    free(directory);
+    if (status != FR_OK) {
+        if (registry != NULL) fr_registry_destroy(registry);
+        manifest_plugins_free(&plugins);
         report_error(&err, verbose);
         return 1;
     }
 
     size_t removed_count = 0;
-    status = fr_plugins_update_cache(entries, count, label, &removed_count, &err);
-    fr_plugins_free(entries, count);
+    status = fr_plugins_update_cache(plugins.entries, plugins.count, plugins.resolvers,
+                                     plugins.resolver_count, label, &removed_count, &err);
+
+    fr_lua_runtime_shutdown();
+    fr_resolvers_clear();
+    fr_registry_destroy(registry);
+    manifest_plugins_free(&plugins);
     if (status != FR_OK) {
         report_error(&err, verbose);
         return 1;
@@ -439,7 +503,7 @@ static int plugin_update(const char *label, int use_cache, int verbose) {
                    removed_count == 1 ? "" : "s");
         }
     } else if (removed_count == 0) {
-        printf("daukle: plugin \"%s\" loads from a local file; it has no cache to clear\n", label);
+        printf("daukle: plugin \"%s\" has no fetched artifact to clear\n", label);
     } else {
         printf("daukle: cleared the cache for \"%s\"\n", label);
     }

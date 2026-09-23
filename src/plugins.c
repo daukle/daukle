@@ -1,19 +1,22 @@
 #include "plugins.h"
 
 #include "cJSON.h"
+#include "cache.h"
 #include "config_lua.h"
 #include "error.h"
 #include "jsonx.h"
 #include "lua_sandbox.h"
 #include "lua_verbs.h"
 #include "luax.h"
-#include "plugins_remote.h"
+#include "plugin_fetch.h"
 #include "region.h"
+#include "resolvers.h"
 #include "sha256.h"
 
 #include "lauxlib.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,63 +36,105 @@ char *fr_dup_prefix(const char *text, size_t length) {
     return copy;
 }
 
-/* A bare "owner/name" without "@range" is rejected rather than guessed at,
-   so a manifest typo surfaces as a diagnostic instead of an unpinned fetch. */
-static int parse_string_form(const char *label, const char *value, fr_plugin_entry *out,
-                             fr_error *err) {
-    if (value[0] == '.' || value[0] == '/') {
-        out->kind = FR_PLUGIN_LOCAL;
-        out->path = fr_dup_string(value);
-        if (out->path == NULL) {
-            fr_error_set(err, "out of memory reading plugin \"%s\"", label);
-            return FR_ERR;
-        }
-        return FR_OK;
-    }
-
-    const char *at = strchr(value, '@');
-    if (at == NULL) {
-        fr_error_set(err, "plugin \"%s\": \"%s\" needs a version, as \"owner/name@range\","
-                          " or a path beginning with \".\" or \"/\"", label, value);
-        return FR_ERR;
-    }
-
-    size_t repo_length = (size_t) (at - value);
-    if (repo_length == 0 || at[1] == '\0') {
-        fr_error_set(err, "plugin \"%s\": \"%s\" needs both a repo and a version around \"@\"",
-                          label, value);
-        return FR_ERR;
-    }
-
-    out->kind = FR_PLUGIN_REMOTE;
-    out->repo = fr_dup_prefix(value, repo_length);
-    out->version = fr_dup_string(at + 1);
-    if (out->repo == NULL || out->version == NULL) {
-        fr_error_set(err, "out of memory reading plugin \"%s\"", label);
-        return FR_ERR;
-    }
-    return FR_OK;
+static int out_of_memory(const char *label, fr_error *err) {
+    fr_error_set(err, "out of memory reading plugin \"%s\"", label);
+    return FR_ERR;
 }
 
-/* A table entry names exactly one of "path" (local) or "repo" (remote), the
-   same discrimination the string form makes on a leading "." or "/", and
-   either kind may also carry a "sha256" pin. */
+/* Keeps only whole labels and marks the cut, rather than ending the one
+   diagnostic a reader gets when a coordinate does not resolve mid-label. */
+static void describe_declared_resolvers(char *out, size_t out_size,
+                                        const fr_resolver_entry *resolvers, size_t count) {
+    if (count == 0) {
+        snprintf(out, out_size, "none");
+        return;
+    }
+
+    static const char ELLIPSIS[] = ", ...";
+    size_t used = 0;
+    out[0] = '\0';
+    for (size_t index = 0; index < count; index++) {
+        const char *separator = index == 0 ? "" : ", ";
+        size_t needed = strlen(separator) + strlen(resolvers[index].label);
+        if (used + needed + sizeof ELLIPSIS > out_size) {
+            snprintf(out + used, out_size - used, "%s", used == 0 ? "..." : ELLIPSIS);
+            return;
+        }
+        used += (size_t) snprintf(out + used, out_size - used, "%s%s", separator,
+                                  resolvers[index].label);
+    }
+}
+
+static int no_resolver_named(const char *label, const char *value,
+                             const fr_resolver_entry *resolvers, size_t resolver_count,
+                             fr_error *err) {
+    char declared[160];
+    describe_declared_resolvers(declared, sizeof declared, resolvers, resolver_count);
+    fr_error_set(err, "plugin \"%s\": \"%s\" names no resolver: write a file path, a url, or"
+                      " \"<resolver>:<coordinate>\". Declared resolvers: %s",
+                 label, value, declared);
+    return FR_ERR;
+}
+
+/* "C:/plugins/mine.lua" read as the resolver "C" is the diagnostic this
+   prevents, which is why the check comes before the colon split below. */
+static int is_drive_path(const char *value) {
+    return ((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z'))
+        && value[1] == ':' && (value[2] == '/' || value[2] == '\\');
+}
+
+static int parse_string_form(const char *label, const char *value,
+                             const fr_resolver_entry *resolvers, size_t resolver_count,
+                             fr_plugin_entry *out, fr_error *err) {
+    if (value[0] == '.' || value[0] == '/' || is_drive_path(value)) {
+        out->kind = FR_PLUGIN_PATH;
+        out->path = fr_dup_string(value);
+        return out->path != NULL ? FR_OK : out_of_memory(label, err);
+    }
+
+    if (strncmp(value, "http://", 7) == 0 || strncmp(value, "https://", 8) == 0) {
+        out->kind = FR_PLUGIN_URL;
+        out->url = fr_dup_string(value);
+        return out->url != NULL ? FR_OK : out_of_memory(label, err);
+    }
+
+    const char *colon = strchr(value, ':');
+    if (colon == NULL || colon == value || colon[1] == '\0') {
+        return no_resolver_named(label, value, resolvers, resolver_count, err);
+    }
+
+    out->kind = FR_PLUGIN_RESOLVED;
+    out->resolver = fr_dup_prefix(value, (size_t) (colon - value));
+    out->coordinate = fr_dup_string(colon + 1);
+    return (out->resolver != NULL && out->coordinate != NULL) ? FR_OK : out_of_memory(label, err);
+}
+
+/* A table entry names exactly one of "path", "url", or "resolver" with
+   "coordinate", the three forms the string form discriminates between, and any
+   of them may also carry a "sha256" pin. */
 static int parse_table_form(const char *label, const cJSON *member, fr_plugin_entry *out,
                             fr_error *err) {
-    const char *sha256 = NULL;
     if (cJSON_GetObjectItemCaseSensitive(member, "sha256") != NULL) {
+        const char *sha256 = NULL;
         if (fr_json_string(member, "sha256", label, &sha256, err) != FR_OK) return FR_ERR;
+        out->sha256 = fr_dup_string(sha256);
+        if (out->sha256 == NULL) return out_of_memory(label, err);
     }
 
     int has_path = cJSON_GetObjectItemCaseSensitive(member, "path") != NULL;
-    int has_repo = cJSON_GetObjectItemCaseSensitive(member, "repo") != NULL;
-    if (has_path && has_repo) {
-        fr_error_set(err, "plugin \"%s\": a table entry names either path or repo, not both",
-                    label);
+    int has_url = cJSON_GetObjectItemCaseSensitive(member, "url") != NULL;
+    int has_resolver = cJSON_GetObjectItemCaseSensitive(member, "resolver") != NULL;
+    int has_coordinate = cJSON_GetObjectItemCaseSensitive(member, "coordinate") != NULL;
+
+    int named_groups = has_path + has_url + (has_resolver || has_coordinate);
+    if (named_groups > 1) {
+        fr_error_set(err, "plugin \"%s\": a table entry names one of path, url, or resolver with"
+                          " coordinate, not several", label);
         return FR_ERR;
     }
-    if (!has_path && !has_repo) {
-        fr_error_set(err, "plugin \"%s\": a table entry needs either path or repo", label);
+    if (named_groups == 0) {
+        fr_error_set(err, "plugin \"%s\": a table entry needs one of path, url, or resolver with"
+                          " coordinate", label);
         return FR_ERR;
     }
 
@@ -97,33 +142,39 @@ static int parse_table_form(const char *label, const cJSON *member, fr_plugin_en
         const char *path = NULL;
         if (fr_json_string(member, "path", label, &path, err) != FR_OK) return FR_ERR;
 
-        out->kind = FR_PLUGIN_LOCAL;
+        out->kind = FR_PLUGIN_PATH;
         out->path = fr_dup_string(path);
-        out->sha256 = sha256 != NULL ? fr_dup_string(sha256) : NULL;
-        if (out->path == NULL || (sha256 != NULL && out->sha256 == NULL)) {
-            fr_error_set(err, "out of memory reading plugin \"%s\"", label);
-            return FR_ERR;
-        }
-        return FR_OK;
+        return out->path != NULL ? FR_OK : out_of_memory(label, err);
     }
 
-    const char *repo = NULL;
-    const char *version = NULL;
-    if (fr_json_string(member, "repo", label, &repo, err) != FR_OK) return FR_ERR;
-    if (fr_json_string(member, "version", label, &version, err) != FR_OK) return FR_ERR;
+    if (has_url) {
+        const char *url = NULL;
+        if (fr_json_string(member, "url", label, &url, err) != FR_OK) return FR_ERR;
 
-    out->kind = FR_PLUGIN_REMOTE;
-    out->repo = fr_dup_string(repo);
-    out->version = fr_dup_string(version);
-    out->sha256 = sha256 != NULL ? fr_dup_string(sha256) : NULL;
-    if (out->repo == NULL || out->version == NULL || (sha256 != NULL && out->sha256 == NULL)) {
-        fr_error_set(err, "out of memory reading plugin \"%s\"", label);
+        out->kind = FR_PLUGIN_URL;
+        out->url = fr_dup_string(url);
+        return out->url != NULL ? FR_OK : out_of_memory(label, err);
+    }
+
+    if (!has_resolver || !has_coordinate) {
+        fr_error_set(err, "plugin \"%s\": a resolver entry names both resolver and coordinate;"
+                          " \"%s\" is missing", label, has_resolver ? "coordinate" : "resolver");
         return FR_ERR;
     }
-    return FR_OK;
+
+    const char *resolver = NULL;
+    const char *coordinate = NULL;
+    if (fr_json_string(member, "resolver", label, &resolver, err) != FR_OK) return FR_ERR;
+    if (fr_json_string(member, "coordinate", label, &coordinate, err) != FR_OK) return FR_ERR;
+
+    out->kind = FR_PLUGIN_RESOLVED;
+    out->resolver = fr_dup_string(resolver);
+    out->coordinate = fr_dup_string(coordinate);
+    return (out->resolver != NULL && out->coordinate != NULL) ? FR_OK : out_of_memory(label, err);
 }
 
-int fr_plugins_parse(const struct cJSON *document, fr_plugin_entry **out, size_t *out_count,
+int fr_plugins_parse(const struct cJSON *document, const fr_resolver_entry *resolvers,
+                     size_t resolver_count, fr_plugin_entry **out, size_t *out_count,
                      fr_error *err) {
     *out = NULL;
     *out_count = 0;
@@ -154,14 +205,15 @@ int fr_plugins_parse(const struct cJSON *document, fr_plugin_entry **out, size_t
         fr_plugin_entry *slot = &entries[count - 1];
         slot->label = fr_dup_string(label);
         if (slot->label == NULL) {
-            fr_error_set(err, "out of memory reading plugin \"%s\"", label);
+            out_of_memory(label, err);
             fr_plugins_free(entries, count);
             return FR_ERR;
         }
 
         int status;
         if (cJSON_IsString(member) && member->valuestring != NULL) {
-            status = parse_string_form(label, member->valuestring, slot, err);
+            status = parse_string_form(label, member->valuestring, resolvers, resolver_count,
+                                       slot, err);
         } else if (cJSON_IsObject(member)) {
             status = parse_table_form(label, member, slot, err);
         } else {
@@ -192,8 +244,9 @@ void fr_plugins_free(fr_plugin_entry *entries, size_t count) {
     for (size_t index = 0; index < count; index++) {
         free(entries[index].label);
         free(entries[index].path);
-        free(entries[index].repo);
-        free(entries[index].version);
+        free(entries[index].url);
+        free(entries[index].resolver);
+        free(entries[index].coordinate);
         free(entries[index].sha256);
     }
     free(entries);
@@ -206,6 +259,7 @@ void fr_plugins_free(fr_plugin_entry *entries, size_t count) {
 #define FR_PLUGIN_DECLARATION_READ "daukle: plugin declaration read"
 
 typedef struct {
+    const char *kind;   /* "plugin" or "resolver", named in every message below */
     const char *label;
     char *uses[FR_PLUGIN_MAX_USES];
     size_t uses_count;
@@ -223,30 +277,30 @@ static void free_declaration(fr_plugin_declaration *declaration) {
 static int record_uses(lua_State *state, fr_plugin_declaration *declaration) {
     if (lua_isnil(state, -1)) return 0;
     if (!lua_istable(state, -1)) {
-        return luaL_error(state, "plugin \"%s\": uses must be a list of verb names",
-                          declaration->label);
+        return luaL_error(state, "%s \"%s\": uses must be a list of verb names",
+                          declaration->kind, declaration->label);
     }
 
     lua_Integer length = (lua_Integer) lua_rawlen(state, -1);
     for (lua_Integer index = 1; index <= length; index++) {
         lua_rawgeti(state, -1, index);
         if (lua_type(state, -1) != LUA_TSTRING) {
-            return luaL_error(state, "plugin \"%s\": every name in uses must be a string",
-                              declaration->label);
+            return luaL_error(state, "%s \"%s\": every name in uses must be a string",
+                              declaration->kind, declaration->label);
         }
         const char *name = lua_tostring(state, -1);
         if (!fr_lua_verbs_is_known(name)) {
-            return luaL_error(state, "plugin \"%s\": \"%s\" is not a daukle verb",
-                              declaration->label, name);
+            return luaL_error(state, "%s \"%s\": \"%s\" is not a daukle verb",
+                              declaration->kind, declaration->label, name);
         }
         if (declaration->uses_count == FR_PLUGIN_MAX_USES) {
-            return luaL_error(state, "plugin \"%s\": uses names more than %d verbs",
-                              declaration->label, FR_PLUGIN_MAX_USES);
+            return luaL_error(state, "%s \"%s\": uses names more than %d verbs",
+                              declaration->kind, declaration->label, FR_PLUGIN_MAX_USES);
         }
         char *copy = fr_dup_string(name);
         if (copy == NULL) {
-            return luaL_error(state, "plugin \"%s\": out of memory reading uses",
-                              declaration->label);
+            return luaL_error(state, "%s \"%s\": out of memory reading uses",
+                              declaration->kind, declaration->label);
         }
         declaration->uses[declaration->uses_count] = copy;
         declaration->uses_count++;
@@ -265,12 +319,12 @@ static int declare_plugin(lua_State *state) {
         int is_integer = 0;
         lua_Integer api = lua_tointegerx(state, -1, &is_integer);
         if (!is_integer) {
-            return luaL_error(state, "plugin \"%s\": api must be a whole number",
-                              declaration->label);
+            return luaL_error(state, "%s \"%s\": api must be a whole number",
+                              declaration->kind, declaration->label);
         }
         if (api != 1) {
-            return luaL_error(state, "plugin \"%s\": needs daukle api %I, this daukle provides 1",
-                              declaration->label, (LUAI_UACINT) api);
+            return luaL_error(state, "%s \"%s\": needs daukle api %I, this daukle provides 1",
+                              declaration->kind, declaration->label, (LUAI_UACINT) api);
         }
     }
     lua_pop(state, 1);
@@ -328,6 +382,51 @@ static int read_declaration(lua_State *state, const char *text, const char *orig
                    sizeof FR_PLUGIN_DECLARATION_READ - 1) == 0 ? FR_OK : FR_ERR;
 }
 
+/* Shared with resolvers.c: a resolver's chunk starts with the same
+   daukle.plugin{ uses = {...} } call a plugin's does, and acquiring it goes
+   through this same read-then-load split so that declaration is honoured
+   there too, rather than every verb being either always on or always off for
+   a resolver. kind names the caller ("plugin" or "resolver") in every message
+   below, so a resolver's malformed uses is reported as a resolver, not a
+   plugin. A NULL runtime state is a real error here, not a crash:
+   read_declaration's first line touches it. */
+int fr_plugins_read_uses(const char *text, const char *origin, const char *kind,
+                         const char *label, char ***out_uses, size_t *out_uses_count,
+                         fr_error *err) {
+    *out_uses = NULL;
+    *out_uses_count = 0;
+
+    lua_State *state = fr_lua_runtime_state();
+    if (state == NULL) {
+        fr_error_set(err, "no lua runtime is open for \"%s\"", origin);
+        return FR_ERR;
+    }
+
+    fr_plugin_declaration declaration = { kind, label, { NULL }, 0 };
+    if (read_declaration(state, text, origin, &declaration, err) != FR_OK) {
+        free_declaration(&declaration);
+        return FR_ERR;
+    }
+    if (declaration.uses_count == 0) return FR_OK;
+
+    char **uses = malloc(declaration.uses_count * sizeof *uses);
+    if (uses == NULL) {
+        free_declaration(&declaration);
+        fr_error_set(err, "out of memory reading %s \"%s\"", kind, label);
+        return FR_ERR;
+    }
+    memcpy(uses, declaration.uses, declaration.uses_count * sizeof *uses);
+    *out_uses = uses;
+    *out_uses_count = declaration.uses_count;
+    return FR_OK;
+}
+
+void fr_plugins_free_uses(char **uses, size_t count) {
+    if (uses == NULL) return;
+    for (size_t index = 0; index < count; index++) free(uses[index]);
+    free(uses);
+}
+
 /* stricmp/strcasecmp are not portable C11; a sha256 hex digest is a bounded
    64 characters, so comparing lowercased copies in fixed buffers is safe. */
 static int digest_matches(const char *actual, const char *pinned) {
@@ -341,51 +440,52 @@ static int digest_matches(const char *actual, const char *pinned) {
     return 1;
 }
 
-/* fr_plugins_resolve_remote's origin is <cache root>/plugins/<owner>/<name>/<version>/plugin.lua:
-   the version segment between the last two slashes is what the report shows, since a resolved
-   plugin's cache location is an implementation detail no report reader should need. Falls back to
-   the whole origin if it is ever shaped otherwise, rather than reporting nothing. */
-static char *remote_resolved_from_origin(const char *origin) {
-    const char *file_slash = strrchr(origin, '/');
-    if (file_slash == NULL || file_slash == origin) return fr_dup_string(origin);
-
-    const char *version_start = file_slash;
-    while (version_start > origin && version_start[-1] != '/') version_start--;
-    if (version_start == file_slash) return fr_dup_string(origin);
-
-    return fr_dup_prefix(version_start, (size_t) (file_slash - version_start));
-}
-
 static fr_plugin_report_entry *report_entries;
 static size_t report_count;
 
 static void free_report_entry(fr_plugin_report_entry *entry) {
     free(entry->label);
+    free(entry->resolver);
+    free(entry->url);
     free(entry->resolved);
     for (size_t index = 0; index < entry->uses_count; index++) free(entry->uses[index]);
     free(entry->uses);
 }
+
+static char **report_unused_resolvers;
+static size_t report_unused_resolver_count;
 
 void fr_plugins_report_clear(void) {
     for (size_t index = 0; index < report_count; index++) free_report_entry(&report_entries[index]);
     free(report_entries);
     report_entries = NULL;
     report_count = 0;
+
+    for (size_t index = 0; index < report_unused_resolver_count; index++) {
+        free(report_unused_resolvers[index]);
+    }
+    free(report_unused_resolvers);
+    report_unused_resolvers = NULL;
+    report_unused_resolver_count = 0;
 }
 
 const fr_plugin_report *fr_plugins_report(void) {
     static fr_plugin_report view;
     view.entries = report_entries;
     view.count = report_count;
+    view.unused_resolvers = report_unused_resolvers;
+    view.unused_resolver_count = report_unused_resolver_count;
     return &view;
 }
 
 /* Appends one entry, owning copies of everything it stores: entry and declaration are both
    about to be freed by their callers (fr_plugins_free and free_declaration), so nothing here
-   may keep a pointer into either. */
-static int append_report_entry(const fr_plugin_entry *entry, const char *resolved,
-                               const char *digest, const fr_plugin_declaration *declaration,
-                               fr_error *err) {
+   may keep a pointer into either. origin is the url a URL or resolved entry fetched, or the
+   resolved path a local entry read; resolved is the resolver's own answer, NULL for the two
+   kinds core names itself. */
+static int append_report_entry(const fr_plugin_entry *entry, const char *origin,
+                               const char *resolved, const char *digest,
+                               const fr_plugin_declaration *declaration, fr_error *err) {
     fr_plugin_report_entry *grown = realloc(report_entries, (report_count + 1) * sizeof *grown);
     if (grown == NULL) {
         fr_error_set(err, "out of memory recording plugin \"%s\" in the report", entry->label);
@@ -399,11 +499,15 @@ static int append_report_entry(const fr_plugin_entry *entry, const char *resolve
     memcpy(slot->sha256, digest, sizeof slot->sha256);
 
     slot->label = fr_dup_string(entry->label);
-    slot->resolved = fr_dup_string(resolved);
+    slot->resolved = fr_dup_string(resolved != NULL ? resolved : origin);
+    slot->url = entry->kind != FR_PLUGIN_PATH ? fr_dup_string(origin) : NULL;
+    slot->resolver = fr_dup_string(entry->resolver);
     slot->uses = declaration->uses_count > 0
                      ? malloc(declaration->uses_count * sizeof *slot->uses)
                      : NULL;
     if (slot->label == NULL || slot->resolved == NULL
+        || (entry->kind != FR_PLUGIN_PATH && slot->url == NULL)
+        || (entry->resolver != NULL && slot->resolver == NULL)
         || (declaration->uses_count > 0 && slot->uses == NULL)) {
         free_report_entry(slot);
         fr_error_set(err, "out of memory recording plugin \"%s\" in the report", entry->label);
@@ -425,19 +529,72 @@ static int append_report_entry(const fr_plugin_entry *entry, const char *resolve
     return FR_OK;
 }
 
-static int load_one(const fr_plugin_entry *entry, fr_error *err) {
-    lua_State *state = fr_lua_runtime_state();
+static int unknown_resolver(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
+                            size_t resolver_count, fr_error *err) {
+    char declared[160];
+    describe_declared_resolvers(declared, sizeof declared, resolvers, resolver_count);
+    fr_error_set(err, "plugin \"%s\": no resolver \"%s\" is declared. Declared resolvers: %s",
+                 entry->label, entry->resolver, declared);
+    return FR_ERR;
+}
 
-    char *path = NULL;
-    char *text = NULL;
-    if (entry->kind == FR_PLUGIN_LOCAL) {
-        if (fr_lua_sandbox_resolve(state, entry->path, &path, err) != FR_OK) return FR_ERR;
-        if (fr_file_read_text(path, &text, err) != FR_OK) {
-            free(path);
+/* Acquires entry's chunk and reports where it came from: origin is what the
+   digest pin is checked against and what a failed pin discards, resolved is
+   the resolver's own answer and stays NULL for the two kinds core names
+   itself. */
+static int acquire(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
+                   size_t resolver_count, char **out_text, char **out_origin, char **out_resolved,
+                   fr_error *err) {
+    *out_text = NULL;
+    *out_origin = NULL;
+    *out_resolved = NULL;
+
+    if (entry->kind == FR_PLUGIN_PATH) {
+        lua_State *state = fr_lua_runtime_state();
+        if (fr_lua_sandbox_resolve(state, entry->path, out_origin, err) != FR_OK) return FR_ERR;
+        if (fr_file_read_text(*out_origin, out_text, err) != FR_OK) {
+            free(*out_origin);
+            *out_origin = NULL;
             return FR_ERR;
         }
+        return FR_OK;
+    }
+
+    fr_http_headers headers = { { { NULL, NULL } }, 0 };
+    if (entry->kind == FR_PLUGIN_URL) {
+        *out_origin = fr_dup_string(entry->url);
+        if (*out_origin == NULL) return out_of_memory(entry->label, err);
     } else {
-        if (fr_plugins_resolve_remote(entry, &text, &path, err) != FR_OK) return FR_ERR;
+        const fr_resolver_entry *resolver =
+            fr_resolvers_find(resolvers, resolver_count, entry->resolver);
+        if (resolver == NULL) return unknown_resolver(entry, resolvers, resolver_count, err);
+        if (fr_resolvers_use(resolver, entry->coordinate, out_origin, out_resolved, &headers, err)
+            != FR_OK) {
+            return FR_ERR;
+        }
+    }
+
+    fr_http_header sent[FR_HTTP_MAX_HEADERS];
+    size_t sent_count = fr_http_headers_borrow(&headers, sent);
+    int status = fr_plugin_fetch(*out_origin, sent, sent_count, out_text, err);
+    fr_http_headers_free(&headers);
+    if (status != FR_OK) {
+        free(*out_origin);
+        free(*out_resolved);
+        *out_origin = NULL;
+        *out_resolved = NULL;
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
+static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
+                    size_t resolver_count, fr_error *err) {
+    char *origin = NULL;
+    char *text = NULL;
+    char *resolved = NULL;
+    if (acquire(entry, resolvers, resolver_count, &text, &origin, &resolved, err) != FR_OK) {
+        return FR_ERR;
     }
 
     /* Computed for every plugin, pinned or not: an unpinned entry's digest is what
@@ -449,87 +606,155 @@ static int load_one(const fr_plugin_entry *entry, fr_error *err) {
     if (entry->sha256 != NULL && !digest_matches(digest, entry->sha256)) {
         fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
                     entry->label, entry->sha256, digest);
-        if (entry->kind == FR_PLUGIN_REMOTE) fr_plugins_discard_cached_version(path);
+        if (entry->kind != FR_PLUGIN_PATH) fr_plugin_fetch_discard(origin);
         free(text);
-        free(path);
+        free(origin);
+        free(resolved);
         return FR_ERR;
     }
 
-    fr_plugin_declaration declaration = { entry->label, { NULL }, 0 };
-    int status = read_declaration(state, text, path, &declaration, err);
+    lua_State *state = fr_lua_runtime_state();
+    fr_plugin_declaration declaration = { "plugin", entry->label, { NULL }, 0 };
+    int status = read_declaration(state, text, origin, &declaration, err);
     if (status == FR_OK) {
-        status = fr_lua_plugin_load(text, path, (const char *const *) declaration.uses,
+        status = fr_lua_plugin_load(text, origin, (const char *const *) declaration.uses,
                                     declaration.uses_count, err);
     }
-
     if (status == FR_OK) {
-        char *resolved = entry->kind == FR_PLUGIN_LOCAL ? fr_dup_string(path)
-                                                         : remote_resolved_from_origin(path);
-        if (resolved == NULL) {
-            fr_error_set(err, "out of memory recording plugin \"%s\" in the report", entry->label);
-            status = FR_ERR;
-        } else {
-            status = append_report_entry(entry, resolved, digest, &declaration, err);
-            free(resolved);
-        }
+        status = append_report_entry(entry, origin, resolved, digest, &declaration, err);
     }
 
     free_declaration(&declaration);
     free(text);
-    free(path);
+    free(origin);
+    free(resolved);
     return status;
+}
+
+/* Declared-versus-referenced is a static comparison over the parsed entries, not
+   something discovered by acquiring a resolver: section 4.1 deliberately never fetches
+   or runs a resolver no plugin names, so this must not either. */
+static int record_unused_resolvers(const fr_plugin_entry *entries, size_t entry_count,
+                                   const fr_resolver_entry *resolvers, size_t resolver_count,
+                                   fr_error *err) {
+    if (resolver_count == 0) return FR_OK;
+
+    char **unused = malloc(resolver_count * sizeof *unused);
+    if (unused == NULL) {
+        fr_error_set(err, "out of memory recording unused resolvers");
+        return FR_ERR;
+    }
+
+    size_t unused_count = 0;
+    for (size_t index = 0; index < resolver_count; index++) {
+        const char *label = resolvers[index].label;
+        int used = 0;
+        for (size_t entry_index = 0; entry_index < entry_count && !used; entry_index++) {
+            used = entries[entry_index].kind == FR_PLUGIN_RESOLVED
+                && strcmp(entries[entry_index].resolver, label) == 0;
+        }
+        if (used) continue;
+
+        char *copy = fr_dup_string(label);
+        if (copy == NULL) {
+            for (size_t free_index = 0; free_index < unused_count; free_index++) free(unused[free_index]);
+            free(unused);
+            fr_error_set(err, "out of memory recording unused resolvers");
+            return FR_ERR;
+        }
+        unused[unused_count] = copy;
+        unused_count++;
+    }
+
+    if (unused_count == 0) {
+        free(unused);
+        return FR_OK;
+    }
+
+    report_unused_resolvers = unused;
+    report_unused_resolver_count = unused_count;
+    return FR_OK;
 }
 
 int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const char *base_dir,
                     fr_error *err) {
     fr_plugins_report_clear();
+    fr_resolvers_clear();
+
+    fr_resolver_entry *resolvers = NULL;
+    size_t resolver_count = 0;
+    if (fr_resolvers_parse(document, &resolvers, &resolver_count, err) != FR_OK) return FR_ERR;
 
     fr_plugin_entry *entries = NULL;
     size_t count = 0;
-    if (fr_plugins_parse(document, &entries, &count, err) != FR_OK) return FR_ERR;
-    if (count == 0) return FR_OK;
-
-    if (fr_lua_runtime_begin(base_dir, registry, err) != FR_OK) {
-        fr_plugins_free(entries, count);
-        return FR_ERR;
+    int status = fr_plugins_parse(document, resolvers, resolver_count, &entries, &count, err);
+    if (status == FR_OK) {
+        status = record_unused_resolvers(entries, count, resolvers, resolver_count, err);
+    }
+    if (status == FR_OK && count > 0) {
+        status = fr_lua_runtime_begin(base_dir, registry, err);
+        for (size_t index = 0; index < count && status == FR_OK; index++) {
+            status = load_one(&entries[index], resolvers, resolver_count, err);
+        }
     }
 
-    int status = FR_OK;
-    for (size_t index = 0; index < count && status == FR_OK; index++) {
-        status = load_one(&entries[index], err);
-    }
     fr_plugins_free(entries, count);
+    fr_resolvers_free(resolvers, resolver_count);
     return status;
 }
 
-/* Entry-list work, not cache work: matching a label against entries already
-   parsed from ONE manifest belongs here, while actually locating and deleting
-   a remote plugin's cache directory is plugins_remote.c's fr_plugins_remove_cache,
-   called once per matched FR_PLUGIN_REMOTE entry. *out_removed_count tells the
-   caller how many entries actually had a cache removed, so it can report a
-   local match (nothing was ever cached for it) differently from a real
-   removal rather than claiming to have cleared a cache that never existed. */
-int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count, const char *label,
-                            size_t *out_removed_count, fr_error *err) {
+int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
+                            const fr_resolver_entry *resolvers, size_t resolver_count,
+                            const char *label, size_t *out_removed_count, fr_error *err) {
     *out_removed_count = 0;
 
-    if (label == NULL) {
-        for (size_t index = 0; index < count; index++) {
-            if (entries[index].kind != FR_PLUGIN_REMOTE) continue;
-            if (fr_plugins_remove_cache(entries[index].repo, err) != FR_OK) return FR_ERR;
+    int was_refreshing = fr_cache_refreshing();
+    int was_enabled = fr_cache_enabled();
+    fr_cache_set_refreshing(1);
+    fr_cache_set_enabled(1);
+
+    int status = FR_OK;
+    int matched = label == NULL;
+
+    for (size_t index = 0; index < count && status == FR_OK; index++) {
+        const fr_plugin_entry *entry = &entries[index];
+        if (label != NULL && strcmp(entry->label, label) != 0) continue;
+        matched = 1;
+
+        if (entry->kind == FR_PLUGIN_URL) {
+            fr_plugin_fetch_discard(entry->url);
             (*out_removed_count)++;
+        } else if (entry->kind == FR_PLUGIN_RESOLVED) {
+            const fr_resolver_entry *resolver =
+                fr_resolvers_find(resolvers, resolver_count, entry->resolver);
+            if (resolver == NULL) {
+                status = unknown_resolver(entry, resolvers, resolver_count, err);
+            } else {
+                char *url = NULL;
+                char *resolved = NULL;
+                fr_http_headers headers = { { { NULL, NULL } }, 0 };
+                status = fr_resolvers_use(resolver, entry->coordinate, &url, &resolved, &headers,
+                                          err);
+                if (status == FR_OK) {
+                    fr_plugin_fetch_discard(url);
+                    (*out_removed_count)++;
+                }
+                fr_http_headers_free(&headers);
+                free(url);
+                free(resolved);
+            }
         }
-        return FR_OK;
+
+        if (label != NULL) break;
     }
 
-    for (size_t index = 0; index < count; index++) {
-        if (strcmp(entries[index].label, label) != 0) continue;
-        if (entries[index].kind != FR_PLUGIN_REMOTE) return FR_OK;
-        if (fr_plugins_remove_cache(entries[index].repo, err) != FR_OK) return FR_ERR;
-        *out_removed_count = 1;
-        return FR_OK;
-    }
+    fr_cache_set_refreshing(was_refreshing);
+    fr_cache_set_enabled(was_enabled);
 
-    fr_error_set(err, "no plugin named \"%s\"", label);
-    return FR_ERR;
+    if (status != FR_OK) return FR_ERR;
+    if (!matched) {
+        fr_error_set(err, "no plugin named \"%s\"", label);
+        return FR_ERR;
+    }
+    return FR_OK;
 }

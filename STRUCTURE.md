@@ -81,8 +81,9 @@ the client tier's rules.
 | verifying a spliced manifest still parses | `tomledit.c`, through `FR_CONFIG_TOML` | a second parser. It reads its own output back so no caller is handed text it would be wrong to write |
 | running a configuration script, reading it back, and registering any source or language plugin the script declares | `config_lua.c` | the sandbox or the lua state, which are `lua_sandbox.c` and `luax.c` |
 | what a plugin may touch, and building one environment per plugin | `lua_verbs.c` | the configuration sandbox, which is `lua_sandbox.c`. One is per plugin, the other is the state's globals |
-| reading `[plugins]`, the declaration pass, and loading a local plugin | `plugins.c` | the remote half, which is `plugins_remote.c` |
-| resolving a remote coordinate, the plugin cache, and fetching from GitHub | `plugins_remote.c` | the parser or the declaration reader, which are `plugins.c` |
+| reading `[plugins]`, the declaration pass, and acquiring a plugin by path, url or resolver | `plugins.c` | fetching bytes, which is `plugin_fetch.c`, or turning a coordinate into a url, which is a resolver plugin through `resolvers.c` |
+| fetching and caching the bytes at a plugin URL; knows no coordinate, version or host | `src/plugin_fetch.c` | resolving a coordinate to a URL, or interpreting the bytes it fetches, which are the plugin loader's question |
+| the `[resolvers]` table, and acquiring, running and invoking a resolver plugin | `src/resolvers.c` | fetching bytes, which is `plugin_fetch.c`, or loading a plugin, which is `plugins.c` |
 | a sha-256 digest | `sha256.c` | a general crypto library |
 | the shared exec logic, joining a program and its argument vector into the one command line `CreateProcess` requires, and freeing an `fr_exec_result` | `exec.c`, `exec.h`, tested by `test/test_exec_quote.c` | spawning a process. That is `exec_posix.c` and `exec_win32.c`. Reachable from Lua through `daukle.exec`, which takes a `daukle.tool` handle, never a path string |
 | spawning a process on POSIX with `fork`/`execv`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `exec_posix.c`, tested by `test/test_exec.c` | building the command line, which stays in `exec.c` because Windows needs it too |
@@ -136,8 +137,7 @@ the cache serves one for the other and emits silently wrong coordinates.
 
 ## 3. Tests
 
-One test file per src module, under `test/`, on the `greatest` harness, except that `plugins.c` and
-`plugins_remote.c` share `test_plugins.c`. Beyond the per-module tests
+One test file per src module, under `test/`, on the `greatest` harness. Beyond the per-module tests
 there are `test_e2e.c` and `test_e2e_languages.c` for whole-pass behaviour, and `test_http.c`,
 `test_network.c` and `test_redirect.c` run against `test/http_server.c`, a real local server rather
 than a mock, so redirect and transport behaviour is exercised as it will be in use.
@@ -146,8 +146,7 @@ than a mock, so redirect and transport behaviour is exercised as it will be in u
 tests themselves.
 
 Most modules have a dedicated test file; the rest are covered through the tests of the module that
-drives them, such as `plugins_remote.c` through `test_plugins.c`, and `config_json.c` through
-`test_lua_verbs.c`'s `json_parse` tests.
+drives them, such as `config_json.c` through `test_lua_verbs.c`'s `json_parse` tests.
 
 **daukle no longer tests what npm, Gradle or C output looks like.** `test_lang_npm.c`,
 `test_lang_gradle.c`, `test_lang_c.c` and `test_source_github.c` were deleted with the modules they
@@ -218,12 +217,15 @@ error rather than a silent discard, and whatever it produces is read back throug
 before anything is written.
 
 A manifest's `[plugins]` table registers a source or a language by running each declared plugin in a
-`lua_verbs.c` environment scoped to exactly the verbs it declared, through `plugins.c` and
-`plugins_remote.c`. It is now the only route into the registry's source and language tables:
+`lua_verbs.c` environment scoped to exactly the verbs it declared, through `plugins.c`. It is now
+the only route into the registry's source and language tables:
 `fr_build_registry` registers only the config formats, and the five files that used to compile a
 source or a language directly into the binary, `source_path.c`, `source_github.c`, `lang_npm.c`,
 `lang_gradle.c` and `lang_c.c`, are gone. `FR_SOURCE_[A-Z]` and `FR_LANGUAGE_[A-Z]` are in the
 agnostic check's `FORBIDDEN` list, so `config.c` cannot silently regain one.
+`check_agnostic.cmake` enforces two rules over two file sets: no plugin name in `CORE_FILES`, and no
+forge host, `api.github.com`, `github.com`, `gitlab` or `bitbucket`, anywhere in `src/*.c` or
+`src/*.h`, which is why the second rule reaches `plugins.c` and `resolvers.c` that the first excludes.
 `daukle plugin update [label]` always reads the current manifest first and removes a
 remote plugin's cached copies scoped to what THAT manifest declares: one label's entry, or, with no
 label, every remote entry it declares, and nothing outside it, so the plugin cache root, which is
