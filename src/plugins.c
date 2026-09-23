@@ -40,18 +40,27 @@ static int out_of_memory(const char *label, fr_error *err) {
     return FR_ERR;
 }
 
+/* Keeps only whole labels and marks the cut, rather than ending the one
+   diagnostic a reader gets when a coordinate does not resolve mid-label. */
 static void describe_declared_resolvers(char *out, size_t out_size,
                                         const fr_resolver_entry *resolvers, size_t count) {
-    snprintf(out, out_size, "none");
-    if (count == 0) return;
+    if (count == 0) {
+        snprintf(out, out_size, "none");
+        return;
+    }
 
+    static const char ELLIPSIS[] = ", ...";
     size_t used = 0;
     out[0] = '\0';
     for (size_t index = 0; index < count; index++) {
-        int written = snprintf(out + used, out_size - used, "%s%s", index == 0 ? "" : ", ",
-                               resolvers[index].label);
-        if (written < 0 || (size_t) written >= out_size - used) return;
-        used += (size_t) written;
+        const char *separator = index == 0 ? "" : ", ";
+        size_t needed = strlen(separator) + strlen(resolvers[index].label);
+        if (used + needed + sizeof ELLIPSIS > out_size) {
+            snprintf(out + used, out_size - used, "%s", used == 0 ? "..." : ELLIPSIS);
+            return;
+        }
+        used += (size_t) snprintf(out + used, out_size - used, "%s%s", separator,
+                                  resolvers[index].label);
     }
 }
 

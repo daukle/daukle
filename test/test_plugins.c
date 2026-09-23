@@ -170,6 +170,42 @@ TEST the_declared_resolvers_are_named_when_a_value_names_none(void) {
     PASS();
 }
 
+/* The list is bounded, so a manifest with many resolvers has to be cut. It is
+   cut after a whole label and says so, because a name ending mid-word reads as
+   a resolver the reader does not have rather than as a list that ran out. */
+TEST an_overlong_resolver_list_is_cut_after_a_whole_label(void) {
+    fr_error err;
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    char labels[40][16];
+    fr_resolver_entry resolvers[40];
+    memset(resolvers, 0, sizeof resolvers);
+    for (size_t index = 0; index < 40; index++) {
+        snprintf(labels[index], sizeof labels[index], "resolver-%02zu", index);
+        resolvers[index].label = labels[index];
+    }
+
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"npm\":\"daukle/npm@^1.0.0\"}}");
+    int status = fr_plugins_parse(document, resolvers, 40, &entries, &count, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+    cJSON_Delete(document);
+    fr_plugins_free(entries, count);
+
+    const char *list = strstr(message, "Declared resolvers: ");
+    size_t list_length = list != NULL ? strlen(list) : 0;
+    /* Every label ends in a digit, so the character before the cut marker is a
+       digit only when a whole label survived. */
+    char before_the_cut = list_length >= 6 ? list[list_length - 6] : '\0';
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(list != NULL);
+    ASSERT(strstr(list, "resolver-00, resolver-01") != NULL);
+    ASSERT_STR_EQ(", ...", list + list_length - 5);
+    ASSERT(isdigit((unsigned char) before_the_cut));
+    PASS();
+}
+
 TEST rejects_a_plugins_member_that_is_not_a_table(void) {
     cJSON *document = document_from("{\"plugins\":[1,2]}");
     fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
@@ -592,10 +628,17 @@ static const char *ARTIFACT_BODY =
     "daukle.plugin{ api = 1, uses = {} }\n"
     "daukle.language{ name = 'from-url', apply = function() return '' end }\n";
 
+/* Which url was asked for, so a test can assert that the url the resolver
+   named is the url that was fetched. Without it the stub answers every url
+   alike and a fetch of the raw coordinate, or of a stale origin, would load
+   just as happily. */
+static char LAST_FETCHED_URL[256];
+
 static int stub_inline(const char *url, const fr_http_header *headers, size_t header_count,
                        char **out_body, size_t *out_length, fr_error *err) {
     (void) headers; (void) header_count; (void) err;
     release_requests++;
+    snprintf(LAST_FETCHED_URL, sizeof LAST_FETCHED_URL, "%s", url);
     *out_body = copy_body(strstr(url, "/resolver.lua") != NULL ? INLINE_RESOLVER : ARTIFACT_BODY,
                           out_length);
     return FR_OK;
@@ -629,23 +672,41 @@ static int loads_from_url(const char *document_json, int *out_status, fr_error *
     return registered;
 }
 
+/* The fetch cache is keyed by url and survives between runs, so a test that
+   asserts WHICH url was fetched has to make every fetch reach the stub or
+   LAST_FETCHED_URL is whatever the run before it happened to leave. */
+static int loads_reaching_the_network(const char *document_json, int *out_status, fr_error *err) {
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    LAST_FETCHED_URL[0] = '\0';
+    int registered = loads_from_url(document_json, out_status, err);
+    fr_cache_set_enabled(cache_was_enabled);
+    return registered;
+}
+
 TEST a_url_entry_fetches_and_loads(void) {
     fr_error err;
     int status = FR_ERR;
-    int registered = loads_from_url("{\"plugins\":{\"p\":\"https://x/plain.lua\"}}", &status, &err);
+    int registered = loads_reaching_the_network("{\"plugins\":{\"p\":\"https://x/plain.lua\"}}",
+                                                &status, &err);
     ASSERT_EQm(err.message, FR_OK, status);
     ASSERT(registered);
+    ASSERT_STR_EQ("https://x/plain.lua", LAST_FETCHED_URL);
     PASS();
 }
 
+/* The resolver returns "https://x/" .. coordinate .. ".lua", so the url that
+   reaches the network is the one assertion that separates "the resolver ran"
+   from "what the resolver named is what was fetched". */
 TEST a_resolved_entry_loads_what_its_resolver_names(void) {
     fr_error err;
     int status = FR_ERR;
-    int registered = loads_from_url(
+    int registered = loads_reaching_the_network(
         "{\"resolvers\":{\"t\":{\"url\":\"https://x/resolver.lua\",\"sha256\":\"" INLINE_DIGEST
         "\"}},\"plugins\":{\"p\":\"t:a/b\"}}", &status, &err);
     ASSERT_EQm(err.message, FR_OK, status);
     ASSERT(registered);
+    ASSERT_STR_EQ("https://x/a/b.lua", LAST_FETCHED_URL);
     PASS();
 }
 
@@ -924,15 +985,18 @@ TEST fr_plugins_update_cache_with_no_label_touches_only_the_given_entries(void) 
 
     /* "d" was in the entries fr_plugins_update_cache was given: its artifact
        must be gone, so loading it again reaches the network. */
-    int reloaded = FR_ERR;
+    int declared_reloaded = FR_ERR;
     release_requests = 0;
-    loads_from_url(declared_only, &reloaded, &err);
+    loads_from_url(declared_only, &declared_reloaded, &err);
     int declared_requests = release_requests;
 
     /* "o" was never in those entries: its artifact must survive, so loading it
-       again makes zero requests. */
+       again makes zero requests. Both reloads are asserted to have SUCCEEDED,
+       or a zero request count would also be what a reload that failed before
+       asking for anything produces. */
+    int other_reloaded = FR_ERR;
     release_requests = 0;
-    loads_from_url(other_only, &reloaded, &err);
+    loads_from_url(other_only, &other_reloaded, &err);
     int other_requests = release_requests;
 
     fr_plugin_fetch_discard(declared_url);
@@ -943,6 +1007,8 @@ TEST fr_plugins_update_cache_with_no_label_touches_only_the_given_entries(void) 
     ASSERT_EQ(FR_OK, parsed);
     ASSERT_EQ(FR_OK, updated);
     ASSERT_EQ(1, (int) removed_count);
+    ASSERT_EQ(FR_OK, declared_reloaded);
+    ASSERT_EQ(FR_OK, other_reloaded);
     ASSERT(declared_requests > 0);
     ASSERT_EQ(0, other_requests);
     PASS();
@@ -950,7 +1016,7 @@ TEST fr_plugins_update_cache_with_no_label_touches_only_the_given_entries(void) 
 
 /* The other half of the honesty fix: a label matching a REAL fetched entry must
    report removed_count 1, not just the local no-op case reporting 0. */
-TEST fr_plugins_update_cache_with_a_label_matching_a_remote_entry_removes_it(void) {
+TEST fr_plugins_update_cache_with_a_label_matching_a_url_entry_removes_it(void) {
     fr_error err;
     char url[128];
     snprintf(url, sizeof url, "https://x/%d-labelled.lua", fr_test_process_id());
@@ -981,6 +1047,7 @@ TEST fr_plugins_update_cache_with_a_label_matching_a_remote_entry_removes_it(voi
     ASSERT_EQ(FR_OK, parsed);
     ASSERT_EQ(FR_OK, updated);
     ASSERT_EQ(1, (int) removed_count);
+    ASSERT_EQ(FR_OK, reloaded);
     ASSERT(requests_after > 0);
     PASS();
 }
@@ -1090,6 +1157,7 @@ int main(int argc, char **argv) {
     RUN_TEST(an_absent_plugins_table_yields_no_entries);
     RUN_TEST(the_old_bare_coordinate_form_names_the_fix);
     RUN_TEST(the_declared_resolvers_are_named_when_a_value_names_none);
+    RUN_TEST(an_overlong_resolver_list_is_cut_after_a_whole_label);
     RUN_TEST(rejects_a_plugins_member_that_is_not_a_table);
     RUN_TEST(rejects_a_string_with_an_empty_half_around_the_colon);
     RUN_TEST(a_windows_drive_letter_string_is_a_path);
@@ -1123,7 +1191,7 @@ int main(int argc, char **argv) {
     RUN_TEST(the_report_names_what_the_resolver_resolved);
     RUN_TEST(a_failed_pin_discards_the_cached_artifact);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);
-    RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_remote_entry_removes_it);
+    RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_url_entry_removes_it);
     RUN_TEST(fr_plugins_update_cache_with_an_unknown_label_errors_naming_it);
     RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error);
     RUN_TEST(a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_digests);

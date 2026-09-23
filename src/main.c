@@ -361,12 +361,6 @@ static int add_dependency(const fr_cli_options *options) {
     return 0;
 }
 
-/* Reads only the manifest's own document, never fr_config_load_file: that also
-   runs fr_plugins_load, which resolves and executes every declared plugin, the
-   opposite of what "plugin update" wants when a plugin's current cache is what
-   it is trying to discard. The load call therefore passes no registry, and an
-   overlay format is refused outright, since executing one is precisely what
-   dispatching on its extension would do. */
 /* The document outlives the entries parsed from it because
    fr_resolver_entry.block borrows from it, and a resolver reached after it was
    freed would read freed memory. */
@@ -385,6 +379,12 @@ static void manifest_plugins_free(manifest_plugins *plugins) {
     memset(plugins, 0, sizeof *plugins);
 }
 
+/* Reads only the manifest's own document, never fr_config_load_file: that also
+   runs fr_plugins_load, which resolves and executes every declared plugin, the
+   opposite of what "plugin update" wants when a plugin's current cache is what
+   it is trying to discard. The load call therefore passes no registry, and an
+   overlay format is refused outright, since executing one is precisely what
+   dispatching on its extension would do. */
 static int read_manifest_plugins(const char *manifest_path, manifest_plugins *out, fr_error *err) {
     memset(out, 0, sizeof *out);
 
