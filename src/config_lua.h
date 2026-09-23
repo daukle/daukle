@@ -52,6 +52,17 @@ int fr_lua_plugin_exec_is_refused(void);
    the user's compiler. */
 int fr_lua_generation_is_running(void);
 
+/* Whether the chunk that fr_lua_plugin_load most recently ran declared a
+   resolver. */
+int fr_lua_resolver_declared(void);
+
+/* Calls the most recently declared resolver's resolve function with
+   coordinate and block, and reads url and resolved (if present) from the
+   table it returns. The caller adds the label and coordinate to any error
+   this raises. */
+int fr_lua_resolver_call(const char *coordinate, const struct cJSON *block, char **out_url,
+                         char **out_resolved, fr_error *err);
+
 /* The directory a running task's exec defaults to, or NULL when no task is
    running. This is what discharges the exec verb's cwd default: child spec 2
    claimed to and did not, leaving a child inheriting daukle's own working
