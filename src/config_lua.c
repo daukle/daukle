@@ -581,12 +581,6 @@ static int lua_declare_toolchain(lua_State *state) {
                           FR_LUA_MAX_CHUNK_TOOLCHAINS);
     }
 
-    /* raw_getfield, not lua_getfield: this read is the sole record of which
-       toolchain this chunk may declare tasks for, and take_slot above already
-       read the same table's "name" once to build the registered capability. A
-       hostile __index could answer those two reads differently (or answer
-       this one differently on a second call), letting a chunk record a
-       toolchain here that it never actually registered above. */
     raw_getfield(state, 1, "name");
     const char *toolchain_name = lua_tostring(state, -1);
     if (toolchain_name == NULL) return luaL_error(state, "a toolchain needs a name");
