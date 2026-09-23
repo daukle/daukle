@@ -163,9 +163,6 @@ int fr_session_open(const char *manifest_path, int use_cache, fr_session *out, f
     out->manifest_path = fr_dup_string(manifest_path);
     if (out->manifest_dir == NULL || out->manifest_path == NULL) {
         fr_error_set(err, "out of memory deriving the manifest directory");
-        fr_manifest_free(&out->manifest);
-        memset(&out->manifest, 0, sizeof out->manifest);
-        out->loaded = 0;
         fr_session_close(out);
         return FR_ERR;
     }
