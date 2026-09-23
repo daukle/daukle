@@ -197,7 +197,14 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
     }
 
     const char *origin = entry->path != NULL ? path : entry->url;
-    int status = fr_lua_plugin_load(text, origin, NULL, 0, err);
+
+    char **uses = NULL;
+    size_t uses_count = 0;
+    int status = fr_plugins_read_uses(text, origin, entry->label, &uses, &uses_count, err);
+    if (status == FR_OK) {
+        status = fr_lua_plugin_load(text, origin, (const char *const *) uses, uses_count, err);
+    }
+    fr_plugins_free_uses(uses, uses_count);
     free(text);
     free(path);
     if (status != FR_OK) return FR_ERR;
@@ -211,6 +218,11 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
 
 int fr_resolvers_use(const fr_resolver_entry *entry, const char *coordinate, char **out_url,
                      char **out_resolved, fr_error *err) {
+    if (entry == NULL) {
+        fr_error_set(err, "no resolver to use");
+        return FR_ERR;
+    }
+
     if (loaded_label == NULL || strcmp(loaded_label, entry->label) != 0) {
         if (acquire(entry, err) != FR_OK) return FR_ERR;
 

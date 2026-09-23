@@ -431,7 +431,11 @@ static int read_manifest_plugins(const char *manifest_path, manifest_plugins *ou
    label-less update in one project would silently discard every other
    project's cached plugins too. The scoping rule itself lives in
    fr_plugins_update_cache, shared with, and covered directly by, test_plugins.c,
-   since main.c has no test binary of its own. */
+   since main.c has no test binary of its own.
+   A lua runtime is opened here, around the update_cache call, rather than
+   inside it: fr_plugins_update_cache re-resolves an FR_PLUGIN_RESOLVED entry
+   through fr_resolvers_use, which needs one open, and only this function
+   knows the manifest's own directory a path-form resolver resolves against. */
 static int plugin_update(const char *label, int use_cache, int verbose) {
     fr_error err;
     fr_cache_set_enabled(use_cache);
@@ -444,8 +448,27 @@ static int plugin_update(const char *label, int use_cache, int verbose) {
 
     manifest_plugins plugins;
     int status = read_manifest_plugins(resolved, &plugins, &err);
-    free(resolved);
     if (status != FR_OK) {
+        free(resolved);
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    char *directory = manifest_directory(resolved);
+    free(resolved);
+    if (directory == NULL) {
+        manifest_plugins_free(&plugins);
+        fprintf(stderr, "daukle: out of memory finding the manifest directory\n");
+        return 1;
+    }
+
+    fr_registry *registry = NULL;
+    status = fr_build_registry(&registry, &err);
+    if (status == FR_OK) status = fr_lua_runtime_begin(directory, registry, &err);
+    free(directory);
+    if (status != FR_OK) {
+        if (registry != NULL) fr_registry_destroy(registry);
+        manifest_plugins_free(&plugins);
         report_error(&err, verbose);
         return 1;
     }
@@ -453,6 +476,10 @@ static int plugin_update(const char *label, int use_cache, int verbose) {
     size_t removed_count = 0;
     status = fr_plugins_update_cache(plugins.entries, plugins.count, plugins.resolvers,
                                      plugins.resolver_count, label, &removed_count, &err);
+
+    fr_lua_runtime_shutdown();
+    fr_resolvers_clear();
+    fr_registry_destroy(registry);
     manifest_plugins_free(&plugins);
     if (status != FR_OK) {
         report_error(&err, verbose);

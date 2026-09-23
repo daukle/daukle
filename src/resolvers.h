@@ -30,7 +30,10 @@ const fr_resolver_entry *fr_resolvers_find(const fr_resolver_entry *entries, siz
 /* Acquires entry's chunk through the floor and runs it, unless entry->label is
    already the loaded resolver, then calls its resolve function with
    coordinate. Acquiring covers both a local path and a pinned url, verifying
-   sha256 before the chunk runs. */
+   sha256 before the chunk runs, and honours whatever verbs its own
+   daukle.plugin{ uses = {...} } declares, the same as a plugin's chunk does. A
+   NULL entry is a real daukle error, not a crash: entry->label is the first
+   thing this function would otherwise read. */
 int fr_resolvers_use(const fr_resolver_entry *entry, const char *coordinate, char **out_url,
                      char **out_resolved, fr_error *err);
 

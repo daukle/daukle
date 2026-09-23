@@ -1,6 +1,7 @@
 #include "plugins.h"
 
 #include "cJSON.h"
+#include "cache.h"
 #include "config_lua.h"
 #include "error.h"
 #include "jsonx.h"
@@ -380,6 +381,41 @@ static int read_declaration(lua_State *state, const char *text, const char *orig
                    sizeof FR_PLUGIN_DECLARATION_READ - 1) == 0 ? FR_OK : FR_ERR;
 }
 
+/* Shared with resolvers.c: a resolver's chunk starts with the same
+   daukle.plugin{ uses = {...} } call a plugin's does, and acquiring it goes
+   through this same read-then-load split so that declaration is honoured
+   there too, rather than every verb being either always on or always off for
+   a resolver. */
+int fr_plugins_read_uses(const char *text, const char *origin, const char *label,
+                         char ***out_uses, size_t *out_uses_count, fr_error *err) {
+    *out_uses = NULL;
+    *out_uses_count = 0;
+
+    lua_State *state = fr_lua_runtime_state();
+    fr_plugin_declaration declaration = { label, { NULL }, 0 };
+    if (read_declaration(state, text, origin, &declaration, err) != FR_OK) {
+        free_declaration(&declaration);
+        return FR_ERR;
+    }
+    if (declaration.uses_count == 0) return FR_OK;
+
+    char **uses = malloc(declaration.uses_count * sizeof *uses);
+    if (uses == NULL) {
+        free_declaration(&declaration);
+        return out_of_memory(label, err);
+    }
+    memcpy(uses, declaration.uses, declaration.uses_count * sizeof *uses);
+    *out_uses = uses;
+    *out_uses_count = declaration.uses_count;
+    return FR_OK;
+}
+
+void fr_plugins_free_uses(char **uses, size_t count) {
+    if (uses == NULL) return;
+    for (size_t index = 0; index < count; index++) free(uses[index]);
+    free(uses);
+}
+
 /* stricmp/strcasecmp are not portable C11; a sha256 hex digest is a bounded
    64 characters, so comparing lowercased copies in fixed buffers is safe. */
 static int digest_matches(const char *actual, const char *pinned) {
@@ -586,27 +622,49 @@ int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const c
 int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
                             const fr_resolver_entry *resolvers, size_t resolver_count,
                             const char *label, size_t *out_removed_count, fr_error *err) {
-    (void) resolvers;
-    (void) resolver_count;
     *out_removed_count = 0;
 
-    if (label == NULL) {
-        for (size_t index = 0; index < count; index++) {
-            if (entries[index].kind != FR_PLUGIN_URL) continue;
-            fr_plugin_fetch_discard(entries[index].url);
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+
+    int status = FR_OK;
+    int matched = label == NULL;
+
+    for (size_t index = 0; index < count && status == FR_OK; index++) {
+        const fr_plugin_entry *entry = &entries[index];
+        if (label != NULL && strcmp(entry->label, label) != 0) continue;
+        matched = 1;
+
+        if (entry->kind == FR_PLUGIN_URL) {
+            fr_plugin_fetch_discard(entry->url);
             (*out_removed_count)++;
+        } else if (entry->kind == FR_PLUGIN_RESOLVED) {
+            const fr_resolver_entry *resolver =
+                fr_resolvers_find(resolvers, resolver_count, entry->resolver);
+            if (resolver == NULL) {
+                status = unknown_resolver(entry, resolvers, resolver_count, err);
+            } else {
+                char *url = NULL;
+                char *resolved = NULL;
+                status = fr_resolvers_use(resolver, entry->coordinate, &url, &resolved, err);
+                if (status == FR_OK) {
+                    fr_plugin_fetch_discard(url);
+                    (*out_removed_count)++;
+                }
+                free(url);
+                free(resolved);
+            }
         }
-        return FR_OK;
+
+        if (label != NULL) break;
     }
 
-    for (size_t index = 0; index < count; index++) {
-        if (strcmp(entries[index].label, label) != 0) continue;
-        if (entries[index].kind != FR_PLUGIN_URL) return FR_OK;
-        fr_plugin_fetch_discard(entries[index].url);
-        *out_removed_count = 1;
-        return FR_OK;
-    }
+    fr_cache_set_enabled(cache_was_enabled);
 
-    fr_error_set(err, "no plugin named \"%s\"", label);
-    return FR_ERR;
+    if (status != FR_OK) return FR_ERR;
+    if (!matched) {
+        fr_error_set(err, "no plugin named \"%s\"", label);
+        return FR_ERR;
+    }
+    return FR_OK;
 }

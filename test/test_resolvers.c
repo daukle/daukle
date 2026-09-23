@@ -351,6 +351,23 @@ TEST one_resolver_named_twice_is_acquired_once(void) {
     PASS();
 }
 
+/* fr_resolvers_use dereferences entry->label on its first line, so a NULL
+   entry reaching it has to fail cleanly here rather than segfault; a caller
+   that forgets its own "resolver not found" check must still get a real
+   daukle error back. */
+TEST fr_resolvers_use_rejects_a_null_entry(void) {
+    fr_error err;
+    char *url = NULL;
+    char *resolved = NULL;
+    int status = fr_resolvers_use(NULL, "a/b", &url, &resolved, &err);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(err.message, "resolver") != NULL);
+    ASSERT(url == NULL);
+    ASSERT(resolved == NULL);
+    PASS();
+}
+
 SUITE(resolvers_suite) {
     RUN_TEST(an_absent_table_yields_no_resolvers);
     RUN_TEST(a_url_entry_with_a_pin_parses);
@@ -367,6 +384,7 @@ SUITE(resolvers_suite) {
     RUN_TEST(a_resolver_returning_no_url_is_refused);
     RUN_TEST(a_chunk_that_declares_no_resolver_is_refused);
     RUN_TEST(one_resolver_named_twice_is_acquired_once);
+    RUN_TEST(fr_resolvers_use_rejects_a_null_entry);
 }
 
 int main(int argc, char **argv) {

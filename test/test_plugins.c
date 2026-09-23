@@ -946,6 +946,129 @@ TEST a_failed_pin_discards_the_cached_artifact(void) {
     PASS();
 }
 
+/* Follows the shape of ARTIFACT_BODY above, but the language name encodes which
+   url was fetched, so a test can tell "target-one" (the resolver's first,
+   cached answer) apart from "target-two" (the answer only an update that
+   disables the cache can reach). */
+static int stub_named_artifacts(const char *url, const fr_http_header *headers,
+                                size_t header_count, char **out_body, size_t *out_length,
+                                fr_error *err) {
+    (void) headers; (void) header_count; (void) err;
+    const char *name = strstr(url, "/one.lua") != NULL ? "target-one" : "target-two";
+    char body[256];
+    snprintf(body, sizeof body,
+            "daukle.plugin{ api = 1, uses = {} }\n"
+            "daukle.language{ name = '%s', apply = function() return '' end }\n", name);
+    *out_body = copy_body(body, out_length);
+    return FR_OK;
+}
+
+/* The resolver answers from an environment variable, so the test changes what a
+   coordinate means without touching the manifest. That is what separates the
+   two things being tested: an ordinary run must keep serving the old answer
+   from the resolver's cache, and only the update may go past it.
+   The resolver's own daukle.cache call is keyed by the coordinate alone, so
+   that stale answer is permanently sticky for any ordinary, cache-enabled
+   run: fr_plugins_update_cache disabling the global cache flag only reaches
+   past it for the DURATION of the update's own resolve, and does not (cannot,
+   per fr_plugins_update_cache's own doc comment) rewrite the resolver's
+   on-disk answer. So the property this test can actually prove about a
+   SUBSEQUENT ordinary run is that the artifact the update discarded is gone,
+   not that the resolver itself now answers differently: that is why the
+   proof below pre-seeds a cached artifact for the fresh url and checks it is
+   gone afterwards, rather than running a third ordinary load and expecting it
+   to see the new target. */
+TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/from-env.lua\"}},"
+        "\"plugins\":{\"p\":\"t:a/b\"}}";
+    const char *fresh_url = "https://example.invalid/two.lua";
+
+    fr_plugin_fetch_discard(fresh_url);
+    fr_http_fn previous = fr_http_set_backend(stub_named_artifacts);
+    fr_test_set_env("RESOLVER_TARGET", "one");
+
+    fr_registry *first_registry = NULL;
+    int built_first = fr_build_registry(&first_registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
+    int first_load = fr_lua_runtime_begin(".", first_registry, &err) == FR_OK
+                  && fr_plugins_load(first_registry, document, ".", &err) == FR_OK;
+    int got_one = fr_registry_language(first_registry, "daukle.language/target-one") != NULL;
+    fr_registry_destroy(first_registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+
+    fr_test_set_env("RESOLVER_TARGET", "two");
+
+    fr_registry *second_registry = NULL;
+    int built_second = fr_build_registry(&second_registry, &err) == FR_OK;
+    int second_load = fr_lua_runtime_begin(".", second_registry, &err) == FR_OK
+                   && fr_plugins_load(second_registry, document, ".", &err) == FR_OK;
+    int still_one = fr_registry_language(second_registry, "daukle.language/target-one") != NULL;
+    fr_registry_destroy(second_registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+
+    /* Seeded with the cache enabled and the real stub still installed, so this
+       is a genuine cached artifact, not a fabricated one: if the update below
+       resolved the STALE url (a bug: caching not actually disabled), it would
+       discard nothing here and this artifact would survive. */
+    char *seed_text = NULL;
+    int seeded = fr_plugin_fetch(fresh_url, &seed_text, &err) == FR_OK;
+    free(seed_text);
+
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    fr_resolver_entry *resolvers = NULL;
+    size_t resolver_count = 0;
+    fr_resolvers_parse(document, &resolvers, &resolver_count, &err);
+    fr_plugins_parse(document, resolvers, resolver_count, &entries, &count, &err);
+
+    /* fr_plugins_update_cache re-resolves an FR_PLUGIN_RESOLVED entry through
+       fr_resolvers_use, which needs a lua runtime open the same way
+       fr_plugins_load's own callers give it one; main.c's plugin_update opens
+       this same runtime around its call for the same reason. */
+    fr_registry *update_registry = NULL;
+    int update_began = fr_build_registry(&update_registry, &err) == FR_OK
+                    && fr_lua_runtime_begin(".", update_registry, &err) == FR_OK;
+    size_t removed = 0;
+    int updated = update_began
+              && fr_plugins_update_cache(entries, count, resolvers, resolver_count, NULL,
+                                        &removed, &err) == FR_OK;
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(update_registry);
+    fr_plugins_free(entries, count);
+    fr_resolvers_free(resolvers, resolver_count);
+    fr_resolvers_clear();
+
+    /* served_stale is true only if the update left the seeded artifact in
+       place: with the real stub swapped out, a cache miss here has nowhere
+       else to come from and fails outright. */
+    fr_http_set_backend(stub_refuses_every_request);
+    char *after_text = NULL;
+    int served_stale = fr_plugin_fetch(fresh_url, &after_text, &err) == FR_OK;
+    free(after_text);
+
+    fr_http_set_backend(previous);
+    fr_plugin_fetch_discard(fresh_url);
+    cJSON_Delete(document);
+    fr_test_set_env("RESOLVER_TARGET", NULL);
+
+    ASSERT(built_first && built_second);
+    ASSERT(first_load && second_load);
+    ASSERT(seeded);
+    ASSERT(update_began);
+    ASSERT(got_one);
+    ASSERT(still_one);
+    ASSERT(updated);
+    ASSERT_EQ(1u, removed);
+    ASSERT_FALSE(served_stale);
+    PASS();
+}
+
 /* This is the property "daukle plugin update" with no label must have: the plugin
    cache root is shared across every project on the machine, so discarding the
    artifacts of entries a manifest declares must never reach a url it does not,
@@ -1190,6 +1313,7 @@ int main(int argc, char **argv) {
     RUN_TEST(fr_plugins_report_clear_empties_the_report);
     RUN_TEST(the_report_names_what_the_resolver_resolved);
     RUN_TEST(a_failed_pin_discards_the_cached_artifact);
+    RUN_TEST(plugin_update_re_resolves_and_takes_the_new_url);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);
     RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_url_entry_removes_it);
     RUN_TEST(fr_plugins_update_cache_with_an_unknown_label_errors_naming_it);

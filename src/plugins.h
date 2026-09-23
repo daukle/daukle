@@ -45,6 +45,19 @@ typedef struct {
 char *fr_dup_string(const char *text);
 char *fr_dup_prefix(const char *text, size_t length);
 
+/* Runs only as much of text as its daukle.plugin{...} call, the same
+   protected read fr_plugins_load uses before installing verbs, and reports
+   what it declared "uses" as a freshly allocated array. label names the
+   chunk in any error text; origin is what a parse error is reported against.
+   *out_uses is NULL when uses is empty or absent, not an error. Shared with
+   resolvers.c, whose chunks are acquired the same way a plugin's is. */
+int fr_plugins_read_uses(const char *text, const char *origin, const char *label,
+                         char ***out_uses, size_t *out_uses_count, fr_error *err);
+
+/* Frees an array fr_plugins_read_uses returned. Tolerates a NULL array paired
+   with a zero count. */
+void fr_plugins_free_uses(char **uses, size_t count);
+
 /* Reads the manifest's `[plugins]` table into a freshly allocated array.
    An absent table yields *out_count == 0 and FR_OK, not an error.
    resolvers is the manifest's `[resolvers]` table, used only to list the
@@ -80,17 +93,24 @@ const fr_plugin_report *fr_plugins_report(void);
 void fr_plugins_report_clear(void);
 
 /* "daukle plugin update [label]"'s scoping rule, over entries already parsed
-   from ONE manifest: label NULL discards the fetched artifact of every
-   FR_PLUGIN_URL entry in entries, and nothing outside it, so a label-less
-   update in one project can never reach another project's cache. A label
-   discards only the entry it names (a path match has nothing cached, so this
-   is a no-op, not an error); a label that entries does not declare is an error
-   naming it. *out_removed_count is how many entries actually had an artifact
-   discarded, so a caller can report a no-op honestly rather than claiming a
-   removal that never happened.
-   Incomplete: an FR_PLUGIN_RESOLVED entry is still skipped, because reaching
-   its artifact means re-running the resolver that named it, which is what
-   resolvers takes here. */
+   from ONE manifest: label NULL discards the fetched artifact of every entry
+   in entries that has one, and nothing outside it, so a label-less update in
+   one project can never reach another project's cache. A label discards only
+   the entry it names (a path match has nothing cached, so this is a no-op,
+   not an error); a label that entries does not declare is an error naming it.
+   *out_removed_count is how many entries actually had an artifact discarded,
+   so a caller can report a no-op honestly rather than claiming a removal that
+   never happened.
+   An FR_PLUGIN_RESOLVED entry is re-resolved, not merely discarded: the
+   coordinate-to-url answer that needs re-deciding lives in the resolver's own
+   cache, which core cannot selectively clear, so this runs the resolve step
+   with caching disabled for the whole call. This means a lua runtime must
+   already be open (fr_lua_runtime_begin), the same precondition
+   fr_resolvers_use itself has, since acquiring a resolver's chunk goes
+   through it. Two things follow from re-resolving: the command now executes
+   plugin code, which a plain cache clear never did; and because caching is
+   off for writes too, the refreshed resolution is not stored, so the next
+   ordinary run resolves once over the network before caching again. */
 int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
                             const fr_resolver_entry *resolvers, size_t resolver_count,
                             const char *label, size_t *out_removed_count, fr_error *err);
