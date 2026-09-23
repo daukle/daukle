@@ -2,6 +2,7 @@
 #include "tasks.h"
 
 #include "cJSON.h"
+#include "config_lua.h"
 #include "error.h"
 #include "manifest.h"
 #include "support.h"
@@ -9,13 +10,35 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/stat.h>
+
 static int never_runs(void *state, const fr_task_run_context *context, fr_error *err) {
     (void) state; (void) context; (void) err;
     return FR_ERR;
 }
 
+static char scratch[512];
+
+static int path_exists(const char *path) {
+#ifdef _WIN32
+    struct _stat info;
+    return _stat(path, &info) == 0;
+#else
+    struct stat info;
+    return stat(path, &info) == 0;
+#endif
+}
+
+/* Fails the run rather than merely recording something, so a hypothetical
+   reordering that ran a task before creating its derived directory shows up
+   as this test failing outright, not as a silently-missing assertion. */
 static int counting_run(void *state, const fr_task_run_context *context, fr_error *err) {
-    (void) err;
+    char full[512];
+    snprintf(full, sizeof full, "%s/build/daukle/%s", scratch, context->toolchain->name);
+    if (!path_exists(full)) {
+        fr_error_set(err, "derived directory \"%s\" does not exist yet", full);
+        return FR_ERR;
+    }
     char *log = state;
     strncat(log, context->name, 64);
     strncat(log, ";", 2);
@@ -28,10 +51,22 @@ static int failing_run(void *state, const fr_task_run_context *context, fr_error
     return FR_ERR;
 }
 
-static char scratch[512];
+static char recorded_cwd[128];
+
+/* Mirrors what config_lua.c's lua_task_run does around a real plugin's run
+   callback: publish context->derived_dir through fr_lua_set_task_cwd, the
+   same accessor daukle.exec's cwd default reads, and reset it once done. */
+static int cwd_recording_run(void *state, const fr_task_run_context *context, fr_error *err) {
+    (void) state; (void) err;
+    fr_lua_set_task_cwd(context->derived_dir);
+    const char *published = fr_lua_task_cwd();
+    if (published != NULL) snprintf(recorded_cwd, sizeof recorded_cwd, "%s", published);
+    fr_lua_set_task_cwd(NULL);
+    return FR_OK;
+}
 
 static void make_scratch(const char *label) {
-    snprintf(scratch, sizeof scratch, "build/daukle_test_tasks_run_%s_%d", label,
+    snprintf(scratch, sizeof scratch, "%s/daukle_test_tasks_run_%s_%d", fr_test_temp_base(), label,
              fr_test_process_id());
     fr_test_remove_tree(scratch);
     fr_test_make_directory(scratch);
@@ -392,8 +427,44 @@ TEST a_failing_task_stops_the_run_naming_itself(void) {
     session.manifest_dir = scratch;
 
     ASSERT_EQ(FR_ERR, fr_tasks_run(&plan, &session, &err));
-    ASSERT(strstr(err.message, "task \"") != NULL);
+    ASSERT(strstr(err.message, "task \"a:one\"") != NULL);
     ASSERT(strstr(err.message, "the compiler said no") != NULL);
+
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_test_remove_tree(scratch);
+    PASS();
+}
+
+TEST a_run_publishes_the_base_relative_derived_directory(void) {
+    make_scratch("cwd");
+    recorded_cwd[0] = '\0';
+
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin one = { "daukle.task/a:one", NULL, NULL, 0, cwd_recording_run, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &one, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"a\":\">=1.0\"}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "a:one", &plan, &err));
+
+    fr_session session;
+    memset(&session, 0, sizeof session);
+    session.registry = registry;
+    session.manifest = manifest;
+    session.manifest_dir = scratch;
+
+    ASSERT_EQ(FR_OK, fr_tasks_run(&plan, &session, &err));
+    ASSERT_STR_EQ("build/daukle/a", recorded_cwd);
+    ASSERT(strstr(recorded_cwd, scratch) == NULL);
 
     fr_tasks_plan_free(&plan);
     fr_tasks_set_free(&set);
@@ -425,5 +496,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_goal_nothing_declares_is_refused);
     RUN_TEST(a_plan_runs_its_tasks_in_order);
     RUN_TEST(a_failing_task_stops_the_run_naming_itself);
+    RUN_TEST(a_run_publishes_the_base_relative_derived_directory);
     GREATEST_MAIN_END();
 }

@@ -42,6 +42,10 @@ typedef struct {
     const char *project;
     const char *version;
     const char *root;
+    /* The toolchain's derived directory relative to the sandbox base (the
+       manifest directory), e.g. "build/daukle/cmake", not a filesystem path:
+       this is what fr_lua_task_cwd publishes for daukle.exec's cwd default,
+       and daukle.exec's cwd is always resolved relative to that same base. */
     const char *derived_dir;
     const fr_resolved *resolved;
     size_t resolved_count;

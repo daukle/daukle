@@ -55,9 +55,12 @@ typedef struct {
 int fr_tasks_plan(const fr_task_set *set, const char *goal, fr_task_plan *out, fr_error *err);
 void fr_tasks_plan_free(fr_task_plan *plan);
 
-/* Runs a plan in order, creating each task's toolchain derived directory
-   before the first task that belongs to it. A task whose run raises stops the
-   run: tasks already run stay run, and nothing is undone. */
+/* Runs a plan in order. Before each run-bearing task, its own toolchain's
+   derived directory is ensured to exist, every iteration: generation may have
+   created nothing for it (a compiler-driven toolchain's ordinary case), and
+   ensuring an already-existing directory is a no-op, not an error. A task
+   whose run raises stops the run: tasks already run stay run, and nothing is
+   undone. */
 int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *err);
 
 #endif

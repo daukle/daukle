@@ -382,10 +382,17 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
             return FR_ERR;
         }
 
+        char *derived_dir_relative = NULL;
+        if (fr_derived_dir_relative(node->toolchain->name, &derived_dir_relative, err) != FR_OK) {
+            free(derived_dir);
+            return FR_ERR;
+        }
+
         fr_resolved *resolved = NULL;
         size_t resolved_count = 0;
         if (fr_resolve_toolchain(node->toolchain, &session->manifest, session->manifest_dir,
                                  session->registry, &resolved, &resolved_count, err) != FR_OK) {
+            free(derived_dir_relative);
             free(derived_dir);
             return FR_ERR;
         }
@@ -400,12 +407,13 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
         context.project = session->manifest.self.project;
         context.version = version;
         context.root = FR_DERIVED_ROOT_RELATIVE;
-        context.derived_dir = derived_dir;
+        context.derived_dir = derived_dir_relative;
         context.resolved = resolved;
         context.resolved_count = resolved_count;
 
         int status = node->plugin->run(node->plugin->state, &context, err);
         fr_resolved_free(resolved, resolved_count);
+        free(derived_dir_relative);
         free(derived_dir);
         if (status != FR_OK) {
             char original[sizeof err->message];

@@ -25,6 +25,10 @@
 
 #define FR_DERIVED_LEDGER ".daukle-generated"
 #define FR_DERIVED_MAX_FILES 64
+/* The one spelling of the toolchain-agnostic derived directory's name, so
+   fr_derived_root's filesystem path and fr_derived_dir_relative's sandbox-
+   relative path cannot drift apart. */
+#define FR_DERIVED_ROOT_NAME "build/daukle"
 
 typedef struct {
     char *path;
@@ -340,17 +344,26 @@ void fr_derived_free_files(fr_generated_file *files, size_t count) {
     free(files);
 }
 
+static int validate_toolchain_name(const char *toolchain, fr_error *err) {
+    if (toolchain[0] == '\0' || fr_lua_sandbox_climbs_out(toolchain)
+        || strchr(toolchain, '/') != NULL || strchr(toolchain, '\\') != NULL) {
+        fr_error_set(err, "toolchain name \"%s\" cannot be a directory name", toolchain);
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
 int fr_derived_root(const char *manifest_dir, char **out_dir, fr_error *err) {
     *out_dir = NULL;
     const char *base = (manifest_dir == NULL || manifest_dir[0] == '\0') ? "." : manifest_dir;
 
-    size_t length = strlen(base) + strlen("/build/daukle") + 1;
+    size_t length = strlen(base) + 1 + strlen(FR_DERIVED_ROOT_NAME) + 1;
     char *path = malloc(length);
     if (path == NULL) {
         fr_error_set(err, "out of memory building the derived root");
         return FR_ERR;
     }
-    snprintf(path, length, "%s/build/daukle", base);
+    snprintf(path, length, "%s/%s", base, FR_DERIVED_ROOT_NAME);
 
     *out_dir = path;
     return FR_OK;
@@ -358,11 +371,7 @@ int fr_derived_root(const char *manifest_dir, char **out_dir, fr_error *err) {
 
 int fr_derived_dir(const char *manifest_dir, const char *toolchain, char **out_dir, fr_error *err) {
     *out_dir = NULL;
-    if (toolchain[0] == '\0' || fr_lua_sandbox_climbs_out(toolchain)
-        || strchr(toolchain, '/') != NULL || strchr(toolchain, '\\') != NULL) {
-        fr_error_set(err, "toolchain name \"%s\" cannot be a directory name", toolchain);
-        return FR_ERR;
-    }
+    if (validate_toolchain_name(toolchain, err) != FR_OK) return FR_ERR;
 
     char *root = NULL;
     if (fr_derived_root(manifest_dir, &root, err) != FR_OK) return FR_ERR;
@@ -376,6 +385,22 @@ int fr_derived_dir(const char *manifest_dir, const char *toolchain, char **out_d
     }
     snprintf(path, length, "%s/%s", root, toolchain);
     free(root);
+
+    *out_dir = path;
+    return FR_OK;
+}
+
+int fr_derived_dir_relative(const char *toolchain, char **out_dir, fr_error *err) {
+    *out_dir = NULL;
+    if (validate_toolchain_name(toolchain, err) != FR_OK) return FR_ERR;
+
+    size_t length = strlen(FR_DERIVED_ROOT_NAME) + 1 + strlen(toolchain) + 1;
+    char *path = malloc(length);
+    if (path == NULL) {
+        fr_error_set(err, "out of memory building the derived directory for \"%s\"", toolchain);
+        return FR_ERR;
+    }
+    snprintf(path, length, "%s/%s", FR_DERIVED_ROOT_NAME, toolchain);
 
     *out_dir = path;
     return FR_OK;
