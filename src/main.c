@@ -140,12 +140,17 @@ static void print_env_reads(const cJSON *env_reads) {
    separate lookup. Reads fr_plugins_report before it is cleared, never after. */
 static void print_plugin_report(void) {
     const fr_plugin_report *report = fr_plugins_report();
-    if (report->count == 0) return;
+    if (report->count == 0 && report->unused_resolver_count == 0) return;
 
     printf("daukle: plugins\n");
     for (size_t index = 0; index < report->count; index++) {
         const fr_plugin_report_entry *entry = &report->entries[index];
-        printf("  %s: %s, sha256 %s", entry->label, entry->resolved, entry->sha256);
+        if (entry->kind == FR_PLUGIN_RESOLVED) {
+            printf("  %s: %s via %s, %s, sha256 %s", entry->label, entry->resolved,
+                   entry->resolver, entry->url, entry->sha256);
+        } else {
+            printf("  %s: %s, sha256 %s", entry->label, entry->resolved, entry->sha256);
+        }
         if (entry->uses_count == 0) {
             printf(", uses none\n");
             continue;
@@ -155,6 +160,10 @@ static void print_plugin_report(void) {
             printf("%s%s", use_index == 0 ? "" : ",", entry->uses[use_index]);
         }
         printf("\n");
+    }
+
+    for (size_t index = 0; index < report->unused_resolver_count; index++) {
+        printf("  resolver %s: declared, unused\n", report->unused_resolvers[index]);
     }
 }
 

@@ -445,31 +445,47 @@ static size_t report_count;
 
 static void free_report_entry(fr_plugin_report_entry *entry) {
     free(entry->label);
+    free(entry->resolver);
+    free(entry->url);
     free(entry->resolved);
     for (size_t index = 0; index < entry->uses_count; index++) free(entry->uses[index]);
     free(entry->uses);
 }
+
+static char **report_unused_resolvers;
+static size_t report_unused_resolver_count;
 
 void fr_plugins_report_clear(void) {
     for (size_t index = 0; index < report_count; index++) free_report_entry(&report_entries[index]);
     free(report_entries);
     report_entries = NULL;
     report_count = 0;
+
+    for (size_t index = 0; index < report_unused_resolver_count; index++) {
+        free(report_unused_resolvers[index]);
+    }
+    free(report_unused_resolvers);
+    report_unused_resolvers = NULL;
+    report_unused_resolver_count = 0;
 }
 
 const fr_plugin_report *fr_plugins_report(void) {
     static fr_plugin_report view;
     view.entries = report_entries;
     view.count = report_count;
+    view.unused_resolvers = report_unused_resolvers;
+    view.unused_resolver_count = report_unused_resolver_count;
     return &view;
 }
 
 /* Appends one entry, owning copies of everything it stores: entry and declaration are both
    about to be freed by their callers (fr_plugins_free and free_declaration), so nothing here
-   may keep a pointer into either. */
-static int append_report_entry(const fr_plugin_entry *entry, const char *resolved,
-                               const char *digest, const fr_plugin_declaration *declaration,
-                               fr_error *err) {
+   may keep a pointer into either. origin is the url a URL or resolved entry fetched, or the
+   resolved path a local entry read; resolved is the resolver's own answer, NULL for the two
+   kinds core names itself. */
+static int append_report_entry(const fr_plugin_entry *entry, const char *origin,
+                               const char *resolved, const char *digest,
+                               const fr_plugin_declaration *declaration, fr_error *err) {
     fr_plugin_report_entry *grown = realloc(report_entries, (report_count + 1) * sizeof *grown);
     if (grown == NULL) {
         fr_error_set(err, "out of memory recording plugin \"%s\" in the report", entry->label);
@@ -483,11 +499,15 @@ static int append_report_entry(const fr_plugin_entry *entry, const char *resolve
     memcpy(slot->sha256, digest, sizeof slot->sha256);
 
     slot->label = fr_dup_string(entry->label);
-    slot->resolved = fr_dup_string(resolved);
+    slot->resolved = fr_dup_string(resolved != NULL ? resolved : origin);
+    slot->url = entry->kind != FR_PLUGIN_PATH ? fr_dup_string(origin) : NULL;
+    slot->resolver = fr_dup_string(entry->resolver);
     slot->uses = declaration->uses_count > 0
                      ? malloc(declaration->uses_count * sizeof *slot->uses)
                      : NULL;
     if (slot->label == NULL || slot->resolved == NULL
+        || (entry->kind != FR_PLUGIN_PATH && slot->url == NULL)
+        || (entry->resolver != NULL && slot->resolver == NULL)
         || (declaration->uses_count > 0 && slot->uses == NULL)) {
         free_report_entry(slot);
         fr_error_set(err, "out of memory recording plugin \"%s\" in the report", entry->label);
@@ -595,8 +615,7 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
                                     declaration.uses_count, err);
     }
     if (status == FR_OK) {
-        status = append_report_entry(entry, resolved != NULL ? resolved : origin, digest,
-                                     &declaration, err);
+        status = append_report_entry(entry, origin, resolved, digest, &declaration, err);
     }
 
     free_declaration(&declaration);
@@ -604,6 +623,51 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
     free(origin);
     free(resolved);
     return status;
+}
+
+/* Declared-versus-referenced is a static comparison over the parsed entries, not
+   something discovered by acquiring a resolver: section 4.1 deliberately never fetches
+   or runs a resolver no plugin names, so this must not either. */
+static int record_unused_resolvers(const fr_plugin_entry *entries, size_t entry_count,
+                                   const fr_resolver_entry *resolvers, size_t resolver_count,
+                                   fr_error *err) {
+    if (resolver_count == 0) return FR_OK;
+
+    char **unused = malloc(resolver_count * sizeof *unused);
+    if (unused == NULL) {
+        fr_error_set(err, "out of memory recording unused resolvers");
+        return FR_ERR;
+    }
+
+    size_t unused_count = 0;
+    for (size_t index = 0; index < resolver_count; index++) {
+        const char *label = resolvers[index].label;
+        int used = 0;
+        for (size_t entry_index = 0; entry_index < entry_count && !used; entry_index++) {
+            used = entries[entry_index].kind == FR_PLUGIN_RESOLVED
+                && strcmp(entries[entry_index].resolver, label) == 0;
+        }
+        if (used) continue;
+
+        char *copy = fr_dup_string(label);
+        if (copy == NULL) {
+            for (size_t free_index = 0; free_index < unused_count; free_index++) free(unused[free_index]);
+            free(unused);
+            fr_error_set(err, "out of memory recording unused resolvers");
+            return FR_ERR;
+        }
+        unused[unused_count] = copy;
+        unused_count++;
+    }
+
+    if (unused_count == 0) {
+        free(unused);
+        return FR_OK;
+    }
+
+    report_unused_resolvers = unused;
+    report_unused_resolver_count = unused_count;
+    return FR_OK;
 }
 
 int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const char *base_dir,
@@ -618,6 +682,9 @@ int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const c
     fr_plugin_entry *entries = NULL;
     size_t count = 0;
     int status = fr_plugins_parse(document, resolvers, resolver_count, &entries, &count, err);
+    if (status == FR_OK) {
+        status = record_unused_resolvers(entries, count, resolvers, resolver_count, err);
+    }
     if (status == FR_OK && count > 0) {
         status = fr_lua_runtime_begin(base_dir, registry, err);
         for (size_t index = 0; index < count && status == FR_OK; index++) {

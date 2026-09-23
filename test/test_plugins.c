@@ -1102,6 +1102,85 @@ static int artifact_survived(const char *url, fr_http_fn restore) {
     return served;
 }
 
+/* The report is what "daukle config print" reads, and main.c has no test binary,
+   so the report is where this property can be asserted at all. Printing is
+   covered by eye; what must not silently change is what the report holds. */
+TEST the_report_names_the_resolver_and_the_url(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"}},"
+        "\"plugins\":{\"p\":\"t:a/b\"}}";
+
+    fr_http_fn previous = fr_http_set_backend(stub_named_artifacts);
+    fr_registry *registry = NULL;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int loaded = fr_plugins_load(registry, document, ".", &err) == FR_OK;
+
+    const fr_plugin_report *report = fr_plugins_report();
+    char label[64] = "";
+    char resolver[64] = "";
+    char url[256] = "";
+    char resolved[64] = "";
+    size_t reported = report->count;
+    if (reported == 1) {
+        snprintf(label, sizeof label, "%s", report->entries[0].label);
+        snprintf(resolver, sizeof resolver, "%s",
+                 report->entries[0].resolver != NULL ? report->entries[0].resolver : "");
+        snprintf(url, sizeof url, "%s",
+                 report->entries[0].url != NULL ? report->entries[0].url : "");
+        snprintf(resolved, sizeof resolved, "%s", report->entries[0].resolved);
+    }
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+
+    ASSERT(built && began && loaded);
+    ASSERT_EQ(1u, reported);
+    ASSERT_STR_EQ("p", label);
+    ASSERT_STR_EQ("t", resolver);
+    ASSERT_STR_EQ("https://example.invalid/a/b.lua", url);
+    ASSERT_STR_EQ("a/b", resolved);
+    PASS();
+}
+
+TEST the_report_names_a_declared_unused_resolver(void) {
+    fr_error err;
+    const char *document_json =
+        "{\"resolvers\":{\"used\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"},"
+        "\"spare\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"}},"
+        "\"plugins\":{\"p\":\"used:a/b\"}}";
+
+    fr_http_fn previous = fr_http_set_backend(stub_named_artifacts);
+    fr_registry *registry = NULL;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse(document_json);
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int loaded = fr_plugins_load(registry, document, ".", &err) == FR_OK;
+
+    const fr_plugin_report *report = fr_plugins_report();
+    char unused[64] = "";
+    size_t unused_count = report->unused_resolver_count;
+    if (unused_count == 1) snprintf(unused, sizeof unused, "%s", report->unused_resolvers[0]);
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+
+    ASSERT(built && began && loaded);
+    ASSERT_EQ(1u, unused_count);
+    ASSERT_STR_EQ("spare", unused);
+    PASS();
+}
+
 /* The resolver answers from an environment variable, so the test changes what a
    coordinate means without touching the manifest. That is what separates the
    two things being tested: an ordinary run must keep serving the old answer
@@ -1451,6 +1530,8 @@ int main(int argc, char **argv) {
     RUN_TEST(fr_plugins_report_clear_empties_the_report);
     RUN_TEST(the_report_names_what_the_resolver_resolved);
     RUN_TEST(a_failed_pin_discards_the_cached_artifact);
+    RUN_TEST(the_report_names_the_resolver_and_the_url);
+    RUN_TEST(the_report_names_a_declared_unused_resolver);
     RUN_TEST(plugin_update_re_resolves_and_takes_the_new_url);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);
     RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_url_entry_removes_it);

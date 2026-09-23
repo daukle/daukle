@@ -27,6 +27,8 @@ typedef struct {
 typedef struct {
     char *label;
     fr_plugin_kind kind;
+    char *resolver;    /* FR_PLUGIN_RESOLVED only: the [resolvers] label used, else NULL */
+    char *url;         /* NULL for FR_PLUGIN_PATH; the fetched url otherwise */
     char *resolved;    /* what the resolver answered, or the url or path used */
     char **uses;
     size_t uses_count;
@@ -37,6 +39,8 @@ typedef struct {
 typedef struct {
     fr_plugin_report_entry *entries;
     size_t count;
+    char **unused_resolvers;      /* [resolvers] labels no plugin entry names */
+    size_t unused_resolver_count;
 } fr_plugin_report;
 
 /* strdup is not C11 and strndup is absent on MSVC, so plugins.c and
