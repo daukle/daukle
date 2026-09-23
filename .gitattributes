@@ -1,0 +1,3 @@
+# A golden archive produced by a real tar: git must not touch a byte of it,
+# and core.autocrlf here would.
+*.tar binary

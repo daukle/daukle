@@ -189,6 +189,57 @@ long long fr_test_file_mtime(const char *path) {
 #endif
 }
 
+#define TAR_BLOCK 512
+
+static void write_octal(char *field, size_t width, unsigned long long value) {
+    for (size_t index = width - 1; index > 0; index--) {
+        field[index - 1] = (char) ('0' + (value & 7u));
+        value >>= 3;
+    }
+    field[width - 1] = '\0';
+}
+
+void fr_test_tar_fix_checksum(char *buffer, size_t offset) {
+    char *header = buffer + offset;
+    memset(header + 148, ' ', 8);
+
+    unsigned long sum = 0;
+    for (size_t index = 0; index < TAR_BLOCK; index++) sum += (unsigned char) header[index];
+
+    write_octal(header + 148, 7, sum);
+    header[154] = '\0';
+    header[155] = ' ';
+}
+
+size_t fr_test_tar_append(char *buffer, size_t offset, const char *name, char typeflag,
+                          const char *content, size_t content_length) {
+    char *header = buffer + offset;
+    memset(header, 0, TAR_BLOCK);
+
+    snprintf(header, 100, "%s", name);
+    memcpy(header + 100, "0000644", 8);
+    memcpy(header + 108, "0000000", 8);
+    memcpy(header + 116, "0000000", 8);
+    write_octal(header + 124, 12, content_length);
+    write_octal(header + 136, 12, 0);
+    header[156] = typeflag;
+    memcpy(header + 257, "ustar", 6);
+    memcpy(header + 263, "00", 2);
+    fr_test_tar_fix_checksum(buffer, offset);
+
+    offset += TAR_BLOCK;
+    if (content_length > 0) {
+        memcpy(buffer + offset, content, content_length);
+        offset += ((content_length + TAR_BLOCK - 1) / TAR_BLOCK) * TAR_BLOCK;
+    }
+    return offset;
+}
+
+size_t fr_test_tar_end(char *buffer, size_t offset) {
+    memset(buffer + offset, 0, 2 * TAR_BLOCK);
+    return offset + 2 * TAR_BLOCK;
+}
+
 void fr_test_sleep_past_mtime_resolution(void) {
 #ifdef _WIN32
     Sleep(1100);
