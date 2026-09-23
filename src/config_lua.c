@@ -1051,6 +1051,49 @@ static int plugin_chunk_running;
    manifest already pinned grants nothing the digest does not already cover.
    Reaching ANOTHER plugin's code is the edge that has to be declared, and that
    is child spec 6's to design. */
+#define FR_PLUGIN_MODULE_LIMIT 64
+
+typedef struct {
+    char name[FR_TAR_MAX_NAME + 1];
+    int value;   /* LUA_NOREF until the module has returned */
+    int running;
+} module_slot;
+
+static module_slot module_slots[FR_PLUGIN_MODULE_LIMIT];
+static size_t module_slot_count;
+
+static void modules_clear(lua_State *state) {
+    for (size_t index = 0; index < module_slot_count; index++) {
+        if (module_slots[index].value != LUA_NOREF) {
+            luaL_unref(state, LUA_REGISTRYINDEX, module_slots[index].value);
+        }
+    }
+    module_slot_count = 0;
+}
+
+static module_slot *module_slot_for(const char *name) {
+    for (size_t index = 0; index < module_slot_count; index++) {
+        if (strcmp(module_slots[index].name, name) == 0) return &module_slots[index];
+    }
+    return NULL;
+}
+
+/* Names the chain rather than only the module that closed it, in the manner of
+   tasks.c's report_cycle: the slots still running ARE the chain, in order. */
+static int report_module_cycle(lua_State *state, const char *name) {
+    char trail[400];
+    size_t filled = 0;
+    trail[0] = '\0';
+    for (size_t index = 0; index < module_slot_count; index++) {
+        if (!module_slots[index].running) continue;
+        int written = snprintf(trail + filled, sizeof trail - filled, "%s%s",
+                               filled == 0 ? "" : " -> ", module_slots[index].name);
+        if (written < 0 || (size_t) written >= sizeof trail - filled) break;
+        filled += (size_t) written;
+    }
+    return luaL_error(state, "daukle.require(\"%s\") is a cycle: %s -> %s", name, trail, name);
+}
+
 static int lua_require_module(lua_State *state) {
     const char *name = luaL_checkstring(state, 1);
     /* One condition rather than two: a source is held only while a plugin chunk
@@ -1061,12 +1104,28 @@ static int lua_require_module(lua_State *state) {
         return luaL_error(state, "daukle.require(\"%s\"): this plugin has no modules", name);
     }
 
+    module_slot *slot = module_slot_for(name);
+    if (slot != NULL) {
+        if (slot->running) return report_module_cycle(state, name);
+        lua_rawgeti(state, LUA_REGISTRYINDEX, slot->value);
+        return 1;
+    }
+
     const char *text = NULL;
     size_t length = 0;
     fr_error err;
     if (fr_plugin_source_member(loading_source, name, &text, &length, &err) != FR_OK) {
         return luaL_error(state, "%s", err.message);
     }
+
+    if (module_slot_count == FR_PLUGIN_MODULE_LIMIT) {
+        return luaL_error(state, "a plugin may require at most %d modules",
+                          FR_PLUGIN_MODULE_LIMIT);
+    }
+    slot = &module_slots[module_slot_count++];
+    snprintf(slot->name, sizeof slot->name, "%s", name);
+    slot->value = LUA_NOREF;
+    slot->running = 1;
 
     char chunk_name[FR_TAR_MAX_NAME + 8];
     snprintf(chunk_name, sizeof chunk_name, "@%s.lua", name);
@@ -1081,6 +1140,13 @@ static int lua_require_module(lua_State *state) {
     }
 
     lua_call(state, 0, 1);
+
+    /* luaL_ref stores nil perfectly well, so a module that returns nothing is
+       remembered as having returned nothing rather than run again. It pops the
+       value, so it is pushed back for the caller. */
+    lua_pushvalue(state, -1);
+    slot->value = luaL_ref(state, LUA_REGISTRYINDEX);
+    slot->running = 0;
     return 1;
 }
 
@@ -1275,6 +1341,9 @@ int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
     int backup_resolver_callback = hold_second_reference(state, resolver_callback);
 
     chunk_state_clear();
+    /* The memo is per load, so two plugins that both carry a module of the same
+       name get their own copy each. */
+    modules_clear(state);
     loading_source = source;
     lua_pushvalue(state, env);
     lua_rawsetp(state, LUA_REGISTRYINDEX, &module_env_key);
@@ -1284,6 +1353,7 @@ int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
     plugin_chunk_running = 0;
 
     loading_source = NULL;
+    modules_clear(state);
     lua_pushnil(state);
     lua_rawsetp(state, LUA_REGISTRYINDEX, &module_env_key);
 

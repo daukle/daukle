@@ -1078,22 +1078,30 @@ TEST a_refused_resolver_chunk_reports_none_declared(void) {
 /* Loads a fixture that declares a directory-form plugin and reports both the
    status and the message, so each test below asserts on one clause rather than
    on whichever failure happened to come first. */
-static int loads_fixture(const char *manifest, char *message, size_t size) {
+/* Static, not a local: greatest's ASSERT_*m keeps the message POINTER and prints
+   it after the test function has returned, so a buffer on the test's own stack
+   reads back as whatever replaced it. */
+static char fixture_message[512];
+
+static int loads_fixture(const char *manifest) {
     fr_error err;
     /* A successful load leaves err untouched, and a test that failed for some
        other reason would otherwise report whatever was on the stack. */
     err.message[0] = '\0';
+    fixture_message[0] = '\0';
+
     fr_registry *registry = NULL;
     if (fr_build_registry(&registry, &err) != FR_OK) {
-        snprintf(message, size, "%s", err.message);
+        snprintf(fixture_message, sizeof fixture_message, "%s", err.message);
         return FR_ERR;
     }
 
     fr_manifest parsed;
     int status = fr_config_load_file(manifest, registry, &parsed, &err);
-    snprintf(message, size, "%s", err.message);
     int registered = status == FR_OK
                      && fr_registry_language(registry, "daukle.language/hello") != NULL;
+    snprintf(fixture_message, sizeof fixture_message, "%s",
+             status == FR_OK && !registered ? "the plugin registered no language" : err.message);
 
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
@@ -1101,29 +1109,23 @@ static int loads_fixture(const char *manifest, char *message, size_t size) {
 }
 
 TEST a_module_supplies_what_the_entry_chunk_requires(void) {
-    char message[512];
-    int status = loads_fixture("test/fixtures/plugin-directory/daukle.toml", message,
-                               sizeof message);
-    ASSERT_EQm(message, FR_OK, status);
+    int status = loads_fixture("test/fixtures/plugin-directory/daukle.toml");
+    ASSERT_EQm(fixture_message, FR_OK, status);
     PASS();
 }
 
 TEST a_module_may_declare_a_language(void) {
-    char message[512];
-    int status = loads_fixture("test/fixtures/plugin-module-declares/daukle.toml", message,
-                               sizeof message);
-    ASSERT_EQm(message, FR_OK, status);
+    int status = loads_fixture("test/fixtures/plugin-module-declares/daukle.toml");
+    ASSERT_EQm(fixture_message, FR_OK, status);
     PASS();
 }
 
 /* The one test that proves a module runs in the plugin's OWN environment rather
    than in a copy of it: a copy would pass everything else here. */
 TEST a_module_may_not_use_a_verb_the_plugin_did_not_declare(void) {
-    char message[512];
-    int status = loads_fixture("test/fixtures/plugin-module-verb/daukle.toml", message,
-                               sizeof message);
+    int status = loads_fixture("test/fixtures/plugin-module-verb/daukle.toml");
     ASSERT_EQ(FR_ERR, status);
-    ASSERT(strstr(message, "was not declared in uses") != NULL);
+    ASSERT(strstr(fixture_message, "was not declared in uses") != NULL);
     PASS();
 }
 
@@ -1131,21 +1133,34 @@ TEST a_module_may_not_use_a_verb_the_plugin_did_not_declare(void) {
    gets it there already exists: daukle.plugin must be the first call. This is
    what says the two compose, so a change to either is not free. */
 TEST daukle_require_before_daukle_plugin_is_refused(void) {
-    char message[512];
-    int status = loads_fixture("test/fixtures/plugin-require-early/daukle.toml", message,
-                               sizeof message);
+    int status = loads_fixture("test/fixtures/plugin-require-early/daukle.toml");
     ASSERT_EQ(FR_ERR, status);
-    ASSERT(strstr(message, "daukle.plugin must be the first call") != NULL);
+    ASSERT(strstr(fixture_message, "daukle.plugin must be the first call") != NULL);
     PASS();
 }
 
 /* daukle.require is not a capability, so it is not in "uses" and a plugin that
    declares none still has it. */
 TEST a_plugin_declaring_no_uses_may_still_require(void) {
-    char message[512];
-    int status = loads_fixture("test/fixtures/plugin-no-uses/daukle.toml", message,
-                               sizeof message);
-    ASSERT_EQm(message, FR_OK, status);
+    int status = loads_fixture("test/fixtures/plugin-no-uses/daukle.toml");
+    ASSERT_EQm(fixture_message, FR_OK, status);
+    PASS();
+}
+
+/* If the module ran twice its daukle.language would be declared twice, which an
+   existing guard refuses: the memo is what makes this load succeed. */
+TEST a_module_required_twice_runs_once(void) {
+    int status = loads_fixture("test/fixtures/plugin-module-once/daukle.toml");
+    ASSERT_EQm(fixture_message, FR_OK, status);
+    PASS();
+}
+
+TEST a_cycle_between_modules_is_refused(void) {
+    int status = loads_fixture("test/fixtures/plugin-module-cycle/daukle.toml");
+    ASSERT_EQ(FR_ERR, status);
+    /* On the clause, not on a module name: both names appear in the input, so a
+       name match would pass against a message that said anything at all. */
+    ASSERT(strstr(fixture_message, "is a cycle") != NULL);
     PASS();
 }
 
@@ -1206,5 +1221,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_module_may_not_use_a_verb_the_plugin_did_not_declare);
     RUN_TEST(daukle_require_before_daukle_plugin_is_refused);
     RUN_TEST(a_plugin_declaring_no_uses_may_still_require);
+    RUN_TEST(a_module_required_twice_runs_once);
+    RUN_TEST(a_cycle_between_modules_is_refused);
     GREATEST_MAIN_END();
 }

@@ -1,0 +1,8 @@
+schema = 1
+project = "forebay/module-once"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+hello = "./plugin"
