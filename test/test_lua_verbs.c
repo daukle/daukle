@@ -996,7 +996,10 @@ TEST the_library_environment_has_no_registration_functions(void) {
     fr_registry *registry = NULL;
     int began = fr_build_registry(&registry, &err) == FR_OK
               && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
-    int failed = run_in_library_env("daukle.toolchain{ name = \"x\" }", message, sizeof message);
+    int failed = began
+        ? run_in_library_env("daukle.toolchain{ name = \"x\" }", message, sizeof message)
+        : -1;
+    if (!began) snprintf(message, sizeof message, "%s", err.message);
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
 
@@ -1012,7 +1015,8 @@ TEST the_library_environment_has_no_verbs(void) {
     fr_registry *registry = NULL;
     int began = fr_build_registry(&registry, &err) == FR_OK
               && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
-    int failed = run_in_library_env("daukle.exec{}", message, sizeof message);
+    int failed = began ? run_in_library_env("daukle.exec{}", message, sizeof message) : -1;
+    if (!began) snprintf(message, sizeof message, "%s", err.message);
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
 
@@ -1030,13 +1034,55 @@ TEST the_library_environment_keeps_the_base_globals(void) {
     fr_registry *registry = NULL;
     int began = fr_build_registry(&registry, &err) == FR_OK
               && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
-    int ran = run_in_library_env("assert(string.rep(\"a\", 2) == \"aa\")", message,
-                                 sizeof message);
+    int ran = began
+        ? run_in_library_env("assert(string.rep(\"a\", 2) == \"aa\")", message, sizeof message)
+        : -1;
+    if (!began) snprintf(message, sizeof message, "%s", err.message);
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
 
     ASSERT(began);
     ASSERT_EQm(message, 0, ran);
+    PASS();
+}
+
+/* Regression for a shared-statics defect: an older library environment's
+   __index must keep naming its own dependent and member after a newer one is
+   built while the older is still live, since daukle.require can nest one
+   library environment inside another. */
+TEST an_older_library_environments_raiser_survives_a_newer_one_being_built(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = NULL;
+    lua_State *state = NULL;
+    int began = fr_build_registry(&registry, &err) == FR_OK
+              && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    if (began) state = fr_lua_runtime_state();
+
+    int built_first = began
+        && fr_lua_verbs_push_library_env(state, "alpha", "a/one", &err) == FR_OK;
+    int env1 = built_first ? lua_gettop(state) : 0;
+    int built_second = built_first
+        && fr_lua_verbs_push_library_env(state, "beta", "b/two", &err) == FR_OK;
+
+    int status = FR_ERR;
+    if (built_second) {
+        status = fr_lua_run_in_env(state, "daukle.toolchain{ name = \"x\" }", "@test", env1, &err);
+    }
+    snprintf(message, sizeof message, "%s",
+            built_second ? (status == FR_OK ? "ok" : err.message) : err.message);
+
+    if (began) lua_settop(state, 0);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERT(began);
+    ASSERT(built_second);
+    ASSERT_EQm(message, FR_ERR, status);
+    ASSERTm(message, strstr(message, "\"a/one\"") != NULL);
+    ASSERTm(message, strstr(message, "\"alpha\"") != NULL);
+    ASSERTm(message, strstr(message, "\"b/two\"") == NULL);
+    ASSERTm(message, strstr(message, "\"beta\"") == NULL);
     PASS();
 }
 
@@ -1095,5 +1141,6 @@ int main(int argc, char **argv) {
     RUN_TEST(the_library_environment_has_no_registration_functions);
     RUN_TEST(the_library_environment_has_no_verbs);
     RUN_TEST(the_library_environment_keeps_the_base_globals);
+    RUN_TEST(an_older_library_environments_raiser_survives_a_newer_one_being_built);
     GREATEST_MAIN_END();
 }

@@ -572,17 +572,23 @@ static int protected_push_env(lua_State *state) {
     return 1;
 }
 
-static const char *library_dependent;
-static const char *library_member;
-
+/* dependent and member are upvalues, not file statics: this __index is
+   rebuilt fresh by every push_library_env call, and daukle.require can nest
+   one library environment inside another, so a shared static would let the
+   inner call's names overwrite the outer, still-live environment's raiser. */
 static int outside_the_library_env(lua_State *state) {
     const char *name = lua_tostring(state, 2);
+    const char *dependent = lua_tostring(state, lua_upvalueindex(1));
+    const char *member = lua_tostring(state, lua_upvalueindex(2));
     return luaL_error(state, "daukle.%s is not available to \"%s\", required by \"%s\" across a"
                              " plugin boundary",
-                      name != NULL ? name : "?", library_member, library_dependent);
+                      name != NULL ? name : "?", member, dependent);
 }
 
 static int protected_push_library_env(lua_State *state) {
+    const char *dependent = lua_tostring(state, 1);
+    const char *member = lua_tostring(state, 2);
+
     lua_newtable(state);
     for (size_t index = 0; index < sizeof BASE / sizeof BASE[0]; index++) {
         lua_getglobal(state, BASE[index]);
@@ -594,7 +600,9 @@ static int protected_push_library_env(lua_State *state) {
     lua_setfield(state, -2, "require");
 
     lua_newtable(state);
-    lua_pushcfunction(state, outside_the_library_env);
+    lua_pushstring(state, dependent);
+    lua_pushstring(state, member);
+    lua_pushcclosure(state, outside_the_library_env, 2);
     lua_setfield(state, -2, "__index");
     lua_pushstring(state, "the daukle library environment");
     lua_setfield(state, -2, "__metatable");
@@ -609,10 +617,10 @@ static int protected_push_library_env(lua_State *state) {
 
 int fr_lua_verbs_push_library_env(lua_State *state, const char *dependent, const char *member,
                                   fr_error *err) {
-    library_dependent = dependent;
-    library_member = member;
     lua_pushcfunction(state, protected_push_library_env);
-    int status = lua_pcall(state, 0, 1, 0);
+    lua_pushstring(state, dependent);
+    lua_pushstring(state, member);
+    int status = lua_pcall(state, 2, 1, 0);
     if (status != LUA_OK) {
         fr_error_set(err, "%s", fr_lua_error_text(state));
         lua_pop(state, 1);
