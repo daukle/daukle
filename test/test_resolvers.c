@@ -8,17 +8,13 @@
 #include "http.h"
 #include "region.h"
 #include "registry.h"
+#include "sha256.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 GREATEST_MAIN_DEFS();
-
-/* The sha256 of test/fixtures/resolver/resolver.lua, the same text
-   stub_resolver_chunk serves below. Computed with fr_sha256_hex in a
-   throwaway main against that file, not guessed. */
-#define RESOLVER_DIGEST "b10d73551edd6c5537151d766d571733d2ec9375bbe41fbed2f87975dd6d6620"
 
 static int parse(const char *json, fr_resolver_entry **out, size_t *out_count, fr_error *err) {
     cJSON *document = cJSON_Parse(json);
@@ -386,9 +382,19 @@ TEST a_chunk_that_declares_no_resolver_is_refused(void) {
    the memo gone, hiding exactly the regression this test exists to catch. */
 TEST one_resolver_named_twice_is_acquired_once(void) {
     fr_error err;
-    cJSON *document = cJSON_Parse(
-        "{\"resolvers\":{\"t\":{\"url\":\"https://example.invalid/r.lua\","
-        "\"sha256\":\"" RESOLVER_DIGEST "\"}}}");
+    char *fixture_text = NULL;
+    int fixture_read = fr_file_read_text("./test/fixtures/resolver/resolver.lua",
+                                         &fixture_text, &err) == FR_OK;
+    char digest[65];
+    fr_sha256_hex(fixture_read ? fixture_text : "", fixture_read ? strlen(fixture_text) : 0,
+                 digest);
+    free(fixture_text);
+
+    char manifest_json[512];
+    snprintf(manifest_json, sizeof manifest_json,
+             "{\"resolvers\":{\"t\":{\"url\":\"https://example.invalid/r.lua\","
+             "\"sha256\":\"%s\"}}}", digest);
+    cJSON *document = cJSON_Parse(manifest_json);
     fr_resolver_entry *entries = NULL;
     size_t count = 0;
     fr_resolvers_parse(document, &entries, &count, &err);
@@ -425,6 +431,7 @@ TEST one_resolver_named_twice_is_acquired_once(void) {
     fr_http_set_backend(previous);
     fr_cache_set_enabled(cache_was_enabled);
 
+    ASSERT(fixture_read);
     ASSERT(began);
     ASSERT_EQ(FR_OK, first);
     ASSERT(matched);
