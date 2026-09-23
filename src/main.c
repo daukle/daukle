@@ -488,15 +488,6 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
         return 1;
     }
 
-    fr_sync_report report;
-    if (fr_sync_session(&session, 1, &report, &err) != FR_OK) {
-        fr_sync_report_free(&report);
-        fr_session_close(&session);
-        report_error(&err, verbose);
-        return 1;
-    }
-    fr_sync_report_free(&report);
-
     fr_task_set set;
     if (fr_tasks_collect(session.registry, &session.manifest, &set, &err) != FR_OK) {
         fr_session_close(&session);
@@ -522,6 +513,19 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
         }
         return 1;
     }
+
+    /* The plan is known good before anything is written: a task that does not
+       exist must never trigger the write a real one would have caused. */
+    fr_sync_report report;
+    if (fr_sync_session(&session, 1, &report, &err) != FR_OK) {
+        fr_sync_report_free(&report);
+        fr_tasks_plan_free(&plan);
+        fr_tasks_set_free(&set);
+        fr_session_close(&session);
+        report_error(&err, verbose);
+        return 1;
+    }
+    fr_sync_report_free(&report);
 
     int status = fr_tasks_run(&plan, &session, &err);
     fr_tasks_plan_free(&plan);
@@ -573,7 +577,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "usage: daukle [--version | sync [manifest] | check [manifest]"
                     " | add <project>@<range> --to <consumer> [--modules a,b]"
                     " | config print | plugin update [label] | clean [manifest]"
-                    " | <task> | tasks]"
+                    " | <task>]"
                     " [--no-cache] [--verbose]\n");
     return 2;
 }
