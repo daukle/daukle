@@ -1150,6 +1150,8 @@ static int lua_require_module(lua_State *state) {
     return 1;
 }
 
+lua_CFunction fr_lua_verbs_require_function(void) { return lua_require_module; }
+
 void fr_lua_verbs_install_registration(lua_State *state) {
     lua_pushcfunction(state, lua_require_module);
     lua_setfield(state, -2, "require");

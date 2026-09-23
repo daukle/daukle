@@ -572,6 +572,55 @@ static int protected_push_env(lua_State *state) {
     return 1;
 }
 
+static const char *library_dependent;
+static const char *library_member;
+
+static int outside_the_library_env(lua_State *state) {
+    const char *name = lua_tostring(state, 2);
+    return luaL_error(state, "daukle.%s is not available to \"%s\", required by \"%s\" across a"
+                             " plugin boundary",
+                      name != NULL ? name : "?", library_member, library_dependent);
+}
+
+static int protected_push_library_env(lua_State *state) {
+    lua_newtable(state);
+    for (size_t index = 0; index < sizeof BASE / sizeof BASE[0]; index++) {
+        lua_getglobal(state, BASE[index]);
+        lua_setfield(state, -2, BASE[index]);
+    }
+
+    lua_newtable(state);
+    lua_pushcfunction(state, fr_lua_verbs_require_function());
+    lua_setfield(state, -2, "require");
+
+    lua_newtable(state);
+    lua_pushcfunction(state, outside_the_library_env);
+    lua_setfield(state, -2, "__index");
+    lua_pushstring(state, "the daukle library environment");
+    lua_setfield(state, -2, "__metatable");
+    lua_setmetatable(state, -2);
+
+    lua_setfield(state, -2, "daukle");
+
+    lua_pushvalue(state, -1);
+    lua_setfield(state, -2, "_G");
+    return 1;
+}
+
+int fr_lua_verbs_push_library_env(lua_State *state, const char *dependent, const char *member,
+                                  fr_error *err) {
+    library_dependent = dependent;
+    library_member = member;
+    lua_pushcfunction(state, protected_push_library_env);
+    int status = lua_pcall(state, 0, 1, 0);
+    if (status != LUA_OK) {
+        fr_error_set(err, "%s", fr_lua_error_text(state));
+        lua_pop(state, 1);
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
 int fr_lua_verbs_push_env(lua_State *state, const char *const *verbs, size_t verb_count,
                           fr_error *err) {
     env_declared_exec = 0;

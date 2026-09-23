@@ -89,6 +89,10 @@ void fr_lua_set_task_cwd(const char *directory);
    underlying functions are file statics here, so this is their only way out. */
 void fr_lua_verbs_install_registration(lua_State *state);
 
+/* lua_require_module is a file static here; this is lua_verbs.c's only way to
+   reach it when building the library environment. */
+lua_CFunction fr_lua_verbs_require_function(void);
+
 /* The registry stores plugin structs by value and does not own their capability
    strings, so the runtime that owns them outlives the registry and is torn down
    only after it. */
