@@ -70,9 +70,9 @@ int fr_lua_resolver_call(const char *coordinate, const struct cJSON *block, char
 const char *fr_lua_task_cwd(void);
 void fr_lua_set_task_cwd(const char *directory);
 
-/* Sets language, source, toolchain and plugin on the table on top of the
-   stack, for lua_verbs.c to build a plugin environment around; the underlying
-   functions are file statics here, so this is their only way out. */
+/* Sets language, source, toolchain, task, resolver and plugin on the table on
+   top of the stack, for lua_verbs.c to build a plugin environment around; the
+   underlying functions are file statics here, so this is their only way out. */
 void fr_lua_verbs_install_registration(lua_State *state);
 
 /* The registry stores plugin structs by value and does not own their capability
