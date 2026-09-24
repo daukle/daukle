@@ -2,6 +2,7 @@
 #define DAUKLE_CONFIG_LUA_H
 
 #include "http.h"
+#include "plugin_deps.h"
 #include "plugin_modules.h"
 #include "registry.h"
 
@@ -28,10 +29,14 @@ int fr_lua_runtime_begin(const char *base_dir, fr_registry *registry, fr_error *
 lua_State *fr_lua_runtime_state(void);
 
 /* Runs one plugin chunk in the shared state, in an environment holding the
-   registration functions and exactly the verbs named in verbs. */
+   registration functions and exactly the verbs named in verbs. deps is what
+   fr_plugin_deps_acquire produced for this chunk's own declaration, or NULL
+   when it declared no requires: it is what daukle.require("<alias>:<module>")
+   resolves an alias against, and it is borrowed for the length of the call, so
+   the caller closes it only once the load has returned. */
 int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
                        const char *const *verbs, size_t verb_count, fr_plugin_source *source,
-                       fr_error *err);
+                       fr_plugin_deps *deps, fr_error *err);
 
 /* The registry the runtime is currently loading plugins into, or NULL when no
    load phase is open. */
@@ -88,6 +93,10 @@ void fr_lua_set_task_cwd(const char *directory);
    top of the stack, for lua_verbs.c to build a plugin environment around; the
    underlying functions are file statics here, so this is their only way out. */
 void fr_lua_verbs_install_registration(lua_State *state);
+
+/* lua_require_module is a file static here; this is lua_verbs.c's only way to
+   reach it when building the library environment. */
+lua_CFunction fr_lua_verbs_require_function(void);
 
 /* The registry stores plugin structs by value and does not own their capability
    strings, so the runtime that owns them outlives the registry and is torn down

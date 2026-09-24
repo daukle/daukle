@@ -9,13 +9,13 @@
 #include "lua_verbs.h"
 #include "luax.h"
 #include "plugin_fetch.h"
+#include "plugin_modules.h"
 #include "region.h"
 #include "resolvers.h"
 #include "sha256.h"
 
 #include "lauxlib.h"
 
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -116,6 +116,11 @@ static int parse_string_form(const char *label, const char *value,
    of them may also carry a "sha256" pin. */
 static int parse_table_form(const char *label, const cJSON *member, fr_plugin_entry *out,
                             fr_error *err) {
+    /* Not validated here: plugin_deps.c is the sole reader, and validating an
+       absent table would tax the common case (no requires at all) for
+       nothing. */
+    out->overrides = cJSON_GetObjectItemCaseSensitive(member, "requires");
+
     if (cJSON_GetObjectItemCaseSensitive(member, "sha256") != NULL) {
         const char *sha256 = NULL;
         if (fr_json_string(member, "sha256", label, &sha256, err) != FR_OK) return FR_ERR;
@@ -175,6 +180,18 @@ static int parse_table_form(const char *label, const cJSON *member, fr_plugin_en
     return (out->resolver != NULL && out->coordinate != NULL) ? FR_OK : out_of_memory(label, err);
 }
 
+int fr_plugins_parse_entry(const char *label, const cJSON *member,
+                           const fr_resolver_entry *resolvers, size_t resolver_count,
+                           fr_plugin_entry *out, fr_error *err) {
+    if (cJSON_IsString(member) && member->valuestring != NULL) {
+        return parse_string_form(label, member->valuestring, resolvers, resolver_count, out, err);
+    }
+    if (cJSON_IsObject(member)) return parse_table_form(label, member, out, err);
+
+    fr_error_set(err, "plugin \"%s\" must be a string or a table", label);
+    return FR_ERR;
+}
+
 int fr_plugins_parse(const struct cJSON *document, const fr_resolver_entry *resolvers,
                      size_t resolver_count, fr_plugin_entry **out, size_t *out_count,
                      fr_error *err) {
@@ -212,18 +229,7 @@ int fr_plugins_parse(const struct cJSON *document, const fr_resolver_entry *reso
             return FR_ERR;
         }
 
-        int status;
-        if (cJSON_IsString(member) && member->valuestring != NULL) {
-            status = parse_string_form(label, member->valuestring, resolvers, resolver_count,
-                                       slot, err);
-        } else if (cJSON_IsObject(member)) {
-            status = parse_table_form(label, member, slot, err);
-        } else {
-            fr_error_set(err, "plugin \"%s\" must be a string or a table", label);
-            status = FR_ERR;
-        }
-
-        if (status != FR_OK) {
+        if (fr_plugins_parse_entry(label, member, resolvers, resolver_count, slot, err) != FR_OK) {
             fr_plugins_free(entries, count);
             return FR_ERR;
         }
@@ -241,39 +247,43 @@ int fr_plugins_reject_in_fetched(const struct cJSON *document, const char *proje
     return FR_ERR;
 }
 
-void fr_plugins_free(fr_plugin_entry *entries, size_t count) {
-    if (entries == NULL) return;
-    for (size_t index = 0; index < count; index++) {
-        free(entries[index].label);
-        free(entries[index].path);
-        free(entries[index].url);
-        free(entries[index].resolver);
-        free(entries[index].coordinate);
-        free(entries[index].sha256);
-    }
-    free(entries);
+void fr_plugins_free_entry(fr_plugin_entry *entry) {
+    free(entry->label);
+    free(entry->path);
+    free(entry->url);
+    free(entry->resolver);
+    free(entry->coordinate);
+    free(entry->sha256);
+    memset(entry, 0, sizeof *entry);
 }
 
-#define FR_PLUGIN_MAX_USES 16
+void fr_plugins_free(fr_plugin_entry *entries, size_t count) {
+    if (entries == NULL) return;
+    for (size_t index = 0; index < count; index++) fr_plugins_free_entry(&entries[index]);
+    free(entries);
+}
 
 /* Raised to stop the chunk the moment daukle.plugin has been read, so catching it
    distinguishes a declaration that was read from a plugin that really failed. */
 #define FR_PLUGIN_DECLARATION_READ "daukle: plugin declaration read"
 
-typedef struct {
-    const char *kind;   /* "plugin" or "resolver", named in every message below */
-    const char *label;
-    char *uses[FR_PLUGIN_MAX_USES];
-    size_t uses_count;
-} fr_plugin_declaration;
-
 static fr_plugin_declaration *declaration_in_progress;
 
-static void free_declaration(fr_plugin_declaration *declaration) {
+void fr_plugins_free_declaration(fr_plugin_declaration *declaration) {
     for (size_t index = 0; index < declaration->uses_count; index++) {
         free(declaration->uses[index]);
     }
     declaration->uses_count = 0;
+    for (size_t index = 0; index < declaration->exports_count; index++) {
+        free(declaration->exports[index]);
+    }
+    declaration->exports_count = 0;
+    for (size_t index = 0; index < declaration->requires_count; index++) {
+        free(declaration->requires[index].alias);
+        free(declaration->requires[index].url);
+        free(declaration->requires[index].sha256);
+    }
+    declaration->requires_count = 0;
 }
 
 static int record_uses(lua_State *state, fr_plugin_declaration *declaration) {
@@ -311,6 +321,168 @@ static int record_uses(lua_State *state, fr_plugin_declaration *declaration) {
     return 0;
 }
 
+static int record_exports(lua_State *state, fr_plugin_declaration *declaration) {
+    if (lua_isnil(state, -1)) return 0;
+    if (strcmp(declaration->kind, "resolver") == 0) {
+        return luaL_error(state, "resolver \"%s\": a resolver may not export a module, because a"
+                                 " resolver has no dependents",
+                          declaration->label);
+    }
+    if (!lua_istable(state, -1)) {
+        return luaL_error(state, "%s \"%s\": exports must be a list of module names",
+                          declaration->kind, declaration->label);
+    }
+
+    lua_Integer length = (lua_Integer) lua_rawlen(state, -1);
+    for (lua_Integer index = 1; index <= length; index++) {
+        lua_rawgeti(state, -1, index);
+        if (lua_type(state, -1) != LUA_TSTRING) {
+            return luaL_error(state, "%s \"%s\": every name in exports must be a string",
+                              declaration->kind, declaration->label);
+        }
+        const char *name = lua_tostring(state, -1);
+        fr_error name_err;
+        if (fr_plugin_export_name_check(name, &name_err) != FR_OK) {
+            return luaL_error(state, "%s \"%s\": %s", declaration->kind, declaration->label,
+                              name_err.message);
+        }
+        if (declaration->exports_count == FR_PLUGIN_MAX_EXPORTS) {
+            return luaL_error(state, "%s \"%s\": exports names more than %d modules",
+                              declaration->kind, declaration->label, FR_PLUGIN_MAX_EXPORTS);
+        }
+        char *copy = fr_dup_string(name);
+        if (copy == NULL) {
+            return luaL_error(state, "%s \"%s\": out of memory reading exports",
+                              declaration->kind, declaration->label);
+        }
+        declaration->exports[declaration->exports_count] = copy;
+        declaration->exports_count++;
+        lua_pop(state, 1);
+    }
+    return 0;
+}
+
+static int alias_is_well_formed(const char *alias) {
+    for (const char *scan = alias; *scan != '\0'; scan++) {
+        int ok = (*scan >= 'a' && *scan <= 'z') || (*scan >= 'A' && *scan <= 'Z')
+              || (*scan >= '0' && *scan <= '9') || *scan == '-' || *scan == '_';
+        if (!ok) return 0;
+    }
+    return alias[0] != '\0';
+}
+
+/* A one-character alias is the Windows drive-letter shape fr_lua_sandbox_climbs_out refuses before
+   a require ever reaches the colon split ("c:x" is caught as an escape, never read as "plugin c,
+   module x"), so daukle.require("<alias>:...") could never name a dependency declared under one.
+   The acquisition spec records the identical hazard for a one-letter resolver label. */
+static int alias_is_unreachable_as_a_drive_letter(const char *alias) {
+    return strlen(alias) == 1;
+}
+
+/* Reads table[key] raw, the way config_lua.c's raw_getfield does: index may be
+   relative (record_requires calls these with -1), so it is converted to
+   absolute before the key is pushed, or the push would shift what the
+   caller's index means. */
+static int raw_has_field(lua_State *state, int index, const char *key) {
+    int absolute = lua_absindex(state, index);
+    lua_pushstring(state, key);
+    lua_rawget(state, absolute);
+    int present = !lua_isnil(state, -1);
+    lua_pop(state, 1);
+    return present;
+}
+
+static const char *raw_string_field(lua_State *state, int index, const char *key) {
+    int absolute = lua_absindex(state, index);
+    lua_pushstring(state, key);
+    lua_rawget(state, absolute);
+    const char *value = lua_type(state, -1) == LUA_TSTRING ? lua_tostring(state, -1) : NULL;
+    lua_pop(state, 1);
+    return value;
+}
+
+static int record_requires(lua_State *state, fr_plugin_declaration *declaration) {
+    if (lua_isnil(state, -1)) return 0;
+    if (strcmp(declaration->kind, "resolver") == 0) {
+        return luaL_error(state, "resolver \"%s\": a resolver may not require a plugin, because a"
+                                 " resolver is acquired by the floor only",
+                          declaration->label);
+    }
+    if (!lua_istable(state, -1)) {
+        return luaL_error(state, "plugin \"%s\": requires must be a table of alias to artifact",
+                          declaration->label);
+    }
+
+    lua_pushnil(state);
+    while (lua_next(state, -2) != 0) {
+        if (lua_type(state, -2) != LUA_TSTRING) {
+            return luaL_error(state, "plugin \"%s\": every key in requires must be an alias",
+                              declaration->label);
+        }
+        const char *alias = lua_tostring(state, -2);
+        if (!alias_is_well_formed(alias)) {
+            return luaL_error(state, "plugin \"%s\": the alias \"%s\" may hold only letters, digits,"
+                                     " \"-\" and \"_\"",
+                              declaration->label, alias);
+        }
+        if (alias_is_unreachable_as_a_drive_letter(alias)) {
+            return luaL_error(state, "plugin \"%s\": the alias \"%s\" is one letter, and a letter"
+                                     " before \":\" is a Windows drive letter, so"
+                                     " daukle.require(\"%s:...\") could never reach it. Use a longer"
+                                     " alias",
+                              declaration->label, alias, alias);
+        }
+        if (strlen(alias) > FR_PLUGIN_MAX_ALIAS) {
+            return luaL_error(state, "plugin \"%s\": the alias \"%s\" is longer than %d bytes",
+                              declaration->label, alias, FR_PLUGIN_MAX_ALIAS);
+        }
+        if (declaration->requires_count == FR_PLUGIN_MAX_REQUIRES) {
+            return luaL_error(state, "plugin \"%s\": requires names more than %d plugins",
+                              declaration->label, FR_PLUGIN_MAX_REQUIRES);
+        }
+        if (!lua_istable(state, -1)) {
+            return luaL_error(state, "plugin \"%s\": requires[\"%s\"] must be a table holding url"
+                                     " and sha256",
+                              declaration->label, alias);
+        }
+        if (raw_has_field(state, -1, "path")) {
+            return luaL_error(state, "plugin \"%s\": requires[\"%s\"] names a path, and a dependency"
+                                     " is acquired by url. A local one is written in the manifest as"
+                                     " [plugins.%s].requires",
+                              declaration->label, alias, declaration->label);
+        }
+        const char *url = raw_string_field(state, -1, "url");
+        const char *sha256 = raw_string_field(state, -1, "sha256");
+        if (url == NULL) {
+            return luaL_error(state, "plugin \"%s\": requires[\"%s\"] names no url",
+                              declaration->label, alias);
+        }
+        if (sha256 == NULL) {
+            return luaL_error(state, "plugin \"%s\": requires[\"%s\"] has no sha256, and a"
+                                     " dependency is always pinned: a pin that is not transitive"
+                                     " pins nothing",
+                              declaration->label, alias);
+        }
+        char *alias_copy = fr_dup_string(alias);
+        char *url_copy = fr_dup_string(url);
+        char *sha256_copy = fr_dup_string(sha256);
+        if (alias_copy == NULL || url_copy == NULL || sha256_copy == NULL) {
+            free(alias_copy);
+            free(url_copy);
+            free(sha256_copy);
+            return luaL_error(state, "plugin \"%s\": out of memory reading requires",
+                              declaration->label);
+        }
+        fr_plugin_requirement *slot = &declaration->requires[declaration->requires_count];
+        slot->alias = alias_copy;
+        slot->url = url_copy;
+        slot->sha256 = sha256_copy;
+        declaration->requires_count++;
+        lua_pop(state, 1);
+    }
+    return 0;
+}
+
 static int declare_plugin(lua_State *state) {
     fr_plugin_declaration *declaration = declaration_in_progress;
     if (declaration == NULL) return 0;
@@ -333,6 +505,14 @@ static int declare_plugin(lua_State *state) {
 
     lua_getfield(state, 1, "uses");
     record_uses(state, declaration);
+    lua_pop(state, 1);
+
+    lua_getfield(state, 1, "requires");
+    record_requires(state, declaration);
+    lua_pop(state, 1);
+
+    lua_getfield(state, 1, "exports");
+    record_exports(state, declaration);
     lua_pop(state, 1);
 
     lua_pushliteral(state, FR_PLUGIN_DECLARATION_READ);
@@ -392,11 +572,12 @@ static int read_declaration(lua_State *state, const char *text, size_t length, c
    below, so a resolver's malformed uses is reported as a resolver, not a
    plugin. A NULL runtime state is a real error here, not a crash:
    read_declaration's first line touches it. */
-int fr_plugins_read_uses(const char *text, size_t length, const char *origin, const char *kind,
-                         const char *label, char ***out_uses, size_t *out_uses_count,
-                         fr_error *err) {
-    *out_uses = NULL;
-    *out_uses_count = 0;
+int fr_plugins_read_declaration(const char *text, size_t length, const char *origin,
+                                const char *kind, const char *label,
+                                fr_plugin_declaration *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+    out->kind = kind;
+    out->label = label;
 
     lua_State *state = fr_lua_runtime_state();
     if (state == NULL) {
@@ -404,42 +585,11 @@ int fr_plugins_read_uses(const char *text, size_t length, const char *origin, co
         return FR_ERR;
     }
 
-    fr_plugin_declaration declaration = { kind, label, { NULL }, 0 };
-    if (read_declaration(state, text, length, origin, &declaration, err) != FR_OK) {
-        free_declaration(&declaration);
+    if (read_declaration(state, text, length, origin, out, err) != FR_OK) {
+        fr_plugins_free_declaration(out);
         return FR_ERR;
     }
-    if (declaration.uses_count == 0) return FR_OK;
-
-    char **uses = malloc(declaration.uses_count * sizeof *uses);
-    if (uses == NULL) {
-        free_declaration(&declaration);
-        fr_error_set(err, "out of memory reading %s \"%s\"", kind, label);
-        return FR_ERR;
-    }
-    memcpy(uses, declaration.uses, declaration.uses_count * sizeof *uses);
-    *out_uses = uses;
-    *out_uses_count = declaration.uses_count;
     return FR_OK;
-}
-
-void fr_plugins_free_uses(char **uses, size_t count) {
-    if (uses == NULL) return;
-    for (size_t index = 0; index < count; index++) free(uses[index]);
-    free(uses);
-}
-
-/* stricmp/strcasecmp are not portable C11; a sha256 hex digest is a bounded
-   64 characters, so comparing lowercased copies in fixed buffers is safe. */
-static int digest_matches(const char *actual, const char *pinned) {
-    size_t length = strlen(actual);
-    if (length != strlen(pinned) || length >= 65) return 0;
-    for (size_t index = 0; index < length; index++) {
-        if (tolower((unsigned char) actual[index]) != tolower((unsigned char) pinned[index])) {
-            return 0;
-        }
-    }
-    return 1;
 }
 
 static fr_plugin_report_entry *report_entries;
@@ -450,6 +600,8 @@ static void free_report_entry(fr_plugin_report_entry *entry) {
     free(entry->resolver);
     free(entry->url);
     free(entry->resolved);
+    free(entry->required_by);
+    free(entry->alias);
     for (size_t index = 0; index < entry->uses_count; index++) free(entry->uses[index]);
     free(entry->uses);
 }
@@ -480,9 +632,17 @@ const fr_plugin_report *fr_plugins_report(void) {
     return &view;
 }
 
+size_t fr_plugins_report_declared_count(const fr_plugin_report *report) {
+    size_t count = 0;
+    for (size_t index = 0; index < report->count; index++) {
+        if (report->entries[index].required_by == NULL) count++;
+    }
+    return count;
+}
+
 /* Appends one entry, owning copies of everything it stores: entry and declaration are both
-   about to be freed by their callers (fr_plugins_free and free_declaration), so nothing here
-   may keep a pointer into either. origin is the url a URL or resolved entry fetched, or the
+   about to be freed by their callers (fr_plugins_free and fr_plugins_free_declaration), so
+   nothing here may keep a pointer into either. origin is the url a URL or resolved entry fetched, or the
    resolved path a local entry read; resolved is the resolver's own answer, NULL for the two
    kinds core names itself. */
 static int append_report_entry(const fr_plugin_entry *entry, const char *origin,
@@ -529,6 +689,86 @@ static int append_report_entry(const fr_plugin_entry *entry, const char *origin,
 
     report_count++;
     return FR_OK;
+}
+
+/* Appends one dependency's row, owning copies of everything row borrows: row's strings point into
+   the deps graph, which fr_plugin_deps_close (load_one's own cleanup) tears down before the report
+   is ever read. sha256 is row->digest, the value computed while acquiring the node, never
+   recomputed here, so the printed digest is provably the bytes that were verified. */
+static int append_dependency_report_entry(const fr_plugin_deps_row *row, fr_error *err) {
+    fr_plugin_report_entry *grown = realloc(report_entries, (report_count + 1) * sizeof *grown);
+    if (grown == NULL) {
+        fr_error_set(err, "out of memory recording dependency \"%s\" in the report", row->alias);
+        return FR_ERR;
+    }
+    report_entries = grown;
+
+    fr_plugin_report_entry *slot = &report_entries[report_count];
+    memset(slot, 0, sizeof *slot);
+    slot->kind = row->kind;
+    memcpy(slot->sha256, row->digest, sizeof slot->sha256);
+    slot->overridden = row->overridden;
+
+    slot->label = fr_dup_string(row->alias);
+    slot->alias = fr_dup_string(row->alias);
+    slot->required_by = fr_dup_string(row->required_by);
+    slot->url = fr_dup_string(row->url);
+    slot->uses = row->uses_count > 0 ? malloc(row->uses_count * sizeof *slot->uses) : NULL;
+    if (slot->label == NULL || slot->alias == NULL || slot->required_by == NULL || slot->url == NULL
+        || (row->uses_count > 0 && slot->uses == NULL)) {
+        free_report_entry(slot);
+        fr_error_set(err, "out of memory recording dependency \"%s\" in the report", row->alias);
+        return FR_ERR;
+    }
+
+    for (size_t index = 0; index < row->uses_count; index++) {
+        slot->uses[index] = fr_dup_string(row->uses[index]);
+        if (slot->uses[index] == NULL) {
+            slot->uses_count = index;
+            free_report_entry(slot);
+            fr_error_set(err, "out of memory recording dependency \"%s\" in the report", row->alias);
+            return FR_ERR;
+        }
+    }
+    slot->uses_count = row->uses_count;
+
+    report_count++;
+    return FR_OK;
+}
+
+/* fr_plugin_deps_acquire walks a requires table with lua_next, whose iteration order is
+   unspecified, so the order nodes were acquired in varies between runs and machines for one
+   unchanged manifest. "daukle config print" is what a person diffs across both, so rows are
+   sorted here, before anything is appended, rather than left in acquisition order. */
+static int compare_deps_rows(const void *left, const void *right) {
+    const fr_plugin_deps_row *a = left;
+    const fr_plugin_deps_row *b = right;
+    int by_required_by = strcmp(a->required_by, b->required_by);
+    return by_required_by != 0 ? by_required_by : strcmp(a->alias, b->alias);
+}
+
+static int append_dependency_report_rows(fr_plugin_deps *deps, fr_error *err) {
+    size_t count = fr_plugin_deps_row_count(deps);
+    if (count == 0) return FR_OK;
+
+    /* One row per binding rather than one per node, so this can exceed
+       FR_PLUGIN_DEPS_MAX_NODES when a url is bound under more than one alias:
+       heap-allocated because the worst case (every node's own requires table
+       full) is larger than a stack buffer should carry. */
+    fr_plugin_deps_row *rows = malloc(count * sizeof *rows);
+    if (rows == NULL) {
+        fr_error_set(err, "out of memory recording dependencies in the report");
+        return FR_ERR;
+    }
+    for (size_t index = 0; index < count; index++) fr_plugin_deps_row_at(deps, index, &rows[index]);
+    qsort(rows, count, sizeof *rows, compare_deps_rows);
+
+    int status = FR_OK;
+    for (size_t index = 0; index < count && status == FR_OK; index++) {
+        status = append_dependency_report_entry(&rows[index], err);
+    }
+    free(rows);
+    return status;
 }
 
 static int unknown_resolver(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
@@ -617,35 +857,38 @@ static int acquire(const fr_plugin_entry *entry, const fr_resolver_entry *resolv
     return FR_OK;
 }
 
-static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
-                    size_t resolver_count, fr_error *err) {
-    char *origin = NULL;
-    char *text = NULL;
-    char *resolved = NULL;
-    size_t length = 0;
+int fr_plugins_acquire_source(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
+                              size_t resolver_count, char **out_text, size_t *out_length,
+                              char **out_origin, char **out_resolved, char out_digest[65],
+                              fr_plugin_source **out_source, fr_error *err) {
+    *out_text = NULL;
+    *out_length = 0;
+    *out_origin = NULL;
+    *out_resolved = NULL;
+    out_digest[0] = '\0';
+    *out_source = NULL;
+
     int is_directory = 0;
-    if (acquire(entry, resolvers, resolver_count, &text, &length, &origin, &resolved,
-                &is_directory, err)
+    if (acquire(entry, resolvers, resolver_count, out_text, out_length, out_origin, out_resolved,
+               &is_directory, err)
         != FR_OK) {
         return FR_ERR;
     }
 
     /* Computed for every plugin that HAS a byte string, pinned or not: an
        unpinned entry's digest is what "daukle config print" shows, so adopting a
-       pin is a copy and a paste. Checked before read_declaration, which already
-       runs the chunk: verifying after would mean the mismatched code had already
-       executed. */
-    char digest[65];
-    digest[0] = '\0';
+       pin is a copy and a paste. Checked before the source is opened, which for
+       an archive already reads its central directory: verifying after would
+       mean unpinned bytes had already been trusted that far. */
     if (!is_directory) {
-        fr_sha256_hex(text, length, digest);
-        if (entry->sha256 != NULL && !digest_matches(digest, entry->sha256)) {
+        fr_sha256_hex(*out_text, *out_length, out_digest);
+        if (entry->sha256 != NULL && !fr_sha256_hex_equal(out_digest, entry->sha256)) {
             fr_error_set(err, "plugin \"%s\": expected sha256 %s but the file is %s",
-                        entry->label, entry->sha256, digest);
-            if (entry->kind != FR_PLUGIN_PATH) fr_plugin_fetch_discard(origin);
-            free(text);
-            free(origin);
-            free(resolved);
+                        entry->label, entry->sha256, out_digest);
+            if (entry->kind != FR_PLUGIN_PATH) fr_plugin_fetch_discard(*out_origin);
+            free(*out_text); *out_text = NULL;
+            free(*out_origin); *out_origin = NULL;
+            free(*out_resolved); *out_resolved = NULL;
             return FR_ERR;
         }
     } else if (entry->sha256 != NULL) {
@@ -656,9 +899,9 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
         fr_error_set(err, "plugin \"%s\": \"%s\" is a directory and cannot carry a sha256; pin the"
                           " published archive instead",
                     entry->label, entry->path);
-        free(text);
-        free(origin);
-        free(resolved);
+        free(*out_text); *out_text = NULL;
+        free(*out_origin); *out_origin = NULL;
+        free(*out_resolved); *out_resolved = NULL;
         return FR_ERR;
     }
 
@@ -666,11 +909,29 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
     int opened = is_directory
                      ? fr_plugin_source_open_directory(fr_lua_runtime_state(), entry->path, &source,
                                                        err)
-                     : fr_plugin_source_open_bytes(text, length, &source, err);
+                     : fr_plugin_source_open_bytes(*out_text, *out_length, &source, err);
     if (opened != FR_OK) {
-        free(text);
-        free(origin);
-        free(resolved);
+        free(*out_text); *out_text = NULL;
+        free(*out_origin); *out_origin = NULL;
+        free(*out_resolved); *out_resolved = NULL;
+        return FR_ERR;
+    }
+
+    *out_source = source;
+    return FR_OK;
+}
+
+static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
+                    size_t resolver_count, fr_error *err) {
+    char *origin = NULL;
+    char *text = NULL;
+    char *resolved = NULL;
+    size_t length = 0;
+    char digest[65];
+    fr_plugin_source *source = NULL;
+    if (fr_plugins_acquire_source(entry, resolvers, resolver_count, &text, &length, &origin,
+                                  &resolved, digest, &source, err)
+        != FR_OK) {
         return FR_ERR;
     }
 
@@ -681,20 +942,33 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
     int status = fr_plugin_source_entry(source, &chunk, &chunk_length, err);
 
     lua_State *state = fr_lua_runtime_state();
-    fr_plugin_declaration declaration = { "plugin", entry->label, { NULL }, 0 };
+    fr_plugin_declaration declaration;
+    memset(&declaration, 0, sizeof declaration);
+    declaration.kind = "plugin";
+    declaration.label = entry->label;
     if (status == FR_OK) {
         status = read_declaration(state, chunk, chunk_length, origin, &declaration, err);
+    }
+
+    fr_plugin_deps *deps = NULL;
+    if (status == FR_OK) {
+        status = fr_plugin_deps_acquire(&declaration, entry->overrides, resolvers, resolver_count,
+                                        &deps, err);
     }
     if (status == FR_OK) {
         status = fr_lua_plugin_load(chunk, chunk_length, origin,
                                     (const char *const *) declaration.uses,
-                                    declaration.uses_count, source, err);
+                                    declaration.uses_count, source, deps, err);
     }
     if (status == FR_OK) {
         status = append_report_entry(entry, origin, resolved, digest, &declaration, err);
     }
+    if (status == FR_OK) {
+        status = append_dependency_report_rows(deps, err);
+    }
 
-    free_declaration(&declaration);
+    fr_plugin_deps_close(deps);
+    fr_plugins_free_declaration(&declaration);
     fr_plugin_source_close(source);
     free(text);
     free(origin);

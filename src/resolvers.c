@@ -10,7 +10,6 @@
 #include "region.h"
 #include "sha256.h"
 
-#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -145,20 +144,6 @@ const fr_resolver_entry *fr_resolvers_find(const fr_resolver_entry *entries, siz
     return NULL;
 }
 
-/* Mirrors plugins.c's own digest_matches: both compare a bounded, lowercased
-   sha256 hex digest and neither is worth sharing across a header for one
-   four-line helper. */
-static int digest_matches(const char *actual, const char *pinned) {
-    size_t length = strlen(actual);
-    if (length != strlen(pinned) || length >= 65) return 0;
-    for (size_t index = 0; index < length; index++) {
-        if (tolower((unsigned char) actual[index]) != tolower((unsigned char) pinned[index])) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
 static char *loaded_label;
 static char *loaded_source;
 
@@ -219,7 +204,7 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
 
     char digest[65];
     fr_sha256_hex(text, length, digest);
-    if (entry->sha256 != NULL && !digest_matches(digest, entry->sha256)) {
+    if (entry->sha256 != NULL && !fr_sha256_hex_equal(digest, entry->sha256)) {
         fr_error_set(err, "resolver \"%s\": expected sha256 %s but the file is %s",
                     entry->label, entry->sha256, digest);
         if (entry->url != NULL) fr_plugin_fetch_discard(entry->url);
@@ -243,19 +228,20 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
     size_t chunk_length = 0;
     int status = fr_plugin_source_entry(source, &chunk, &chunk_length, err);
 
-    char **uses = NULL;
-    size_t uses_count = 0;
+    fr_plugin_declaration declaration;
+    memset(&declaration, 0, sizeof declaration);
     if (status == FR_OK) {
-        status = fr_plugins_read_uses(chunk, chunk_length, origin, "resolver", entry->label, &uses,
-                                      &uses_count, err);
+        status = fr_plugins_read_declaration(chunk, chunk_length, origin, "resolver", entry->label,
+                                             &declaration, err);
     }
     if (status == FR_OK) {
         fr_lua_set_acquiring_resolver(1);
-        status = fr_lua_plugin_load(chunk, chunk_length, origin, (const char *const *) uses,
-                                    uses_count, source, err);
+        status = fr_lua_plugin_load(chunk, chunk_length, origin,
+                                    (const char *const *) declaration.uses, declaration.uses_count,
+                                    source, NULL, err);
         fr_lua_set_acquiring_resolver(0);
     }
-    fr_plugins_free_uses(uses, uses_count);
+    fr_plugins_free_declaration(&declaration);
     fr_plugin_source_close(source);
     free(text);
     free(path);

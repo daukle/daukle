@@ -229,14 +229,16 @@ TEST a_module_name_past_the_length_limit_is_refused(void) {
     PASS();
 }
 
-/* The syntax child spec 6 will use is refused by name now, so arriving later is
-   not a breaking change. */
-TEST a_cross_plugin_module_name_is_reserved(void) {
+/* One colon separates a plugin from its module, and config_lua.c splits on the
+   first one before it gets here, so what reaches this check is the member half
+   alone: a second colon in it names nothing. */
+TEST a_module_name_with_a_second_colon_is_refused(void) {
     int status = FR_OK;
     char message[512];
     member_message("java:semver", &status, message, sizeof message);
     ASSERT_EQ(FR_ERR, status);
-    ASSERT(strstr(message, "cross-plugin requires are not implemented") != NULL);
+    ASSERTm(message, strstr(message, "at most one \":\"") != NULL);
+    ASSERTm(message, strstr(message, "separates a plugin from its module") != NULL);
     PASS();
 }
 
@@ -333,7 +335,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_module_name_with_a_backslash_is_refused);
     RUN_TEST(a_module_name_ending_in_a_separator_is_refused);
     RUN_TEST(a_module_name_past_the_length_limit_is_refused);
-    RUN_TEST(a_cross_plugin_module_name_is_reserved);
+    RUN_TEST(a_module_name_with_a_second_colon_is_refused);
     RUN_TEST(a_module_no_member_matches_lists_what_there_is);
     RUN_TEST(a_directory_serves_its_entry_and_its_modules);
     RUN_TEST(a_directory_module_is_read_once_and_kept);

@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 struct cJSON;
+typedef struct fr_plugin_source fr_plugin_source; /* plugin_modules.h owns the real definition */
 
 typedef enum { FR_PLUGIN_PATH, FR_PLUGIN_URL, FR_PLUGIN_RESOLVED } fr_plugin_kind;
 
@@ -19,6 +20,14 @@ typedef struct {
     char *resolver;    /* FR_PLUGIN_RESOLVED, a [resolvers] label */
     char *coordinate;  /* FR_PLUGIN_RESOLVED, opaque to core */
     char *sha256;      /* optional on every kind */
+    /* This entry's own "requires" table, the manifest override for one of ITS
+       aliases, or NULL. Borrowed from the parsed document, which must outlive
+       every entry parsed from it: fr_plugins_load holds it open for the whole
+       load, and main.c's manifest_plugins_free relies on the same ordering by
+       hand, freeing its entries before deleting its document, not after.
+       fr_plugins_free (and fr_plugins_free_entry) must not free this, because
+       it is not owned here. */
+    const struct cJSON *overrides;
 } fr_plugin_entry;
 
 /* One reported plugin, holding copies of everything an fr_plugin_entry held:
@@ -34,6 +43,9 @@ typedef struct {
     size_t uses_count;
     char sha256[65];   /* always computed, pinned or not: this is what makes adopting a
                           pin a copy and a paste rather than a separate command */
+    char *required_by; /* the dependent's label, NULL for a root [plugins] entry */
+    char *alias;        /* the alias it was named by, NULL for a root entry */
+    int overridden;     /* 1 when the manifest replaced what the author named */
 } fr_plugin_report_entry;
 
 typedef struct {
@@ -49,21 +61,47 @@ typedef struct {
 char *fr_dup_string(const char *text);
 char *fr_dup_prefix(const char *text, size_t length);
 
-/* Runs only as much of text as its daukle.plugin{...} call, the same
-   protected read fr_plugins_load uses before installing verbs, and reports
-   what it declared "uses" as a freshly allocated array. kind ("plugin" or
-   "resolver") and label name the chunk in any error text, so a resolver's
-   malformed uses is never reported as a plugin's; origin is what a parse
-   error is reported against. *out_uses is NULL when uses is empty or absent,
-   not an error. A lua runtime must already be open. Shared with resolvers.c,
-   whose chunks are acquired the same way a plugin's is. */
-int fr_plugins_read_uses(const char *text, size_t length, const char *origin, const char *kind,
-                         const char *label, char ***out_uses, size_t *out_uses_count,
-                         fr_error *err);
+#define FR_PLUGIN_MAX_USES 16
+#define FR_PLUGIN_MAX_REQUIRES 16
+#define FR_PLUGIN_MAX_EXPORTS 64
+#define FR_PLUGIN_MAX_ALIAS 64
 
-/* Frees an array fr_plugins_read_uses returned. Tolerates a NULL array paired
-   with a zero count. */
-void fr_plugins_free_uses(char **uses, size_t count);
+typedef struct {
+    char *alias;
+    char *url;
+    char *sha256;
+} fr_plugin_requirement;
+
+/* What one daukle.plugin{...} call declared: uses, exports and requires all come
+   from one struct rather than a second walk over the table per key. */
+typedef struct {
+    const char *kind;    /* "plugin" or "resolver" */
+    const char *label;
+    char *uses[FR_PLUGIN_MAX_USES];
+    size_t uses_count;
+    char *exports[FR_PLUGIN_MAX_EXPORTS];
+    size_t exports_count;
+    fr_plugin_requirement requires[FR_PLUGIN_MAX_REQUIRES];
+    size_t requires_count;
+} fr_plugin_declaration;
+
+/* Runs only as much of text as its daukle.plugin{...} call, the same
+   protected read fr_plugins_load uses before installing verbs, and fills out
+   with what it declared. kind ("plugin" or "resolver") and label name the
+   chunk in any error text, so a resolver's malformed declaration is never
+   reported as a plugin's; origin is what a parse error is reported against.
+   out is zeroed on entry and left zeroed, safe to pass to
+   fr_plugins_free_declaration, whether this returns FR_OK or FR_ERR. A lua
+   runtime must already be open. Shared with resolvers.c, whose chunks are
+   acquired the same way a plugin's is. */
+int fr_plugins_read_declaration(const char *text, size_t length, const char *origin,
+                                const char *kind, const char *label,
+                                fr_plugin_declaration *out, fr_error *err);
+
+/* Frees every string a declaration fr_plugins_read_declaration filled owns,
+   then zeroes its counts. Safe to call again on an already-freed
+   declaration. */
+void fr_plugins_free_declaration(fr_plugin_declaration *declaration);
 
 /* Reads the manifest's `[plugins]` table into a freshly allocated array.
    An absent table yields *out_count == 0 and FR_OK, not an error.
@@ -74,9 +112,43 @@ int fr_plugins_parse(const struct cJSON *document, const fr_resolver_entry *reso
                      size_t resolver_count, fr_plugin_entry **out, size_t *out_count,
                      fr_error *err);
 
+/* Parses one [plugins] value, string sugar or table form, the way
+   fr_plugins_parse does per member of the table: promoted so a manifest
+   override (plugin_deps.c) turns an override value into an entry through the
+   identical path-versus-url-versus-resolver reading, rather than a second
+   copy of it. label names the value in every message and out is filled in
+   place; the caller sets out->label itself, matching fr_plugins_parse's own
+   convention. */
+int fr_plugins_parse_entry(const char *label, const struct cJSON *member,
+                           const fr_resolver_entry *resolvers, size_t resolver_count,
+                           fr_plugin_entry *out, fr_error *err);
+
+/* Fetches or reads entry's bytes (or resolves it as a directory, for a local
+   path), verifies entry->sha256 against what came back when a pin is present,
+   and opens the result as a ready-to-read fr_plugin_source. Promoted out of
+   load_one so plugin_deps.c's override handling acquires an override target
+   through the identical fetch-verify-open sequence, rather than a second copy
+   of it. On FR_OK, *out_source is open and out_digest holds the hex sha256 of
+   the fetched bytes, empty for a directory (which cannot be pinned);
+   *out_text is the fetched bytes and NULL for a directory. Every output is
+   owned by the caller on FR_OK. On FR_ERR, *out_text, *out_origin,
+   *out_resolved and *out_source are NULL and there is nothing to free;
+   *out_length and out_digest may still hold what was fetched (a failed pin
+   check reports them) and must not be read for anything else. */
+int fr_plugins_acquire_source(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
+                              size_t resolver_count, char **out_text, size_t *out_length,
+                              char **out_origin, char **out_resolved, char out_digest[65],
+                              fr_plugin_source **out_source, fr_error *err);
+
 /* A fetched dependency's manifest may not declare plugins: otherwise adding a
    dependency would be enough to make daukle execute its author's code. */
 int fr_plugins_reject_in_fetched(const struct cJSON *document, const char *project, fr_error *err);
+
+/* Frees every string a single entry owns (not overrides, which it borrows,
+   and not the entry pointer itself). Safe to call again on an already-freed
+   entry. Shared by fr_plugins_free's loop and plugin_deps.c, which parses one
+   entry on the stack rather than through this module's array allocator. */
+void fr_plugins_free_entry(fr_plugin_entry *entry);
 
 /* Frees every string an entry owns, then the array itself.
    Tolerates a NULL array paired with a zero count. */
@@ -93,6 +165,12 @@ int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const c
    every call so a manifest declaring no plugins reports none, not whatever the
    previous manifest loaded. Never NULL; count is 0 before any load. */
 const fr_plugin_report *fr_plugins_report(void);
+
+/* How many of report's rows are plugins the manifest itself declared, rather than an artifact one
+   of them required: a dependency row always carries a non-NULL required_by, so counting the rows
+   that do not is what separates "this project declares N plugins" from "this project's plugins and
+   their dependencies come to N artifacts". */
+size_t fr_plugins_report_declared_count(const fr_plugin_report *report);
 
 /* Frees every copy fr_plugins_report holds. Called alongside
    fr_lua_runtime_shutdown once a caller is done reading the report, and

@@ -76,6 +76,38 @@ TEST parses_the_table_form_naming_a_resolver_and_a_coordinate(void) {
     PASS();
 }
 
+TEST a_table_entrys_requires_key_becomes_its_overrides(void) {
+    cJSON *document = document_from(
+        "{\"plugins\":{\"gradle\":{\"resolver\":\"github\",\"coordinate\":\"daukle/gradle@^2.0.0\","
+        "\"requires\":{\"java\":\"./plugins/java\"}}}}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERT_EQ(1, (int) count);
+    ASSERT(entries[0].overrides != NULL);
+    const cJSON *java = cJSON_GetObjectItemCaseSensitive(entries[0].overrides, "java");
+    ASSERT(java != NULL);
+    ASSERT(cJSON_IsString(java));
+    ASSERT_STR_EQ("./plugins/java", java->valuestring);
+
+    fr_plugins_free(entries, count);
+    cJSON_Delete(document);
+    PASS();
+}
+
+TEST a_table_entry_without_requires_has_no_overrides(void) {
+    cJSON *document = document_from("{\"plugins\":{\"gradle\":{\"url\":\"https://example.invalid/g.lua\"}}}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERT_EQ(1, (int) count);
+    ASSERT(entries[0].overrides == NULL);
+
+    fr_plugins_free(entries, count);
+    cJSON_Delete(document);
+    PASS();
+}
+
 TEST parses_a_local_path(void) {
     cJSON *document = document_from("{\"plugins\":{\"mine\":\"./plugins/mine.lua\"}}");
     fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
@@ -490,21 +522,281 @@ TEST a_verb_used_before_the_declaration_says_so(void) {
 }
 
 /* read_declaration's first line touches the lua_State it is given, so a caller
-   reaching fr_plugins_read_uses with no runtime open (resolvers.c's acquire,
-   before fr_lua_plugin_load, is the one that matters) needs a real error back,
-   not a crash. No runtime is open here between tests, so this needs no setup. */
-TEST fr_plugins_read_uses_rejects_a_closed_runtime(void) {
+   reaching fr_plugins_read_declaration with no runtime open (resolvers.c's
+   acquire, before fr_lua_plugin_load, is the one that matters) needs a real
+   error back, not a crash. No runtime is open here between tests, so this
+   needs no setup. */
+TEST fr_plugins_read_declaration_rejects_a_closed_runtime(void) {
     fr_error err;
-    char **uses = NULL;
-    size_t uses_count = 0;
+    fr_plugin_declaration declaration;
+    memset(&declaration, 0, sizeof declaration);
     static const char chunk[] = "daukle.plugin{ api = 1 }";
-    int status = fr_plugins_read_uses(chunk, sizeof chunk - 1, "test.lua", "resolver", "t",
-                                      &uses, &uses_count, &err);
+    int status = fr_plugins_read_declaration(chunk, sizeof chunk - 1, "test.lua", "resolver", "t",
+                                             &declaration, &err);
 
     ASSERT_EQ(FR_ERR, status);
     ASSERT(strstr(err.message, "no lua runtime is open") != NULL);
-    ASSERT(uses == NULL);
-    ASSERT_EQ(0u, uses_count);
+    ASSERT_EQ(0u, declaration.uses_count);
+    ASSERT_EQ(0u, declaration.requires_count);
+    PASS();
+}
+
+/* Reads one chunk's declaration and reports the message rather than the status,
+   because every refusal below is about which clause came back. */
+static int read_declaration_of(const char *source, fr_plugin_declaration *out, char *message,
+                               size_t size) {
+    fr_error err;
+    message[0] = '\0';
+    memset(out, 0, sizeof *out);
+    fr_registry *registry = NULL;
+    int began = fr_build_registry(&registry, &err) == FR_OK
+              && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = began ? fr_plugins_read_declaration(source, strlen(source), "@test", "plugin",
+                                                     "p", out, &err)
+                       : FR_ERR;
+    if (status != FR_OK) snprintf(message, size, "%s", err.message);
+    fr_lua_runtime_shutdown();
+    return status;
+}
+
+TEST a_declaration_records_its_requires(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { java = { url = \"https://x/java.tar\","
+        " sha256 = \"9f86d0\" } } }",
+        &declaration, message, sizeof message);
+    size_t count = declaration.requires_count;
+    char alias[32] = "";
+    char url[64] = "";
+    if (count == 1) {
+        snprintf(alias, sizeof alias, "%s", declaration.requires[0].alias);
+        snprintf(url, sizeof url, "%s", declaration.requires[0].url);
+    }
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQm(message, FR_OK, status);
+    ASSERT_EQ(1, (int) count);
+    ASSERT_STR_EQ("java", alias);
+    ASSERT_STR_EQ("https://x/java.tar", url);
+    PASS();
+}
+
+TEST a_requires_entry_without_a_sha256_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { java = { url = \"https://x/java.tar\" } } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "is always pinned") != NULL);
+    PASS();
+}
+
+TEST a_requires_entry_naming_a_path_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { java = { path = \"./java.lua\" } } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "acquired by url") != NULL);
+    ASSERTm(message, strstr(message, "[plugins.p].requires") != NULL);
+    PASS();
+}
+
+TEST an_alias_with_a_reserved_character_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { [\"ja.va\"] = { url = \"https://x/j.tar\","
+        " sha256 = \"9f86d0\" } } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "letters, digits") != NULL);
+    PASS();
+}
+
+/* plugins/c.lua ships in this repo as a real one-letter alias, and
+   daukle.require("c:x") would be refused as a path escape by
+   fr_lua_sandbox_climbs_out before ever reaching the colon split (a letter
+   followed by ":" is the Windows drive-letter shape). Refusing the alias here,
+   at declaration, is what catches that before a plugin author ever fetches an
+   artifact they can never require. */
+TEST a_one_character_alias_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { c = { url = \"https://x/c.lua\","
+        " sha256 = \"9f86d0\" } } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "one letter") != NULL);
+    ASSERTm(message, strstr(message, "drive letter") != NULL);
+    PASS();
+}
+
+TEST a_resolver_may_not_require_a_plugin(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    fr_error err;
+    memset(&declaration, 0, sizeof declaration);
+    const char *source = "daukle.plugin{ api = 1, requires = { java = { url = \"https://x/j.tar\","
+                         " sha256 = \"9f86d0\" } } }";
+    fr_registry *registry = NULL;
+    int began = fr_build_registry(&registry, &err) == FR_OK
+              && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = began ? fr_plugins_read_declaration(source, strlen(source), "@test", "resolver",
+                                                     "gh", &declaration, &err)
+                       : FR_ERR;
+    if (status != FR_OK) snprintf(message, sizeof message, "%s", err.message);
+    fr_lua_runtime_shutdown();
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "acquired by the floor only") != NULL);
+    PASS();
+}
+
+/* setmetatable is a reachable base global here too, so a requires entry can
+   carry a metatable whose __index would answer for the "url" this raw table
+   never sets, raising unconditionally on any key so a fall-through to a
+   metamethod-honouring read is detectable no matter which field is checked
+   first. If raw_has_field or raw_string_field ever read through lua_getfield
+   instead of lua_rawget, the metamethod would fire before "names no url"
+   could and its marker text would land in err.message; with the raw read in
+   place __index is never consulted, so the raw table's missing "url" is
+   refused plainly and "boom" never appears. */
+TEST a_hostile_index_metatable_on_a_requires_entry_is_never_consulted(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { java = setmetatable("
+        "{ sha256 = \"9f86d0\" }, { __index = function() error(\"boom\") end }) } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "names no url") != NULL);
+    ASSERTm(message, strstr(message, "boom") == NULL);
+    PASS();
+}
+
+TEST a_declaration_records_its_exports(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, exports = { \"lib/coords\" } }",
+        &declaration, message, sizeof message);
+    size_t count = declaration.exports_count;
+    char first[64] = "";
+    if (count == 1) snprintf(first, sizeof first, "%s", declaration.exports[0]);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQm(message, FR_OK, status);
+    ASSERT_EQ(1, (int) count);
+    ASSERT_STR_EQ("lib/coords", first);
+    PASS();
+}
+
+TEST an_export_written_as_a_file_name_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, exports = { \"lib/coords.lua\" } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "without the \".lua\"") != NULL);
+    PASS();
+}
+
+/* An export is refused where it is written, not at the require that would
+   later miss it: the message must send the author back to the exports list,
+   never to a daukle.require call they never wrote. */
+TEST an_export_refusal_does_not_name_daukle_require(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, exports = { \"lib/coords.lua\" } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "without the \".lua\"") != NULL);
+    ASSERTm(message, strstr(message, "daukle.require") == NULL);
+    PASS();
+}
+
+TEST an_export_that_climbs_out_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, exports = { \"../secrets\" } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "may not leave the plugin") != NULL);
+    PASS();
+}
+
+TEST a_resolver_may_not_export(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    fr_error err;
+    memset(&declaration, 0, sizeof declaration);
+    const char *source = "daukle.plugin{ api = 1, exports = { \"lib/x\" } }";
+    fr_registry *registry = NULL;
+    int began = fr_build_registry(&registry, &err) == FR_OK
+              && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = began ? fr_plugins_read_declaration(source, strlen(source), "@test", "resolver",
+                                                     "gh", &declaration, &err)
+                       : FR_ERR;
+    if (status != FR_OK) snprintf(message, sizeof message, "%s", err.message);
+    fr_lua_runtime_shutdown();
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "has no dependents") != NULL);
+    PASS();
+}
+
+/* exports is a sequence, walked with lua_rawgeti/lua_rawlen rather than
+   lua_next, so the requires-entry hostile-metatable trick above (a hash key
+   that is simply absent raw) does not exercise the same risk here: a
+   metatable on a table that already holds every element raw proves nothing,
+   because lua_rawgeti and a metamethod-honouring lua_geti would return the
+   same value at every index. A table literal's array part is sized to its
+   listed element count regardless of which of them are nil, and the border
+   search behind lua_rawlen trusts a non-nil top slot without checking the
+   slots below it, so { nil, "lib/coords" } reports length 2 while index 1
+   is a genuine raw hole: absent under lua_rawgeti, answered by __index under
+   lua_geti. That is the one place a raw read and a metamethod-honouring read
+   of this exact table diverge. */
+TEST a_hostile_index_metatable_on_exports_is_never_consulted(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, exports = setmetatable({ nil, \"lib/coords\" },"
+        " { __index = function() error(\"boom\") end }) }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "must be a string") != NULL);
+    ASSERTm(message, strstr(message, "boom") == NULL);
     PASS();
 }
 
@@ -1325,7 +1617,7 @@ TEST the_report_names_a_declared_unused_resolver(void) {
     cJSON *document = cJSON_Parse(document_json);
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int loaded = fr_plugins_load(registry, document, ".", &err) == FR_OK;
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
     const fr_plugin_report *report = fr_plugins_report();
@@ -1346,6 +1638,385 @@ TEST the_report_names_a_declared_unused_resolver(void) {
     ASSERTm(message, loaded);
     ASSERT_EQ(1u, unused_count);
     ASSERT_STR_EQ("spare", unused);
+    PASS();
+}
+
+/* A url-to-body table the stub backend below reads from: each test registers exactly the urls its
+   own graph should ever reach, and asking for anything else is a load failure rather than a wrong
+   answer served silently. That is what lets an override test prove the artifact it replaced is
+   never fetched at all, rather than merely asserting the replacement's digest and hoping. */
+#define DEP_STUB_MAX 8
+typedef struct {
+    const char *url;
+    const char *body;
+} dep_stub_entry;
+static dep_stub_entry DEP_STUBS[DEP_STUB_MAX];
+static size_t dep_stub_count;
+
+static void dep_stub_reset(void) {
+    dep_stub_count = 0;
+}
+
+static void dep_stub_serve(const char *url, const char *body) {
+    DEP_STUBS[dep_stub_count].url = url;
+    DEP_STUBS[dep_stub_count].body = body;
+    dep_stub_count++;
+}
+
+static int stub_dependency_graph(const char *url, const fr_http_header *headers,
+                                 size_t header_count, char **out_body, size_t *out_length,
+                                 fr_error *err) {
+    (void) headers; (void) header_count;
+    for (size_t index = 0; index < dep_stub_count; index++) {
+        if (strcmp(url, DEP_STUBS[index].url) != 0) continue;
+        *out_body = copy_body(DEP_STUBS[index].body, out_length);
+        return FR_OK;
+    }
+    fr_error_set(err, "no stub for %s", url);
+    return FR_ERR;
+}
+
+/* Everything the four tests below share: install stub_dependency_graph with the cache off, load
+   document_json, and hand the still-open registry/document back so the caller can read
+   fr_plugins_report() before anything is torn down. message is caller-owned so ASSERTm's pointer
+   stays valid past this call returning, per the static-buffer rule the rest of this file follows. */
+typedef struct {
+    fr_registry *registry;
+    cJSON *document;
+    fr_http_fn previous_backend;
+    int cache_was_enabled;
+} dependency_load_session;
+
+static int begin_dependency_load(const char *document_json, dependency_load_session *session,
+                                 int *out_status, char *message, size_t message_size) {
+    fr_error err;
+    session->cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    session->previous_backend = fr_http_set_backend(stub_dependency_graph);
+    session->registry = NULL;
+    int built = fr_build_registry(&session->registry, &err) == FR_OK;
+    session->document = cJSON_Parse(document_json);
+    int began = built && fr_lua_runtime_begin(".", session->registry, &err) == FR_OK;
+    *out_status = began ? fr_plugins_load(session->registry, session->document, ".", &err) : FR_ERR;
+    snprintf(message, message_size, "%s", err.message);
+    return built && began;
+}
+
+static void end_dependency_load(dependency_load_session *session) {
+    cJSON_Delete(session->document);
+    fr_registry_destroy(session->registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(session->previous_backend);
+    fr_cache_set_enabled(session->cache_was_enabled);
+}
+
+/* A [plugins] entry that requires one dependency: the report must carry a second row for it,
+   naming the dependent, the alias it was required under, the dependency's OWN declared uses (not
+   the dependent's), and the exact digest computed while acquiring it, never recomputed for the
+   report. The root row is unchanged: required_by stays NULL. Comparing the sha256's VALUE (not
+   just its length) is what catches a report that carries a well-formed but wrong digest; comparing
+   uses is what catches a dependency row silently dropping or inheriting uses instead of copying
+   its own artifact's. */
+TEST a_dependency_appears_in_the_report_with_its_digest(void) {
+    static char message[512];
+    const char JAVA_BODY[] = "daukle.plugin{ api = 1, uses = { \"env\" } }\n";
+    char java_digest[65];
+    fr_sha256_hex(JAVA_BODY, strlen(JAVA_BODY), java_digest);
+    char gradle_body[512];
+    snprintf(gradle_body, sizeof gradle_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = { java = { url ="
+            " \"https://x/dig-java.lua\", sha256 = \"%s\" } } }\n", java_digest);
+
+    dep_stub_reset();
+    dep_stub_serve("https://x/dig-gradle.lua", gradle_body);
+    dep_stub_serve("https://x/dig-java.lua", JAVA_BODY);
+
+    dependency_load_session session;
+    int status = FR_ERR;
+    int setup_ok = begin_dependency_load("{\"plugins\":{\"gradle\":\"https://x/dig-gradle.lua\"}}",
+                                         &session, &status, message, sizeof message);
+
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    int root_required_by_is_null = 0;
+    char dep_label[32] = "", dep_required_by[32] = "", dep_alias[32] = "", dep_sha[65] = "";
+    char dep_use0[32] = "";
+    size_t dep_uses_count = 0;
+    int dep_overridden = -1;
+    if (count == 2) {
+        root_required_by_is_null = report->entries[0].required_by == NULL;
+        snprintf(dep_label, sizeof dep_label, "%s", report->entries[1].label);
+        snprintf(dep_required_by, sizeof dep_required_by, "%s", report->entries[1].required_by);
+        snprintf(dep_alias, sizeof dep_alias, "%s", report->entries[1].alias);
+        snprintf(dep_sha, sizeof dep_sha, "%s", report->entries[1].sha256);
+        dep_overridden = report->entries[1].overridden;
+        dep_uses_count = report->entries[1].uses_count;
+        if (dep_uses_count == 1) snprintf(dep_use0, sizeof dep_use0, "%s", report->entries[1].uses[0]);
+    }
+
+    end_dependency_load(&session);
+
+    ASSERT(setup_ok);
+    ASSERTm(message, FR_OK == status);
+    ASSERT_EQ(2u, count);
+    ASSERT(root_required_by_is_null);
+    ASSERT_STR_EQ("java", dep_label);
+    ASSERT_STR_EQ("gradle", dep_required_by);
+    ASSERT_STR_EQ("java", dep_alias);
+    ASSERT_STR_EQ(java_digest, dep_sha);
+    ASSERT_EQ(0, dep_overridden);
+    ASSERT_EQ(1u, dep_uses_count);
+    ASSERT_STR_EQ("env", dep_use0);
+    PASS();
+}
+
+/* Two dependents, not one: "gradle" requires "mango" and "java" directly (required_by "gradle"),
+   and "java" itself requires "apple" (required_by "java"). Sorting by alias alone would read
+   apple, java, mango; sorting by (required_by, alias) reads java, mango, apple, because "gradle"
+   sorts before "java" as a required_by value. The two sequences disagree, which is what makes this
+   catch a comparator that dropped required_by and tie-broke on alias alone: that implementation
+   stays green if every dependency shares one dependent (as the previous version of this test did),
+   and only goes red once a second dependent is in the graph. The apple/java chain also proves the
+   report reaches a dependency's own dependency, not merely a root's direct requires. */
+TEST dependency_rows_are_sorted_by_required_by_then_alias(void) {
+    static char message[512];
+    const char PLAIN_BODY[] = "daukle.plugin{ api = 1, uses = {} }\n";
+    char plain_digest[65];
+    fr_sha256_hex(PLAIN_BODY, strlen(PLAIN_BODY), plain_digest);
+
+    char java_body[256];
+    snprintf(java_body, sizeof java_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = { apple = { url ="
+            " \"https://x/sort-apple.lua\", sha256 = \"%s\" } } }\n", plain_digest);
+    char java_digest[65];
+    fr_sha256_hex(java_body, strlen(java_body), java_digest);
+
+    char gradle_body[512];
+    snprintf(gradle_body, sizeof gradle_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = {"
+            " mango = { url = \"https://x/sort-mango.lua\", sha256 = \"%s\" },"
+            " java = { url = \"https://x/sort-java.lua\", sha256 = \"%s\" } } }\n",
+            plain_digest, java_digest);
+
+    dep_stub_reset();
+    dep_stub_serve("https://x/sort-gradle.lua", gradle_body);
+    dep_stub_serve("https://x/sort-java.lua", java_body);
+    dep_stub_serve("https://x/sort-mango.lua", PLAIN_BODY);
+    dep_stub_serve("https://x/sort-apple.lua", PLAIN_BODY);
+
+    dependency_load_session session;
+    int status = FR_ERR;
+    int setup_ok = begin_dependency_load("{\"plugins\":{\"gradle\":\"https://x/sort-gradle.lua\"}}",
+                                         &session, &status, message, sizeof message);
+
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    char alias[3][32] = { "", "", "" };
+    char required_by[3][32] = { "", "", "" };
+    if (count == 4) {
+        for (size_t index = 0; index < 3; index++) {
+            snprintf(alias[index], sizeof alias[index], "%s", report->entries[index + 1].alias);
+            snprintf(required_by[index], sizeof required_by[index], "%s",
+                    report->entries[index + 1].required_by);
+        }
+    }
+
+    end_dependency_load(&session);
+
+    ASSERT(setup_ok);
+    ASSERTm(message, FR_OK == status);
+    ASSERT_EQ(4u, count);
+    ASSERT_STR_EQ("java", alias[0]);
+    ASSERT_STR_EQ("gradle", required_by[0]);
+    ASSERT_STR_EQ("mango", alias[1]);
+    ASSERT_STR_EQ("gradle", required_by[1]);
+    ASSERT_STR_EQ("apple", alias[2]);
+    ASSERT_STR_EQ("java", required_by[2]);
+    PASS();
+}
+
+/* A minimal, single-branch depth-2 chain (root requires mid requires leaf), kept separate from the
+   sort test above so it stands as its own proof that the report reaches every transitively
+   acquired artifact: reporting every one of them is one of the three conditions the architecture
+   relies on to let a plugin declare plugins at all, so an implementation that only recorded depth-0
+   requires (for example, one that read fr_plugin_deps_count from the dependent's own bindings
+   instead of the whole graph) must fail here even though it might still pass a same-dependent
+   ordering test. */
+TEST a_transitively_acquired_dependency_appears_in_the_report(void) {
+    static char message[512];
+    const char LEAF_BODY[] = "daukle.plugin{ api = 1, uses = {} }\n";
+    char leaf_digest[65];
+    fr_sha256_hex(LEAF_BODY, strlen(LEAF_BODY), leaf_digest);
+
+    char mid_body[256];
+    snprintf(mid_body, sizeof mid_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = { leaf = { url ="
+            " \"https://x/trans-leaf.lua\", sha256 = \"%s\" } } }\n", leaf_digest);
+    char mid_digest[65];
+    fr_sha256_hex(mid_body, strlen(mid_body), mid_digest);
+
+    char root_body[512];
+    snprintf(root_body, sizeof root_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = { mid = { url ="
+            " \"https://x/trans-mid.lua\", sha256 = \"%s\" } } }\n", mid_digest);
+
+    dep_stub_reset();
+    dep_stub_serve("https://x/trans-root.lua", root_body);
+    dep_stub_serve("https://x/trans-mid.lua", mid_body);
+    dep_stub_serve("https://x/trans-leaf.lua", LEAF_BODY);
+
+    dependency_load_session session;
+    int status = FR_ERR;
+    int setup_ok = begin_dependency_load("{\"plugins\":{\"gradle\":\"https://x/trans-root.lua\"}}",
+                                         &session, &status, message, sizeof message);
+
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    int root_required_by_is_null = 0;
+    char mid_alias[32] = "", mid_required_by[32] = "", leaf_alias[32] = "", leaf_required_by[32] = "";
+    if (count == 3) {
+        root_required_by_is_null = report->entries[0].required_by == NULL;
+        snprintf(mid_alias, sizeof mid_alias, "%s", report->entries[1].alias);
+        snprintf(mid_required_by, sizeof mid_required_by, "%s", report->entries[1].required_by);
+        snprintf(leaf_alias, sizeof leaf_alias, "%s", report->entries[2].alias);
+        snprintf(leaf_required_by, sizeof leaf_required_by, "%s", report->entries[2].required_by);
+    }
+
+    end_dependency_load(&session);
+
+    ASSERT(setup_ok);
+    ASSERTm(message, FR_OK == status);
+    ASSERT_EQ(3u, count);
+    ASSERT(root_required_by_is_null);
+    ASSERT_STR_EQ("mid", mid_alias);
+    ASSERT_STR_EQ("gradle", mid_required_by);
+    ASSERT_STR_EQ("leaf", leaf_alias);
+    ASSERT_STR_EQ("mid", leaf_required_by);
+    PASS();
+}
+
+/* A manifest override on the root's OWN [plugins] entry replaces what "java" names entirely: the
+   author's declared target ("override-original.lua", never registered with the stub) must never be
+   fetched, and the row the report carries for "java" must show the override's digest, url and
+   overridden == 1, not the author's dummy pin. Hardcoding overridden = 0 in the production code, or
+   reporting the dependent's declared digest instead of the override's, both go red here. */
+TEST an_overridden_dependency_is_reported_as_overridden(void) {
+    static char message[512];
+    const char TARGET_BODY[] = "daukle.plugin{ api = 1, uses = {} }\n";
+    char target_digest[65];
+    fr_sha256_hex(TARGET_BODY, strlen(TARGET_BODY), target_digest);
+
+    const char ROOT_BODY[] =
+        "daukle.plugin{ api = 1, uses = {}, requires = { java = { url ="
+        " \"https://x/override-original.lua\", sha256 ="
+        " \"0000000000000000000000000000000000000000000000000000000000000000\" } } }\n";
+
+    dep_stub_reset();
+    dep_stub_serve("https://x/override-root.lua", ROOT_BODY);
+    dep_stub_serve("https://x/override-target.lua", TARGET_BODY);
+
+    char document_json[512];
+    snprintf(document_json, sizeof document_json,
+            "{\"plugins\":{\"gradle\":{\"url\":\"https://x/override-root.lua\",\"requires\":"
+            "{\"java\":{\"url\":\"https://x/override-target.lua\",\"sha256\":\"%s\"}}}}}",
+            target_digest);
+
+    dependency_load_session session;
+    int status = FR_ERR;
+    int setup_ok = begin_dependency_load(document_json, &session, &status, message, sizeof message);
+
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    char dep_url[64] = "", dep_sha[65] = "";
+    int dep_overridden = -1;
+    if (count == 2) {
+        snprintf(dep_url, sizeof dep_url, "%s", report->entries[1].url);
+        snprintf(dep_sha, sizeof dep_sha, "%s", report->entries[1].sha256);
+        dep_overridden = report->entries[1].overridden;
+    }
+
+    end_dependency_load(&session);
+
+    ASSERT(setup_ok);
+    ASSERTm(message, FR_OK == status);
+    ASSERT_EQ(2u, count);
+    ASSERT_STR_EQ("https://x/override-target.lua", dep_url);
+    ASSERT_STR_EQ(target_digest, dep_sha);
+    ASSERT_EQ(1, dep_overridden);
+    PASS();
+}
+
+/* A url two different dependents reach must appear once per binding, not once per node:
+   node_with_url's dedup collapses "toola"'s and "toolb"'s separate requests for the same leaf
+   artifact into one node, and a row-per-node report can only ever print ONE of the two
+   attributions, silently dropping the other regardless of which happened to win the graph walk.
+   toola names the leaf "java" and toolb names it "jdk"; both must survive into the report with
+   their own alias and required_by. The assertions search each row by url rather than assume an
+   order between the two bindings, so nothing here depends on which one the walk reaches first. */
+TEST a_url_required_by_two_dependents_reports_both_bindings(void) {
+    static char message[512];
+    const char LEAF_BODY[] = "daukle.plugin{ api = 1, uses = {} }\n";
+    char leaf_digest[65];
+    fr_sha256_hex(LEAF_BODY, strlen(LEAF_BODY), leaf_digest);
+
+    char toola_body[256];
+    snprintf(toola_body, sizeof toola_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = { java = { url ="
+            " \"https://x/bind-leaf.lua\", sha256 = \"%s\" } } }\n", leaf_digest);
+    char toola_digest[65];
+    fr_sha256_hex(toola_body, strlen(toola_body), toola_digest);
+
+    char toolb_body[256];
+    snprintf(toolb_body, sizeof toolb_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = { jdk = { url ="
+            " \"https://x/bind-leaf.lua\", sha256 = \"%s\" } } }\n", leaf_digest);
+    char toolb_digest[65];
+    fr_sha256_hex(toolb_body, strlen(toolb_body), toolb_digest);
+
+    char gradle_body[512];
+    snprintf(gradle_body, sizeof gradle_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = {"
+            " toola = { url = \"https://x/bind-toola.lua\", sha256 = \"%s\" },"
+            " toolb = { url = \"https://x/bind-toolb.lua\", sha256 = \"%s\" } } }\n",
+            toola_digest, toolb_digest);
+
+    dep_stub_reset();
+    dep_stub_serve("https://x/bind-gradle.lua", gradle_body);
+    dep_stub_serve("https://x/bind-toola.lua", toola_body);
+    dep_stub_serve("https://x/bind-toolb.lua", toolb_body);
+    dep_stub_serve("https://x/bind-leaf.lua", LEAF_BODY);
+
+    dependency_load_session session;
+    int status = FR_ERR;
+    int setup_ok = begin_dependency_load("{\"plugins\":{\"gradle\":\"https://x/bind-gradle.lua\"}}",
+                                         &session, &status, message, sizeof message);
+
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    int found_java = 0;
+    int found_jdk = 0;
+    for (size_t index = 0; index < count; index++) {
+        const fr_plugin_report_entry *entry = &report->entries[index];
+        if (entry->url == NULL || strcmp(entry->url, "https://x/bind-leaf.lua") != 0) continue;
+        if (entry->alias != NULL && strcmp(entry->alias, "java") == 0 && entry->required_by != NULL
+            && strcmp(entry->required_by, "toola") == 0) {
+            found_java = 1;
+        }
+        if (entry->alias != NULL && strcmp(entry->alias, "jdk") == 0 && entry->required_by != NULL
+            && strcmp(entry->required_by, "toolb") == 0) {
+            found_jdk = 1;
+        }
+    }
+
+    end_dependency_load(&session);
+
+    ASSERT(setup_ok);
+    ASSERTm(message, FR_OK == status);
+    ASSERT_EQ(5u, count);
+    ASSERTm("toola's binding to the shared leaf never reached the report", found_java);
+    ASSERTm("toolb's binding to the shared leaf never reached the report", found_jdk);
     PASS();
 }
 
@@ -2079,6 +2750,8 @@ int main(int argc, char **argv) {
     RUN_TEST(parses_the_string_url_form);
     RUN_TEST(parses_the_table_form_with_a_pin);
     RUN_TEST(parses_the_table_form_naming_a_resolver_and_a_coordinate);
+    RUN_TEST(a_table_entrys_requires_key_becomes_its_overrides);
+    RUN_TEST(a_table_entry_without_requires_has_no_overrides);
     RUN_TEST(parses_a_local_path);
     RUN_TEST(a_table_entry_naming_two_forms_is_refused);
     RUN_TEST(a_table_entry_naming_no_form_is_refused);
@@ -2106,7 +2779,20 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_written_against_a_later_api_says_which);
     RUN_TEST(a_uses_entry_that_is_not_a_string_is_refused);
     RUN_TEST(a_verb_used_before_the_declaration_says_so);
-    RUN_TEST(fr_plugins_read_uses_rejects_a_closed_runtime);
+    RUN_TEST(fr_plugins_read_declaration_rejects_a_closed_runtime);
+    RUN_TEST(a_declaration_records_its_requires);
+    RUN_TEST(a_requires_entry_without_a_sha256_is_refused);
+    RUN_TEST(a_requires_entry_naming_a_path_is_refused);
+    RUN_TEST(an_alias_with_a_reserved_character_is_refused);
+    RUN_TEST(a_one_character_alias_is_refused);
+    RUN_TEST(a_resolver_may_not_require_a_plugin);
+    RUN_TEST(a_hostile_index_metatable_on_a_requires_entry_is_never_consulted);
+    RUN_TEST(a_declaration_records_its_exports);
+    RUN_TEST(an_export_written_as_a_file_name_is_refused);
+    RUN_TEST(an_export_refusal_does_not_name_daukle_require);
+    RUN_TEST(an_export_that_climbs_out_is_refused);
+    RUN_TEST(a_resolver_may_not_export);
+    RUN_TEST(a_hostile_index_metatable_on_exports_is_never_consulted);
     RUN_TEST(the_github_plugin_authenticates_from_either_token_variable);
     RUN_TEST(the_github_plugin_names_an_optional_field_that_is_not_a_string);
     RUN_TEST(a_url_entry_fetches_and_loads);
@@ -2133,6 +2819,11 @@ int main(int argc, char **argv) {
     RUN_TEST(a_failed_pin_discards_the_cached_artifact);
     RUN_TEST(the_report_names_the_resolver_and_the_url);
     RUN_TEST(the_report_names_a_declared_unused_resolver);
+    RUN_TEST(a_dependency_appears_in_the_report_with_its_digest);
+    RUN_TEST(dependency_rows_are_sorted_by_required_by_then_alias);
+    RUN_TEST(a_transitively_acquired_dependency_appears_in_the_report);
+    RUN_TEST(an_overridden_dependency_is_reported_as_overridden);
+    RUN_TEST(a_url_required_by_two_dependents_reports_both_bindings);
     RUN_TEST(plugin_update_re_resolves_and_takes_the_new_url);
     RUN_TEST(plugin_update_persists_the_fresh_url_with_the_cache_disabled);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);

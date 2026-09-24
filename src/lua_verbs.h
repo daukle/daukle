@@ -25,6 +25,14 @@
 int fr_lua_verbs_push_env(lua_State *state, const char *const *verbs, size_t verb_count,
                           fr_error *err);
 
+/* BASE plus daukle.require and nothing else: what a module reached across a
+   plugin boundary runs in. The obvious alternative, push_env with no verbs,
+   is NOT this: protected_push_env installs the registration functions
+   unconditionally, so a library built that way could declare a toolchain.
+   dependent and member name the boundary in the message an absent name raises. */
+int fr_lua_verbs_push_library_env(lua_State *state, const char *dependent, const char *member,
+                                  fr_error *err);
+
 /* Every verb name daukle understands, for validating a uses list before the
    environment is built. Returns 1 for a known name. */
 int fr_lua_verbs_is_known(const char *name);

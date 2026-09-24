@@ -3,6 +3,7 @@
 #include "http.h"
 #include "plugins.h"
 #include "region.h"
+#include "registry.h"
 #include "support.h"
 #include "sync.h"
 #include "tasks.h"
@@ -512,23 +513,32 @@ TEST a_task_runs_its_child_in_the_derived_directory(void) {
     PASS();
 }
 
+/* plugin-deps-e2e declares one root plugin ("dependent") that requires one dependency
+   ("provider", replaced by a path override so nothing is fetched over the network): the report
+   therefore carries two rows, and "this project declares N plugins" must still say 1, not 2, since
+   the project's own [plugins] table names exactly one. Asserting on the raw report count first
+   pins that a dependency really is in there; asserting on fr_plugins_report_declared_count pins
+   that counting stops at the rows the project actually declared. */
 TEST an_unknown_goal_names_the_plugin_count(void) {
     fr_error err;
     fr_session session;
-    ASSERT_EQ(FR_OK, fr_session_open("test/fixtures/task-cwd/daukle.toml", 1, &session, &err));
+    ASSERT_EQ(FR_OK,
+             fr_session_open("test/fixtures/plugin-deps-e2e/daukle.toml", 1, &session, &err));
     fr_task_set set;
     ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
 
     fr_task_plan plan;
     int plan_status = fr_tasks_plan(&set, "build", &plan, &err);
     int found = fr_tasks_find(&set, "build") != NULL;
-    size_t plugin_count = fr_plugins_report()->count;
+    size_t report_count = fr_plugins_report()->count;
+    size_t plugin_count = fr_plugins_report_declared_count(fr_plugins_report());
 
     fr_tasks_set_free(&set);
     fr_session_close(&session);
 
     ASSERT_EQ(FR_ERR, plan_status);
     ASSERT(!found);
+    ASSERT_EQ(2u, report_count);
     ASSERT_EQ(1u, plugin_count);
     PASS();
 }
@@ -543,6 +553,34 @@ TEST check_runs_no_task(void) {
 
     /* Neither check nor sync runs a task: daukle <task> is the only command that starts one. */
     ASSERT(!file_exists(marker));
+    PASS();
+}
+
+/* Through fr_session_open rather than any of plugin_deps.c's or plugin_modules.c's
+   own seams: a real daukle.toml, a dependent plugin at a local path, and a provider
+   it reaches only through the manifest's override of "provider" (a fetched url
+   cannot be a fixture). The capability the test looks up is the exact string the
+   provider's own lib/marker.lua returns, which the dependent never writes itself,
+   so a require that resolved to the wrong artifact, an empty table, or the
+   dependent's own module would still let the plugin load but would leave this
+   capability absent from the registry. */
+TEST a_required_modules_return_value_reaches_the_registry(void) {
+    static char message[512];
+    fr_error err;
+    fr_session session;
+    int status = fr_session_open("test/fixtures/plugin-deps-e2e/daukle.toml", 1, &session, &err);
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+
+    int found = 0;
+    if (status == FR_OK) {
+        found = fr_registry_language(session.registry, "daukle.language/e2e-dependency-marker-274")
+                != NULL;
+    }
+
+    fr_session_close(&session);
+
+    ASSERT_EQm(message, FR_OK, status);
+    ASSERT(found);
     PASS();
 }
 
@@ -562,5 +600,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_task_runs_its_child_in_the_derived_directory);
     RUN_TEST(an_unknown_goal_names_the_plugin_count);
     RUN_TEST(check_runs_no_task);
+    RUN_TEST(a_required_modules_return_value_reaches_the_registry);
     GREATEST_MAIN_END();
 }

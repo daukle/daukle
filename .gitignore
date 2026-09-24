@@ -4,3 +4,4 @@ test/fixtures/live/**/build.gradle
 test/fixtures/consumer-partial/a.gradle
 docs/
 .idea/
+.superpowers/

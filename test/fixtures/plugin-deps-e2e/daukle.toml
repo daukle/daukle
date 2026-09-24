@@ -1,0 +1,11 @@
+schema = 1
+project = "forebay/deps-e2e"
+version = "1.0.0"
+
+[modules]
+
+[plugins.dependent]
+path = "./plugins/dependent.lua"
+
+  [plugins.dependent.requires.provider]
+  path = "./plugins/provider"
