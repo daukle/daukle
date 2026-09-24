@@ -371,6 +371,14 @@ static int alias_is_well_formed(const char *alias) {
     return alias[0] != '\0';
 }
 
+/* A one-character alias is the Windows drive-letter shape fr_lua_sandbox_climbs_out refuses before
+   a require ever reaches the colon split ("c:x" is caught as an escape, never read as "plugin c,
+   module x"), so daukle.require("<alias>:...") could never name a dependency declared under one.
+   The acquisition spec records the identical hazard for a one-letter resolver label. */
+static int alias_is_unreachable_as_a_drive_letter(const char *alias) {
+    return strlen(alias) == 1;
+}
+
 /* Reads table[key] raw, the way config_lua.c's raw_getfield does: index may be
    relative (record_requires calls these with -1), so it is converted to
    absolute before the key is pushed, or the push would shift what the
@@ -417,12 +425,7 @@ static int record_requires(lua_State *state, fr_plugin_declaration *declaration)
                                      " \"-\" and \"_\"",
                               declaration->label, alias);
         }
-        if (strlen(alias) == 1) {
-            /* "c:x" is the Windows drive-letter shape fr_lua_sandbox_climbs_out
-               refuses before a require ever reaches the colon split, so a
-               one-letter alias could declare a dependency daukle.require could
-               never name. The acquisition spec records the identical hazard for
-               a one-letter resolver label. */
+        if (alias_is_unreachable_as_a_drive_letter(alias)) {
             return luaL_error(state, "plugin \"%s\": the alias \"%s\" is one letter, and a letter"
                                      " before \":\" is a Windows drive letter, so"
                                      " daukle.require(\"%s:...\") could never reach it. Use a longer"
