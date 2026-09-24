@@ -545,6 +545,10 @@ size_t fr_plugin_deps_count(const fr_plugin_deps *deps) {
 }
 
 void fr_plugin_deps_row_at(const fr_plugin_deps *deps, size_t index, fr_plugin_deps_row *out) {
+    if (deps == NULL) {
+        memset(out, 0, sizeof *out);
+        return;
+    }
     const deps_node *node = &deps->graph->nodes[index];
     out->url = node->url;
     out->alias = node->label;

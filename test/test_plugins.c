@@ -1579,7 +1579,7 @@ TEST the_report_names_a_declared_unused_resolver(void) {
     cJSON *document = cJSON_Parse(document_json);
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int loaded = fr_plugins_load(registry, document, ".", &err) == FR_OK;
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
     const fr_plugin_report *report = fr_plugins_report();
@@ -1603,128 +1603,310 @@ TEST the_report_names_a_declared_unused_resolver(void) {
     PASS();
 }
 
-/* Every dependency url below serves this same body, so one runtime-computed digest covers all of
-   them; only "gradle.lua" itself serves GRADLE_BODY_FOR_REQUIRES, which each test below fills in
-   with its own requires table before installing this backend. */
-static const char DEP_BODY_FOR_REQUIRES[] = "daukle.plugin{ api = 1, uses = {} }\n";
-static char GRADLE_BODY_FOR_REQUIRES[512];
+/* A url-to-body table the stub backend below reads from: each test registers exactly the urls its
+   own graph should ever reach, and asking for anything else is a load failure rather than a wrong
+   answer served silently. That is what lets an override test prove the artifact it replaced is
+   never fetched at all, rather than merely asserting the replacement's digest and hoping. */
+#define DEP_STUB_MAX 8
+typedef struct {
+    const char *url;
+    const char *body;
+} dep_stub_entry;
+static dep_stub_entry DEP_STUBS[DEP_STUB_MAX];
+static size_t dep_stub_count;
+
+static void dep_stub_reset(void) {
+    dep_stub_count = 0;
+}
+
+static void dep_stub_serve(const char *url, const char *body) {
+    DEP_STUBS[dep_stub_count].url = url;
+    DEP_STUBS[dep_stub_count].body = body;
+    dep_stub_count++;
+}
 
 static int stub_dependency_graph(const char *url, const fr_http_header *headers,
                                  size_t header_count, char **out_body, size_t *out_length,
                                  fr_error *err) {
-    (void) headers; (void) header_count; (void) err;
-    const char *body =
-        strstr(url, "/gradle.lua") != NULL ? GRADLE_BODY_FOR_REQUIRES : DEP_BODY_FOR_REQUIRES;
-    *out_body = copy_body(body, out_length);
-    return FR_OK;
+    (void) headers; (void) header_count;
+    for (size_t index = 0; index < dep_stub_count; index++) {
+        if (strcmp(url, DEP_STUBS[index].url) != 0) continue;
+        *out_body = copy_body(DEP_STUBS[index].body, out_length);
+        return FR_OK;
+    }
+    fr_error_set(err, "no stub for %s", url);
+    return FR_ERR;
+}
+
+/* Everything the four tests below share: install stub_dependency_graph with the cache off, load
+   document_json, and hand the still-open registry/document back so the caller can read
+   fr_plugins_report() before anything is torn down. message is caller-owned so ASSERTm's pointer
+   stays valid past this call returning, per the static-buffer rule the rest of this file follows. */
+typedef struct {
+    fr_registry *registry;
+    cJSON *document;
+    fr_http_fn previous_backend;
+    int cache_was_enabled;
+} dependency_load_session;
+
+static int begin_dependency_load(const char *document_json, dependency_load_session *session,
+                                 int *out_status, char *message, size_t message_size) {
+    fr_error err;
+    session->cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    session->previous_backend = fr_http_set_backend(stub_dependency_graph);
+    session->registry = NULL;
+    int built = fr_build_registry(&session->registry, &err) == FR_OK;
+    session->document = cJSON_Parse(document_json);
+    int began = built && fr_lua_runtime_begin(".", session->registry, &err) == FR_OK;
+    *out_status = began ? fr_plugins_load(session->registry, session->document, ".", &err) : FR_ERR;
+    snprintf(message, message_size, "%s", err.message);
+    return built && began;
+}
+
+static void end_dependency_load(dependency_load_session *session) {
+    cJSON_Delete(session->document);
+    fr_registry_destroy(session->registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(session->previous_backend);
+    fr_cache_set_enabled(session->cache_was_enabled);
 }
 
 /* A [plugins] entry that requires one dependency: the report must carry a second row for it,
-   naming the dependent, the alias it was required under, and the digest computed while acquiring
-   it (never recomputed for the report). The root row is unchanged: required_by stays NULL. */
+   naming the dependent, the alias it was required under, the dependency's OWN declared uses (not
+   the dependent's), and the exact digest computed while acquiring it, never recomputed for the
+   report. The root row is unchanged: required_by stays NULL. Comparing the sha256's VALUE (not
+   just its length) is what catches a report that carries a well-formed but wrong digest; comparing
+   uses is what catches a dependency row silently dropping or inheriting uses instead of copying
+   its own artifact's. */
 TEST a_dependency_appears_in_the_report_with_its_digest(void) {
-    fr_error err;
-    char dep_digest[65];
-    fr_sha256_hex(DEP_BODY_FOR_REQUIRES, strlen(DEP_BODY_FOR_REQUIRES), dep_digest);
-    snprintf(GRADLE_BODY_FOR_REQUIRES, sizeof GRADLE_BODY_FOR_REQUIRES,
+    static char message[512];
+    const char JAVA_BODY[] = "daukle.plugin{ api = 1, uses = { \"env\" } }\n";
+    char java_digest[65];
+    fr_sha256_hex(JAVA_BODY, strlen(JAVA_BODY), java_digest);
+    char gradle_body[512];
+    snprintf(gradle_body, sizeof gradle_body,
             "daukle.plugin{ api = 1, uses = {}, requires = { java = { url ="
-            " \"https://x/java.lua\", sha256 = \"%s\" } } }\n", dep_digest);
+            " \"https://x/dig-java.lua\", sha256 = \"%s\" } } }\n", java_digest);
 
-    int cache_was_enabled = fr_cache_enabled();
-    fr_cache_set_enabled(0);
-    fr_http_fn previous = fr_http_set_backend(stub_dependency_graph);
-    fr_registry *registry = NULL;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
-    cJSON *document = cJSON_Parse("{\"plugins\":{\"gradle\":\"https://x/gradle.lua\"}}");
-    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
-    int status = fr_plugins_load(registry, document, ".", &err);
-    char message[512];
-    snprintf(message, sizeof message, "%s", err.message);
+    dep_stub_reset();
+    dep_stub_serve("https://x/dig-gradle.lua", gradle_body);
+    dep_stub_serve("https://x/dig-java.lua", JAVA_BODY);
+
+    dependency_load_session session;
+    int status = FR_ERR;
+    int setup_ok = begin_dependency_load("{\"plugins\":{\"gradle\":\"https://x/dig-gradle.lua\"}}",
+                                         &session, &status, message, sizeof message);
 
     const fr_plugin_report *report = fr_plugins_report();
     size_t count = report->count;
     int root_required_by_is_null = 0;
-    char dep_label[32] = "", dep_required_by[32] = "", dep_alias[32] = "";
-    size_t dep_sha_length = 0;
+    char dep_label[32] = "", dep_required_by[32] = "", dep_alias[32] = "", dep_sha[65] = "";
+    char dep_use0[32] = "";
+    size_t dep_uses_count = 0;
     int dep_overridden = -1;
     if (count == 2) {
         root_required_by_is_null = report->entries[0].required_by == NULL;
         snprintf(dep_label, sizeof dep_label, "%s", report->entries[1].label);
         snprintf(dep_required_by, sizeof dep_required_by, "%s", report->entries[1].required_by);
         snprintf(dep_alias, sizeof dep_alias, "%s", report->entries[1].alias);
-        dep_sha_length = strlen(report->entries[1].sha256);
+        snprintf(dep_sha, sizeof dep_sha, "%s", report->entries[1].sha256);
         dep_overridden = report->entries[1].overridden;
+        dep_uses_count = report->entries[1].uses_count;
+        if (dep_uses_count == 1) snprintf(dep_use0, sizeof dep_use0, "%s", report->entries[1].uses[0]);
     }
 
-    cJSON_Delete(document);
-    fr_registry_destroy(registry);
-    fr_lua_runtime_shutdown();
-    fr_plugins_report_clear();
-    fr_resolvers_clear();
-    fr_http_set_backend(previous);
-    fr_cache_set_enabled(cache_was_enabled);
+    end_dependency_load(&session);
 
-    ASSERT(built && began);
+    ASSERT(setup_ok);
     ASSERTm(message, FR_OK == status);
     ASSERT_EQ(2u, count);
     ASSERT(root_required_by_is_null);
     ASSERT_STR_EQ("java", dep_label);
     ASSERT_STR_EQ("gradle", dep_required_by);
     ASSERT_STR_EQ("java", dep_alias);
-    ASSERT_EQ(64u, dep_sha_length);
+    ASSERT_STR_EQ(java_digest, dep_sha);
     ASSERT_EQ(0, dep_overridden);
+    ASSERT_EQ(1u, dep_uses_count);
+    ASSERT_STR_EQ("env", dep_use0);
     PASS();
 }
 
-/* fr_plugin_deps_acquire walks its requires table with lua_next, whose order is unspecified: this
-   table is declared "zulu, mike, alpha" so an unsorted report would very likely NOT come out
-   alphabetically by accident. daukle config print must still emit alpha, mike, zulu every time,
-   because it is what a person diffs between runs and between machines. */
+/* Two dependents, not one: "gradle" requires "mango" and "java" directly (required_by "gradle"),
+   and "java" itself requires "apple" (required_by "java"). Sorting by alias alone would read
+   apple, java, mango; sorting by (required_by, alias) reads java, mango, apple, because "gradle"
+   sorts before "java" as a required_by value. The two sequences disagree, which is what makes this
+   catch a comparator that dropped required_by and tie-broke on alias alone: that implementation
+   stays green if every dependency shares one dependent (as the previous version of this test did),
+   and only goes red once a second dependent is in the graph. The apple/java chain also proves the
+   report reaches a dependency's own dependency, not merely a root's direct requires. */
 TEST dependency_rows_are_sorted_by_required_by_then_alias(void) {
-    fr_error err;
-    char dep_digest[65];
-    fr_sha256_hex(DEP_BODY_FOR_REQUIRES, strlen(DEP_BODY_FOR_REQUIRES), dep_digest);
-    snprintf(GRADLE_BODY_FOR_REQUIRES, sizeof GRADLE_BODY_FOR_REQUIRES,
-            "daukle.plugin{ api = 1, uses = {}, requires = {"
-            " zulu = { url = \"https://x/zulu.lua\", sha256 = \"%s\" },"
-            " mike = { url = \"https://x/mike.lua\", sha256 = \"%s\" },"
-            " alpha = { url = \"https://x/alpha.lua\", sha256 = \"%s\" } } }\n",
-            dep_digest, dep_digest, dep_digest);
+    static char message[512];
+    const char PLAIN_BODY[] = "daukle.plugin{ api = 1, uses = {} }\n";
+    char plain_digest[65];
+    fr_sha256_hex(PLAIN_BODY, strlen(PLAIN_BODY), plain_digest);
 
-    int cache_was_enabled = fr_cache_enabled();
-    fr_cache_set_enabled(0);
-    fr_http_fn previous = fr_http_set_backend(stub_dependency_graph);
-    fr_registry *registry = NULL;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
-    cJSON *document = cJSON_Parse("{\"plugins\":{\"gradle\":\"https://x/gradle.lua\"}}");
-    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
-    int status = fr_plugins_load(registry, document, ".", &err);
-    char message[512];
-    snprintf(message, sizeof message, "%s", err.message);
+    char java_body[256];
+    snprintf(java_body, sizeof java_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = { apple = { url ="
+            " \"https://x/sort-apple.lua\", sha256 = \"%s\" } } }\n", plain_digest);
+    char java_digest[65];
+    fr_sha256_hex(java_body, strlen(java_body), java_digest);
+
+    char gradle_body[512];
+    snprintf(gradle_body, sizeof gradle_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = {"
+            " mango = { url = \"https://x/sort-mango.lua\", sha256 = \"%s\" },"
+            " java = { url = \"https://x/sort-java.lua\", sha256 = \"%s\" } } }\n",
+            plain_digest, java_digest);
+
+    dep_stub_reset();
+    dep_stub_serve("https://x/sort-gradle.lua", gradle_body);
+    dep_stub_serve("https://x/sort-java.lua", java_body);
+    dep_stub_serve("https://x/sort-mango.lua", PLAIN_BODY);
+    dep_stub_serve("https://x/sort-apple.lua", PLAIN_BODY);
+
+    dependency_load_session session;
+    int status = FR_ERR;
+    int setup_ok = begin_dependency_load("{\"plugins\":{\"gradle\":\"https://x/sort-gradle.lua\"}}",
+                                         &session, &status, message, sizeof message);
 
     const fr_plugin_report *report = fr_plugins_report();
     size_t count = report->count;
-    char first[32] = "", second[32] = "", third[32] = "";
+    char alias[3][32] = { "", "", "" };
+    char required_by[3][32] = { "", "", "" };
     if (count == 4) {
-        snprintf(first, sizeof first, "%s", report->entries[1].alias);
-        snprintf(second, sizeof second, "%s", report->entries[2].alias);
-        snprintf(third, sizeof third, "%s", report->entries[3].alias);
+        for (size_t index = 0; index < 3; index++) {
+            snprintf(alias[index], sizeof alias[index], "%s", report->entries[index + 1].alias);
+            snprintf(required_by[index], sizeof required_by[index], "%s",
+                    report->entries[index + 1].required_by);
+        }
     }
 
-    cJSON_Delete(document);
-    fr_registry_destroy(registry);
-    fr_lua_runtime_shutdown();
-    fr_plugins_report_clear();
-    fr_resolvers_clear();
-    fr_http_set_backend(previous);
-    fr_cache_set_enabled(cache_was_enabled);
+    end_dependency_load(&session);
 
-    ASSERT(built && began);
+    ASSERT(setup_ok);
     ASSERTm(message, FR_OK == status);
     ASSERT_EQ(4u, count);
-    ASSERT_STR_EQ("alpha", first);
-    ASSERT_STR_EQ("mike", second);
-    ASSERT_STR_EQ("zulu", third);
+    ASSERT_STR_EQ("java", alias[0]);
+    ASSERT_STR_EQ("gradle", required_by[0]);
+    ASSERT_STR_EQ("mango", alias[1]);
+    ASSERT_STR_EQ("gradle", required_by[1]);
+    ASSERT_STR_EQ("apple", alias[2]);
+    ASSERT_STR_EQ("java", required_by[2]);
+    PASS();
+}
+
+/* A minimal, single-branch depth-2 chain (root requires mid requires leaf), kept separate from the
+   sort test above so it stands as its own proof that the report reaches every transitively
+   acquired artifact: reporting every one of them is one of the three conditions the architecture
+   relies on to let a plugin declare plugins at all, so an implementation that only recorded depth-0
+   requires (for example, one that read fr_plugin_deps_count from the dependent's own bindings
+   instead of the whole graph) must fail here even though it might still pass a same-dependent
+   ordering test. */
+TEST a_transitively_acquired_dependency_appears_in_the_report(void) {
+    static char message[512];
+    const char LEAF_BODY[] = "daukle.plugin{ api = 1, uses = {} }\n";
+    char leaf_digest[65];
+    fr_sha256_hex(LEAF_BODY, strlen(LEAF_BODY), leaf_digest);
+
+    char mid_body[256];
+    snprintf(mid_body, sizeof mid_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = { leaf = { url ="
+            " \"https://x/trans-leaf.lua\", sha256 = \"%s\" } } }\n", leaf_digest);
+    char mid_digest[65];
+    fr_sha256_hex(mid_body, strlen(mid_body), mid_digest);
+
+    char root_body[512];
+    snprintf(root_body, sizeof root_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = { mid = { url ="
+            " \"https://x/trans-mid.lua\", sha256 = \"%s\" } } }\n", mid_digest);
+
+    dep_stub_reset();
+    dep_stub_serve("https://x/trans-root.lua", root_body);
+    dep_stub_serve("https://x/trans-mid.lua", mid_body);
+    dep_stub_serve("https://x/trans-leaf.lua", LEAF_BODY);
+
+    dependency_load_session session;
+    int status = FR_ERR;
+    int setup_ok = begin_dependency_load("{\"plugins\":{\"gradle\":\"https://x/trans-root.lua\"}}",
+                                         &session, &status, message, sizeof message);
+
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    int root_required_by_is_null = 0;
+    char mid_alias[32] = "", mid_required_by[32] = "", leaf_alias[32] = "", leaf_required_by[32] = "";
+    if (count == 3) {
+        root_required_by_is_null = report->entries[0].required_by == NULL;
+        snprintf(mid_alias, sizeof mid_alias, "%s", report->entries[1].alias);
+        snprintf(mid_required_by, sizeof mid_required_by, "%s", report->entries[1].required_by);
+        snprintf(leaf_alias, sizeof leaf_alias, "%s", report->entries[2].alias);
+        snprintf(leaf_required_by, sizeof leaf_required_by, "%s", report->entries[2].required_by);
+    }
+
+    end_dependency_load(&session);
+
+    ASSERT(setup_ok);
+    ASSERTm(message, FR_OK == status);
+    ASSERT_EQ(3u, count);
+    ASSERT(root_required_by_is_null);
+    ASSERT_STR_EQ("mid", mid_alias);
+    ASSERT_STR_EQ("gradle", mid_required_by);
+    ASSERT_STR_EQ("leaf", leaf_alias);
+    ASSERT_STR_EQ("mid", leaf_required_by);
+    PASS();
+}
+
+/* A manifest override on the root's OWN [plugins] entry replaces what "java" names entirely: the
+   author's declared target ("override-original.lua", never registered with the stub) must never be
+   fetched, and the row the report carries for "java" must show the override's digest, url and
+   overridden == 1, not the author's dummy pin. Hardcoding overridden = 0 in the production code, or
+   reporting the dependent's declared digest instead of the override's, both go red here. */
+TEST an_overridden_dependency_is_reported_as_overridden(void) {
+    static char message[512];
+    const char TARGET_BODY[] = "daukle.plugin{ api = 1, uses = {} }\n";
+    char target_digest[65];
+    fr_sha256_hex(TARGET_BODY, strlen(TARGET_BODY), target_digest);
+
+    const char ROOT_BODY[] =
+        "daukle.plugin{ api = 1, uses = {}, requires = { java = { url ="
+        " \"https://x/override-original.lua\", sha256 ="
+        " \"0000000000000000000000000000000000000000000000000000000000000000\" } } }\n";
+
+    dep_stub_reset();
+    dep_stub_serve("https://x/override-root.lua", ROOT_BODY);
+    dep_stub_serve("https://x/override-target.lua", TARGET_BODY);
+
+    char document_json[512];
+    snprintf(document_json, sizeof document_json,
+            "{\"plugins\":{\"gradle\":{\"url\":\"https://x/override-root.lua\",\"requires\":"
+            "{\"java\":{\"url\":\"https://x/override-target.lua\",\"sha256\":\"%s\"}}}}}",
+            target_digest);
+
+    dependency_load_session session;
+    int status = FR_ERR;
+    int setup_ok = begin_dependency_load(document_json, &session, &status, message, sizeof message);
+
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    char dep_url[64] = "", dep_sha[65] = "";
+    int dep_overridden = -1;
+    if (count == 2) {
+        snprintf(dep_url, sizeof dep_url, "%s", report->entries[1].url);
+        snprintf(dep_sha, sizeof dep_sha, "%s", report->entries[1].sha256);
+        dep_overridden = report->entries[1].overridden;
+    }
+
+    end_dependency_load(&session);
+
+    ASSERT(setup_ok);
+    ASSERTm(message, FR_OK == status);
+    ASSERT_EQ(2u, count);
+    ASSERT_STR_EQ("https://x/override-target.lua", dep_url);
+    ASSERT_STR_EQ(target_digest, dep_sha);
+    ASSERT_EQ(1, dep_overridden);
     PASS();
 }
 
@@ -2527,6 +2709,8 @@ int main(int argc, char **argv) {
     RUN_TEST(the_report_names_a_declared_unused_resolver);
     RUN_TEST(a_dependency_appears_in_the_report_with_its_digest);
     RUN_TEST(dependency_rows_are_sorted_by_required_by_then_alias);
+    RUN_TEST(a_transitively_acquired_dependency_appears_in_the_report);
+    RUN_TEST(an_overridden_dependency_is_reported_as_overridden);
     RUN_TEST(plugin_update_re_resolves_and_takes_the_new_url);
     RUN_TEST(plugin_update_persists_the_fresh_url_with_the_cache_disabled);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);
