@@ -1176,7 +1176,9 @@ TEST a_cycle_between_modules_is_refused(void) {
    dependency graph is acquired and handed to the chunk: a test that called
    fr_lua_plugin_load itself would pass with that wiring deleted. */
 
-#define XP_MAX_ARTIFACTS 8
+/* Enough for the deepest chain a test builds: reaching the owner-stack cap of 8
+   needs nine providers beside the dependent. */
+#define XP_MAX_ARTIFACTS 16
 #define XP_BODY_MAX 8192
 
 typedef struct {
@@ -1190,11 +1192,21 @@ static xp_artifact XP[XP_MAX_ARTIFACTS];
 static size_t xp_count;
 static char xp_message[512];
 
+/* What xp_serve hands back when it cannot serve, so a caller reading .url and
+   .digest gets empty strings rather than another artifact's. xp_loads refuses
+   while this is set, so the test fails saying what could not be served instead
+   of failing later on a mismatched pin. */
+static xp_artifact xp_unservable;
+static int xp_overflowed;
+
 static const char XP_APPLY[] = "apply = function(consumer, resolved, text) return text end";
 
 static void xp_reset(void) {
     xp_count = 0;
+    xp_overflowed = 0;
     xp_message[0] = '\0';
+    memset(&xp_unservable, 0, sizeof xp_unservable);
+    xp_unservable.url = "";
 }
 
 /* The digest is computed from the bytes the stub will serve and never pasted:
@@ -1207,8 +1219,11 @@ static const xp_artifact *xp_serve(const char *url, const char *bytes, size_t le
     }
     if (artifact == NULL) {
         if (xp_count == XP_MAX_ARTIFACTS || length > XP_BODY_MAX) {
-            snprintf(xp_message, sizeof xp_message, "the test cannot serve \"%s\"", url);
-            return &XP[0];
+            snprintf(xp_message, sizeof xp_message,
+                     "the test cannot serve \"%s\": %s", url,
+                     xp_count == XP_MAX_ARTIFACTS ? "too many artifacts" : "body too large");
+            xp_overflowed = 1;
+            return &xp_unservable;
         }
         artifact = &XP[xp_count];
         xp_count++;
@@ -1266,12 +1281,13 @@ static int xp_http(const char *url, const fr_http_header *headers, size_t header
     return FR_ERR;
 }
 
-static char xp_requires[512];
-
-static const char *xp_requires_one(const char *alias, const xp_artifact *artifact) {
-    snprintf(xp_requires, sizeof xp_requires, "%s = { url = \"%s\", sha256 = \"%s\" }", alias,
-             artifact->url, artifact->digest);
-    return xp_requires;
+/* Writes into the caller's buffer rather than a shared static: two of these in
+   one argument list would otherwise both read back the second one. */
+static const char *xp_requires_one(char *out, size_t size, const char *alias,
+                                   const xp_artifact *artifact) {
+    snprintf(out, size, "%s = { url = \"%s\", sha256 = \"%s\" }", alias, artifact->url,
+             artifact->digest);
+    return out;
 }
 
 static char xp_chunk[2048];
@@ -1281,6 +1297,15 @@ static const char *xp_dependent(const char *uses, const char *requires_table, co
              "daukle.plugin{ api = 1, uses = { %s }, requires = { %s } }\n%s", uses, requires_table,
              body);
     return xp_chunk;
+}
+
+/* The one-requirement case, which is most of them: it builds the requires entry
+   itself, so no caller has to hold a buffer for it. */
+static const char *xp_dependent_on(const char *uses, const char *alias,
+                                   const xp_artifact *artifact, const char *body) {
+    char requirement[256];
+    xp_requires_one(requirement, sizeof requirement, alias, artifact);
+    return xp_dependent(uses, requirement, body);
 }
 
 static char xp_document[1024];
@@ -1310,13 +1335,16 @@ static int xp_loads(const char *document_json, fr_registry **out_registry) {
     fr_registry *registry = NULL;
     cJSON *document = cJSON_Parse(document_json);
     int status = fr_build_registry(&registry, &err);
+    if (status == FR_OK && xp_overflowed) status = FR_ERR;
     if (status == FR_OK && document == NULL) {
         fr_error_set(&err, "the test document is not json");
         status = FR_ERR;
     }
     if (status == FR_OK) status = fr_lua_runtime_begin(".", registry, &err);
     if (status == FR_OK) status = fr_plugins_load(registry, document, ".", &err);
-    if (status != FR_OK) snprintf(xp_message, sizeof xp_message, "%s", err.message);
+    if (status != FR_OK && !xp_overflowed) {
+        snprintf(xp_message, sizeof xp_message, "%s", err.message);
+    }
 
     cJSON_Delete(document);
     fr_http_set_backend(previous);
@@ -1357,7 +1385,7 @@ TEST a_dependent_reaches_an_exported_module(void) {
     snprintf(body, sizeof body,
              "local coords = daukle.require(\"java:lib/coords\")\n"
              "daukle.language{ name = coords.parse(), %s }\n", XP_APPLY);
-    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java), body));
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java, body));
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
@@ -1373,7 +1401,7 @@ TEST a_dependent_reaches_an_exported_module(void) {
 TEST a_member_the_provider_does_not_export_is_refused(void) {
     xp_reset();
     const xp_artifact *java = xp_serve_java("return {}\n");
-    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java,
                                             "daukle.require(\"java:internal/scratch\")\n"));
 
     fr_registry *registry = NULL;
@@ -1389,7 +1417,7 @@ TEST a_member_the_provider_does_not_export_is_refused(void) {
 TEST a_library_module_cannot_declare(void) {
     xp_reset();
     const xp_artifact *java = xp_serve_java("daukle.toolchain{ name = \"smuggled\" }\nreturn {}\n");
-    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java,
                                             "daukle.require(\"java:lib/coords\")\n"));
 
     fr_registry *registry = NULL;
@@ -1407,8 +1435,8 @@ TEST a_library_module_cannot_declare(void) {
 TEST a_library_module_cannot_use_the_dependents_verbs(void) {
     xp_reset();
     const xp_artifact *java = xp_serve_java("daukle.fetch(\"https://x/never\")\nreturn {}\n");
-    xp_serve_chunk(GRADLE_URL, xp_dependent("\"fetch\"", xp_requires_one("java", java),
-                                            "daukle.require(\"java:lib/coords\")\n"));
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("\"fetch\"", "java", java,
+                                               "daukle.require(\"java:lib/coords\")\n"));
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
@@ -1429,13 +1457,13 @@ TEST two_dependents_get_their_own_instance(void) {
              "local coords = daukle.require(\"java:lib/coords\")\n"
              "coords.seen = true\n"
              "daukle.language{ name = \"gradle-saw\", %s }\n", XP_APPLY);
-    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java), body));
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java, body));
 
     snprintf(body, sizeof body,
              "local coords = daukle.require(\"java:lib/coords\")\n"
              "if coords.seen then error(\"the two dependents share one instance\") end\n"
              "daukle.language{ name = \"maven-saw\", %s }\n", XP_APPLY);
-    xp_serve_chunk(MAVEN_URL, xp_dependent("", xp_requires_one("java", java), body));
+    xp_serve_chunk(MAVEN_URL, xp_dependent_on("", "java", java, body));
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest_two("gradle", GRADLE_URL, "maven", MAVEN_URL), &registry);
@@ -1452,7 +1480,7 @@ TEST two_dependents_get_their_own_instance(void) {
 TEST a_require_naming_an_undeclared_alias_is_refused(void) {
     xp_reset();
     const xp_artifact *java = xp_serve_java("return {}\n");
-    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java,
                                             "daukle.require(\"jaba:lib/coords\")\n"));
 
     fr_registry *registry = NULL;
@@ -1472,7 +1500,7 @@ TEST a_dependencys_entry_chunk_never_runs(void) {
     const xp_artifact *java = xp_serve_java("return {}\n");
     char body[256];
     snprintf(body, sizeof body, "daukle.language{ name = \"gradle-ran\", %s }\n", XP_APPLY);
-    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java), body));
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java, body));
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
@@ -1497,10 +1525,13 @@ TEST a_library_module_requires_against_its_own_owner(void) {
         FOO_URL, "daukle.plugin{ api = 1, uses = {}, exports = { \"lib/thing\" } }\n", foo_names,
         foo_bodies, 1);
 
+    char foo_requirement[256];
+    xp_requires_one(foo_requirement, sizeof foo_requirement, "foo", foo);
+
     char java_entry[512];
     snprintf(java_entry, sizeof java_entry,
              "daukle.plugin{ api = 1, uses = {}, exports = { \"lib/coords\" },"
-             " requires = { %s } }\n", xp_requires_one("foo", foo));
+             " requires = { %s } }\n", foo_requirement);
     const char *java_names[] = { "lib/coords.lua" };
     const char *java_bodies[] = {
         "local thing = daukle.require(\"foo:lib/thing\")\nreturn { tag = thing.tag }\n"
@@ -1511,7 +1542,7 @@ TEST a_library_module_requires_against_its_own_owner(void) {
     snprintf(body, sizeof body,
              "local coords = daukle.require(\"java:lib/coords\")\n"
              "daukle.language{ name = coords.tag, %s }\n", XP_APPLY);
-    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java), body));
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java, body));
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
@@ -1522,7 +1553,7 @@ TEST a_library_module_requires_against_its_own_owner(void) {
     ASSERT_EQm(xp_message, FR_OK, status);
     ASSERTm("the module never reached its own plugin's requires", reached);
 
-    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java,
                                             "daukle.require(\"foo:lib/thing\")\n"));
     int refused = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
     xp_done(registry);
@@ -1538,8 +1569,8 @@ TEST a_library_module_requires_against_its_own_owner(void) {
 TEST a_provider_that_is_also_a_root_plugin_still_serves_a_bare_instance(void) {
     xp_reset();
     const xp_artifact *java = xp_serve_java("daukle.fetch(\"https://x/never\")\nreturn {}\n");
-    xp_serve_chunk(GRADLE_URL, xp_dependent("\"fetch\"", xp_requires_one("java", java),
-                                            "daukle.require(\"java:lib/coords\")\n"));
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("\"fetch\"", "java", java,
+                                               "daukle.require(\"java:lib/coords\")\n"));
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest_two("java", JAVA_URL, "gradle", GRADLE_URL), &registry);
@@ -1564,7 +1595,7 @@ TEST one_dependent_gets_one_copy_of_a_module_per_artifact(void) {
         FOO_URL, "daukle.plugin{ api = 1, uses = {}, exports = { \"lib/counter\" } }\n", foo_names,
         foo_bodies, 1);
     char foo_requirement[256];
-    snprintf(foo_requirement, sizeof foo_requirement, "%s", xp_requires_one("foo", foo));
+    xp_requires_one(foo_requirement, sizeof foo_requirement, "foo", foo);
 
     const char *java_names[] = { "lib/coords.lua", "lib/counter.lua" };
     const char *java_bodies[] = {
@@ -1576,8 +1607,10 @@ TEST one_dependent_gets_one_copy_of_a_module_per_artifact(void) {
         "daukle.plugin{ api = 1, uses = {}, exports = { \"lib/coords\", \"lib/counter\" } }\n",
         java_names, java_bodies, 2);
 
+    char java_requirement[256];
+    xp_requires_one(java_requirement, sizeof java_requirement, "java", java);
     char requires_both[512];
-    snprintf(requires_both, sizeof requires_both, "%s, %s", xp_requires_one("java", java),
+    snprintf(requires_both, sizeof requires_both, "%s, %s", java_requirement,
              foo_requirement);
 
     char body[768];
@@ -1601,10 +1634,115 @@ TEST one_dependent_gets_one_copy_of_a_module_per_artifact(void) {
     PASS();
 }
 
+/* A chain of nine providers, each module reaching into the next. The acquisition
+   depth cap alone would bound this at eight artifacts, so the dependent requires
+   l0 and l5 directly: a root require puts an artifact back at depth 0, while the
+   nesting keeps accumulating, which is what makes the owner-stack cap reachable
+   rather than dead. */
+TEST modules_nesting_deeper_than_the_cap_are_refused(void) {
+    static const char *LINK_URL[9] = {
+        "https://x/l0.tar", "https://x/l1.tar", "https://x/l2.tar", "https://x/l3.tar",
+        "https://x/l4.tar", "https://x/l5.tar", "https://x/l6.tar", "https://x/l7.tar",
+        "https://x/l8.tar"
+    };
+    static char requirement[9][256];
+    const char *names[] = { "m.lua" };
+
+    xp_reset();
+    /* Built from the deepest back, because a requires entry carries the pin of
+       what it names and a pin cannot be written before the bytes exist. */
+    for (int index = 8; index >= 0; index--) {
+        char entry[512];
+        char member[128];
+        if (index == 8) {
+            snprintf(entry, sizeof entry,
+                     "daukle.plugin{ api = 1, uses = {}, exports = { \"m\" } }\n");
+            snprintf(member, sizeof member, "return { reached = true }\n");
+        } else {
+            snprintf(entry, sizeof entry,
+                     "daukle.plugin{ api = 1, uses = {}, exports = { \"m\" },"
+                     " requires = { %s } }\n", requirement[index + 1]);
+            snprintf(member, sizeof member, "return daukle.require(\"l%d:m\")\n", index + 1);
+        }
+        const char *bodies[1];
+        bodies[0] = member;
+        const xp_artifact *link = xp_serve_plugin(LINK_URL[index], entry, names, bodies, 1);
+
+        char alias[8];
+        snprintf(alias, sizeof alias, "l%d", index);
+        xp_requires_one(requirement[index], sizeof requirement[index], alias, link);
+    }
+
+    char requires_two[512];
+    snprintf(requires_two, sizeof requires_two, "%s, %s", requirement[0], requirement[5]);
+    xp_serve_chunk(GRADLE_URL,
+                   xp_dependent("", requires_two, "daukle.require(\"l0:m\")\n"));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(xp_message, strstr(xp_message, "reach across more than 8 plugin boundaries") != NULL);
+    PASS();
+}
+
+TEST an_alias_longer_than_the_limit_is_refused_as_too_long(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("return {}\n");
+    char body[256];
+    char long_alias[FR_PLUGIN_MAX_ALIAS + 8];
+    memset(long_alias, 'j', sizeof long_alias - 1);
+    long_alias[sizeof long_alias - 1] = '\0';
+    snprintf(body, sizeof body, "daukle.require(\"%s:lib/coords\")\n", long_alias);
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java, body));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(xp_message, strstr(xp_message, "longer than") != NULL);
+    /* Not reported as an alias nobody declared, which is what a silent
+       truncation to the limit would have said. */
+    ASSERTm(xp_message, strstr(xp_message, "no dependency is required") == NULL);
+    PASS();
+}
+
+/* A raise from inside a library module must not leave the owner frame standing,
+   because a standing frame routes the DEPENDENT's own bare requires through the
+   provider, where fr_plugin_deps_own_member does not consult exports. Nothing in
+   the library environment can catch a raise, so the frame can only be observed
+   from the next load, which is what this drives. */
+TEST a_raise_inside_a_library_module_leaves_no_owner_frame(void) {
+    xp_reset();
+    const xp_artifact *java = xp_serve_java("error(\"the module raised\")\n");
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java,
+                                               "daukle.require(\"java:lib/coords\")\n"));
+
+    fr_registry *registry = NULL;
+    int raised = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+    ASSERT_EQ(FR_ERR, raised);
+    ASSERTm(xp_message, strstr(xp_message, "the module raised") != NULL);
+
+    /* A single-file dependent, so its own bare require must be refused with
+       "this plugin is a single file": routed through a surviving frame it would
+       instead read the PROVIDER's lib/coords, exports unchecked, and load. */
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java,
+                                               "daukle.require(\"lib/coords\")\n"));
+    int after = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+
+    ASSERT_EQ(FR_ERR, after);
+    ASSERTm(xp_message, strstr(xp_message, "single file") != NULL);
+    PASS();
+}
+
 TEST a_member_name_carrying_a_second_colon_is_refused(void) {
     xp_reset();
     const xp_artifact *java = xp_serve_java("return {}\n");
-    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java,
                                             "daukle.require(\"java:lib:coords\")\n"));
 
     fr_registry *registry = NULL;
@@ -1621,7 +1759,7 @@ TEST a_member_name_carrying_a_second_colon_is_refused(void) {
 TEST a_drive_letter_is_an_escape_rather_than_an_alias(void) {
     xp_reset();
     const xp_artifact *java = xp_serve_java("return {}\n");
-    xp_serve_chunk(GRADLE_URL, xp_dependent("", xp_requires_one("java", java),
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java,
                                             "daukle.require(\"C:/x\")\n"));
 
     fr_registry *registry = NULL;
@@ -1630,7 +1768,10 @@ TEST a_drive_letter_is_an_escape_rather_than_an_alias(void) {
 
     ASSERT_EQ(FR_ERR, status);
     ASSERTm(xp_message, strstr(xp_message, "may not leave the plugin") != NULL);
-    ASSERTm(xp_message, strstr(xp_message, "alias") == NULL);
+    /* On the WHOLE name, because that is the only assertion the wrong ordering
+       fails: splitting first leaves the alias "C" and the member "/x", and
+       "/x" is refused with the same clause, under its own spelling. */
+    ASSERTm(xp_message, strstr(xp_message, "\"C:/x\"") != NULL);
     PASS();
 }
 
@@ -1703,6 +1844,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_library_module_requires_against_its_own_owner);
     RUN_TEST(a_provider_that_is_also_a_root_plugin_still_serves_a_bare_instance);
     RUN_TEST(one_dependent_gets_one_copy_of_a_module_per_artifact);
+    RUN_TEST(modules_nesting_deeper_than_the_cap_are_refused);
+    RUN_TEST(an_alias_longer_than_the_limit_is_refused_as_too_long);
+    RUN_TEST(a_raise_inside_a_library_module_leaves_no_owner_frame);
     RUN_TEST(a_member_name_carrying_a_second_colon_is_refused);
     RUN_TEST(a_drive_letter_is_an_escape_rather_than_an_alias);
     GREATEST_MAIN_END();

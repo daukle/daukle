@@ -132,6 +132,10 @@ typedef struct {
     int has_run;
 } fr_lua_plugin_slot;
 
+/* @implNote a released slot keeps whatever the declaration that used its index
+   left in it, so every site that takes one zeroes it first: otherwise a
+   language reusing a task's index inherits that task's part_of and depends_on,
+   and fr_lua_runtime_shutdown frees them a second time. */
 static fr_lua_plugin_slot plugin_slots[FR_LUA_MAX_PLUGINS];
 static size_t plugin_slot_count;
 static fr_registry *registering_into;
@@ -494,10 +498,6 @@ static int take_slot(lua_State *state, const char *prefix, const char *field,
         return luaL_error(state, "\"%s\" is declared twice", capability);
     }
 
-    /* Zeroed the way the task path already zeroes its own slot: the array is a
-       file static, so an index a released task declaration used still holds
-       that task's part_of and depends_on, and shutdown would free them a second
-       time through a language that reused the index. */
     fr_lua_plugin_slot *slot = &plugin_slots[plugin_slot_count];
     memset(slot, 0, sizeof *slot);
     size_t length = strlen(capability) + 1;
@@ -1146,6 +1146,16 @@ static module_slot *claim_module_slot(lua_State *state, const fr_plugin_deps *ow
     return slot;
 }
 
+typedef struct {
+    module_slot *slot;
+    const char *name;
+    const char *chunk_name;
+    const char *text;
+    size_t length;
+    const char *dependent;   /* who the library environment names as asking */
+    const char *member;
+} module_call;
+
 /* Expects the environment the module runs in on the stack top, and leaves what
    the module returned there instead. */
 static int run_module(lua_State *state, module_slot *slot, const char *name,
@@ -1215,13 +1225,36 @@ static int require_own_module(lua_State *state, const char *name) {
     return run_module(state, slot, name, chunk_name, text, length);
 }
 
+/* Everything the cross-plugin path does once the owner frame is pushed, so that
+   the frame can be popped whether it returns or raises. Reached only through
+   lua_pcall, and its one argument is the call description as light userdata,
+   which needs no allocation to push and no file static to nest. */
+static int protected_run_member(lua_State *state) {
+    const module_call *call = lua_touserdata(state, 1);
+    lua_settop(state, 0);
+
+    fr_error err;
+    if (fr_lua_verbs_push_library_env(state, call->dependent, call->member, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    return run_module(state, call->slot, call->name, call->chunk_name, call->text, call->length);
+}
+
 static int require_across_plugins(lua_State *state, const char *name, const char *colon) {
     const owner_frame *frame = current_owner();
     fr_plugin_deps *from = frame != NULL ? frame->deps : loading_deps;
     const char *from_label = frame != NULL ? frame->label : fr_plugin_deps_label(loading_deps);
 
+    /* Refused as over-long rather than truncated: a truncated alias is reported
+       undeclared under a spelling the author never wrote. */
+    size_t alias_length = (size_t) (colon - name);
+    if (alias_length > FR_PLUGIN_MAX_ALIAS) {
+        return luaL_error(state, "daukle.require(\"%s\"): the plugin before the \":\" is longer"
+                                 " than %d bytes", name, FR_PLUGIN_MAX_ALIAS);
+    }
     char alias[FR_PLUGIN_MAX_ALIAS + 1];
-    snprintf(alias, sizeof alias, "%.*s", (int) (colon - name), name);
+    memcpy(alias, name, alias_length);
+    alias[alias_length] = '\0';
     const char *member = colon + 1;
 
     fr_error err;
@@ -1252,21 +1285,33 @@ static int require_across_plugins(lua_State *state, const char *name, const char
 
     slot = claim_module_slot(state, owner, owner_label, member);
 
-    if (fr_lua_verbs_push_library_env(state, from_label != NULL ? from_label : "this plugin",
-                                      member, &err)
-        != FR_OK) {
-        return luaL_error(state, "%s", err.message);
-    }
-
     char chunk_name[FR_TAR_MAX_NAME * 2];
     snprintf(chunk_name, sizeof chunk_name, "@%s:%s.lua", owner_label, member);
 
+    module_call call;
+    call.slot = slot;
+    call.name = name;
+    call.chunk_name = chunk_name;
+    call.text = text;
+    call.length = length;
+    call.dependent = from_label != NULL ? from_label : "this plugin";
+    call.member = member;
+
+    /* The frame is popped on the raising path too. Nothing in the library
+       environment can catch a raise today, so only fr_lua_plugin_load's own
+       reset recovers a leaked frame, and a frame that outlived its module would
+       route the DEPENDENT's bare requires through the provider, where the
+       exports check does not run. */
+    lua_pushcfunction(state, protected_run_member);
+    lua_pushlightuserdata(state, &call);
     owner_stack[owner_stack_depth].deps = owner;
     owner_stack[owner_stack_depth].label = owner_label;
     owner_stack_depth++;
-    int results = run_module(state, slot, name, chunk_name, text, length);
+    int status = lua_pcall(state, 1, 1, 0);
     owner_stack_depth--;
-    return results;
+
+    if (status != LUA_OK) return lua_error(state);
+    return 1;
 }
 
 static int lua_require_module(lua_State *state) {
