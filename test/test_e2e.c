@@ -513,23 +513,32 @@ TEST a_task_runs_its_child_in_the_derived_directory(void) {
     PASS();
 }
 
+/* plugin-deps-e2e declares one root plugin ("dependent") that requires one dependency
+   ("provider", replaced by a path override so nothing is fetched over the network): the report
+   therefore carries two rows, and "this project declares N plugins" must still say 1, not 2, since
+   the project's own [plugins] table names exactly one. Asserting on the raw report count first
+   pins that a dependency really is in there; asserting on fr_plugins_report_declared_count pins
+   that counting stops at the rows the project actually declared. */
 TEST an_unknown_goal_names_the_plugin_count(void) {
     fr_error err;
     fr_session session;
-    ASSERT_EQ(FR_OK, fr_session_open("test/fixtures/task-cwd/daukle.toml", 1, &session, &err));
+    ASSERT_EQ(FR_OK,
+             fr_session_open("test/fixtures/plugin-deps-e2e/daukle.toml", 1, &session, &err));
     fr_task_set set;
     ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
 
     fr_task_plan plan;
     int plan_status = fr_tasks_plan(&set, "build", &plan, &err);
     int found = fr_tasks_find(&set, "build") != NULL;
-    size_t plugin_count = fr_plugins_report()->count;
+    size_t report_count = fr_plugins_report()->count;
+    size_t plugin_count = fr_plugins_report_declared_count(fr_plugins_report());
 
     fr_tasks_set_free(&set);
     fr_session_close(&session);
 
     ASSERT_EQ(FR_ERR, plan_status);
     ASSERT(!found);
+    ASSERT_EQ(2u, report_count);
     ASSERT_EQ(1u, plugin_count);
     PASS();
 }

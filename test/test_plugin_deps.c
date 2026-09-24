@@ -190,10 +190,16 @@ TEST a_declared_dependency_is_acquired(void) {
 
     fr_plugin_deps *deps = NULL;
     int status = acquire_for(source, &deps, message, sizeof message);
+    size_t count = fr_plugin_deps_count(deps);
+    int requests = stub_requests;
     fr_plugin_deps_close(deps);
     fr_lua_runtime_shutdown();
 
     ASSERT_EQm(message, FR_OK, status);
+    /* FR_OK alone passes an acquirer that walks requires and fetches nothing:
+       an artifact must actually have been fetched and land in the graph. */
+    ASSERT_EQ(1u, count);
+    ASSERT_EQ(1, requests);
     PASS();
 }
 
@@ -461,7 +467,7 @@ TEST a_cycle_between_two_artifacts_is_refused(void) {
     char source[512];
     char chain[256];
     serve_a_cycle();
-    dependent_source(source, sizeof source, "a", CYCLE_A_URL, CYCLE_A_DIGEST);
+    dependent_source(source, sizeof source, "start", CYCLE_A_URL, CYCLE_A_DIGEST);
     snprintf(chain, sizeof chain, "%s -> %s -> %s", CYCLE_A_URL, CYCLE_B_URL, CYCLE_A_URL);
 
     fr_plugin_deps *deps = NULL;
@@ -549,9 +555,9 @@ static void serve_a_tree(void) {
         if (right <= TREE_NODES) {
             char left_entry[256];
             char right_entry[256];
-            requirement_entry(left_entry, sizeof left_entry, "a", GENERATED_URL[left],
+            requirement_entry(left_entry, sizeof left_entry, "left", GENERATED_URL[left],
                               GENERATED_DIGEST[left]);
-            requirement_entry(right_entry, sizeof right_entry, "b", GENERATED_URL[right],
+            requirement_entry(right_entry, sizeof right_entry, "right", GENERATED_URL[right],
                               GENERATED_DIGEST[right]);
             snprintf(GENERATED_BODY[index], sizeof GENERATED_BODY[index],
                      "daukle.plugin{ api = 1, requires = { %s, %s } }\n", left_entry, right_entry);
@@ -627,7 +633,7 @@ TEST a_dependency_naming_more_aliases_than_the_limit_is_refused(void) {
     PASS();
 }
 
-/* --- Task 5: the manifest override --- */
+/* --- The manifest override --- */
 
 static char OVERRIDE_V1_ARCHIVE[8192];
 static size_t OVERRIDE_V1_ARCHIVE_LENGTH;
@@ -832,34 +838,42 @@ TEST a_path_override_reads_a_local_directory(void) {
     FILE *plugin_out;
     FILE *coords_out;
 
+    /* Every setup step is gated on the one before it and asserted only after
+       fr_test_remove_tree runs below, so a setup failure never leaves the
+       scratch directory behind for the next run to trip over. */
     snprintf(scratch, sizeof scratch, "%s/daukle_test_plugin_deps_override_%d",
             fr_test_temp_base(), fr_test_process_id());
     fr_test_remove_tree(scratch);
-    ASSERT_EQ(0, fr_test_make_directory(scratch));
+    int scratch_ok = fr_test_make_directory(scratch) == 0;
     snprintf(lib_dir, sizeof lib_dir, "%s/lib", scratch);
-    ASSERT_EQ(0, fr_test_make_directory(lib_dir));
+    int lib_dir_ok = scratch_ok && fr_test_make_directory(lib_dir) == 0;
 
-    snprintf(plugin_file, sizeof plugin_file, "%s/plugin.lua", scratch);
-    plugin_out = fopen(plugin_file, "wb");
-    ASSERTm("could not write the fixture plugin.lua", plugin_out != NULL);
-    fwrite(DIR_OVERRIDE_PLUGIN_TEXT, 1, sizeof DIR_OVERRIDE_PLUGIN_TEXT - 1, plugin_out);
-    fclose(plugin_out);
+    int plugin_write_ok = 0;
+    if (lib_dir_ok) {
+        snprintf(plugin_file, sizeof plugin_file, "%s/plugin.lua", scratch);
+        plugin_out = fopen(plugin_file, "wb");
+        plugin_write_ok = plugin_out != NULL;
+        if (plugin_write_ok) {
+            fwrite(DIR_OVERRIDE_PLUGIN_TEXT, 1, sizeof DIR_OVERRIDE_PLUGIN_TEXT - 1, plugin_out);
+            fclose(plugin_out);
+        }
+    }
 
-    snprintf(coords_file, sizeof coords_file, "%s/lib/coords.lua", scratch);
-    coords_out = fopen(coords_file, "wb");
-    ASSERTm("could not write the fixture lib/coords.lua", coords_out != NULL);
-    fwrite(DIR_OVERRIDE_COORDS_TEXT, 1, sizeof DIR_OVERRIDE_COORDS_TEXT - 1, coords_out);
-    fclose(coords_out);
+    int coords_write_ok = 0;
+    if (plugin_write_ok) {
+        snprintf(coords_file, sizeof coords_file, "%s/lib/coords.lua", scratch);
+        coords_out = fopen(coords_file, "wb");
+        coords_write_ok = coords_out != NULL;
+        if (coords_write_ok) {
+            fwrite(DIR_OVERRIDE_COORDS_TEXT, 1, sizeof DIR_OVERRIDE_COORDS_TEXT - 1, coords_out);
+            fclose(coords_out);
+        }
+    }
 
-    serve_two_plugins();
-    dependent_source(source, sizeof source, "java", "https://x/java.lua", JAVA_DIGEST);
-    cJSON *overrides = cJSON_Parse("{\"java\":{\"path\":\".\"}}");
-
+    cJSON *overrides = NULL;
     fr_plugin_deps *deps = NULL;
-    int status = acquire_with_overrides(scratch, source, overrides, &deps, acquire_message,
-                                        sizeof acquire_message);
-    int requests = stub_requests;
-
+    int status = FR_ERR;
+    int requests = 0;
     fr_error err;
     const char *text = NULL;
     size_t length = 0;
@@ -867,21 +881,36 @@ TEST a_path_override_reads_a_local_directory(void) {
     const char *owner_label = NULL;
     int member_status = FR_ERR;
     int served_directory = 0;
-    if (status == FR_OK) {
-        member_status = fr_plugin_deps_member(deps, "java", "lib/coords", &text, &length, &owner,
-                                              &owner_label, &err);
-        if (member_status == FR_OK) {
-            served_directory = length == sizeof DIR_OVERRIDE_COORDS_TEXT - 1
-                && memcmp(text, DIR_OVERRIDE_COORDS_TEXT, length) == 0;
-        } else {
-            snprintf(member_message, sizeof member_message, "%s", err.message);
+
+    if (coords_write_ok) {
+        serve_two_plugins();
+        dependent_source(source, sizeof source, "java", "https://x/java.lua", JAVA_DIGEST);
+        overrides = cJSON_Parse("{\"java\":{\"path\":\".\"}}");
+
+        status = acquire_with_overrides(scratch, source, overrides, &deps, acquire_message,
+                                        sizeof acquire_message);
+        requests = stub_requests;
+
+        if (status == FR_OK) {
+            member_status = fr_plugin_deps_member(deps, "java", "lib/coords", &text, &length, &owner,
+                                                  &owner_label, &err);
+            if (member_status == FR_OK) {
+                served_directory = length == sizeof DIR_OVERRIDE_COORDS_TEXT - 1
+                    && memcmp(text, DIR_OVERRIDE_COORDS_TEXT, length) == 0;
+            } else {
+                snprintf(member_message, sizeof member_message, "%s", err.message);
+            }
         }
+        cJSON_Delete(overrides);
+        fr_plugin_deps_close(deps);
+        fr_lua_runtime_shutdown();
     }
-    cJSON_Delete(overrides);
-    fr_plugin_deps_close(deps);
-    fr_lua_runtime_shutdown();
     fr_test_remove_tree(scratch);
 
+    ASSERTm("could not create the scratch directory", scratch_ok);
+    ASSERTm("could not create the scratch lib directory", lib_dir_ok);
+    ASSERTm("could not write the fixture plugin.lua", plugin_write_ok);
+    ASSERTm("could not write the fixture lib/coords.lua", coords_write_ok);
     ASSERT_EQm(acquire_message, FR_OK, status);
     ASSERT_EQm(member_message, FR_OK, member_status);
     ASSERTm("the directory override's own lib/coords.lua was served", served_directory);

@@ -623,6 +623,27 @@ TEST an_alias_with_a_reserved_character_is_refused(void) {
     PASS();
 }
 
+/* plugins/c.lua ships in this repo as a real one-letter alias, and
+   daukle.require("c:x") would be refused as a path escape by
+   fr_lua_sandbox_climbs_out before ever reaching the colon split (a letter
+   followed by ":" is the Windows drive-letter shape). Refusing the alias here,
+   at declaration, is what catches that before a plugin author ever fetches an
+   artifact they can never require. */
+TEST a_one_character_alias_is_refused(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, requires = { c = { url = \"https://x/c.lua\","
+        " sha256 = \"9f86d0\" } } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "one letter") != NULL);
+    ASSERTm(message, strstr(message, "drive letter") != NULL);
+    PASS();
+}
+
 TEST a_resolver_may_not_require_a_plugin(void) {
     static char message[512];
     fr_plugin_declaration declaration;
@@ -697,6 +718,23 @@ TEST an_export_written_as_a_file_name_is_refused(void) {
 
     ASSERT_EQ(FR_ERR, status);
     ASSERTm(message, strstr(message, "without the \".lua\"") != NULL);
+    PASS();
+}
+
+/* An export is refused where it is written, not at the require that would
+   later miss it: the message must send the author back to the exports list,
+   never to a daukle.require call they never wrote. */
+TEST an_export_refusal_does_not_name_daukle_require(void) {
+    static char message[512];
+    fr_plugin_declaration declaration;
+    int status = read_declaration_of(
+        "daukle.plugin{ api = 1, exports = { \"lib/coords.lua\" } }",
+        &declaration, message, sizeof message);
+    fr_plugins_free_declaration(&declaration);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "without the \".lua\"") != NULL);
+    ASSERTm(message, strstr(message, "daukle.require") == NULL);
     PASS();
 }
 
@@ -1910,6 +1948,78 @@ TEST an_overridden_dependency_is_reported_as_overridden(void) {
     PASS();
 }
 
+/* A url two different dependents reach must appear once per binding, not once per node:
+   node_with_url's dedup collapses "toola"'s and "toolb"'s separate requests for the same leaf
+   artifact into one node, and a row-per-node report can only ever print ONE of the two
+   attributions, silently dropping the other regardless of which happened to win the graph walk.
+   toola names the leaf "java" and toolb names it "jdk"; both must survive into the report with
+   their own alias and required_by. The assertions search each row by url rather than assume an
+   order between the two bindings, so nothing here depends on which one the walk reaches first. */
+TEST a_url_required_by_two_dependents_reports_both_bindings(void) {
+    static char message[512];
+    const char LEAF_BODY[] = "daukle.plugin{ api = 1, uses = {} }\n";
+    char leaf_digest[65];
+    fr_sha256_hex(LEAF_BODY, strlen(LEAF_BODY), leaf_digest);
+
+    char toola_body[256];
+    snprintf(toola_body, sizeof toola_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = { java = { url ="
+            " \"https://x/bind-leaf.lua\", sha256 = \"%s\" } } }\n", leaf_digest);
+    char toola_digest[65];
+    fr_sha256_hex(toola_body, strlen(toola_body), toola_digest);
+
+    char toolb_body[256];
+    snprintf(toolb_body, sizeof toolb_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = { jdk = { url ="
+            " \"https://x/bind-leaf.lua\", sha256 = \"%s\" } } }\n", leaf_digest);
+    char toolb_digest[65];
+    fr_sha256_hex(toolb_body, strlen(toolb_body), toolb_digest);
+
+    char gradle_body[512];
+    snprintf(gradle_body, sizeof gradle_body,
+            "daukle.plugin{ api = 1, uses = {}, requires = {"
+            " toola = { url = \"https://x/bind-toola.lua\", sha256 = \"%s\" },"
+            " toolb = { url = \"https://x/bind-toolb.lua\", sha256 = \"%s\" } } }\n",
+            toola_digest, toolb_digest);
+
+    dep_stub_reset();
+    dep_stub_serve("https://x/bind-gradle.lua", gradle_body);
+    dep_stub_serve("https://x/bind-toola.lua", toola_body);
+    dep_stub_serve("https://x/bind-toolb.lua", toolb_body);
+    dep_stub_serve("https://x/bind-leaf.lua", LEAF_BODY);
+
+    dependency_load_session session;
+    int status = FR_ERR;
+    int setup_ok = begin_dependency_load("{\"plugins\":{\"gradle\":\"https://x/bind-gradle.lua\"}}",
+                                         &session, &status, message, sizeof message);
+
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    int found_java = 0;
+    int found_jdk = 0;
+    for (size_t index = 0; index < count; index++) {
+        const fr_plugin_report_entry *entry = &report->entries[index];
+        if (entry->url == NULL || strcmp(entry->url, "https://x/bind-leaf.lua") != 0) continue;
+        if (entry->alias != NULL && strcmp(entry->alias, "java") == 0 && entry->required_by != NULL
+            && strcmp(entry->required_by, "toola") == 0) {
+            found_java = 1;
+        }
+        if (entry->alias != NULL && strcmp(entry->alias, "jdk") == 0 && entry->required_by != NULL
+            && strcmp(entry->required_by, "toolb") == 0) {
+            found_jdk = 1;
+        }
+    }
+
+    end_dependency_load(&session);
+
+    ASSERT(setup_ok);
+    ASSERTm(message, FR_OK == status);
+    ASSERT_EQ(5u, count);
+    ASSERTm("toola's binding to the shared leaf never reached the report", found_java);
+    ASSERTm("toolb's binding to the shared leaf never reached the report", found_jdk);
+    PASS();
+}
+
 /* The resolver answers from an environment variable, so the test changes what a
    coordinate means without touching the manifest. That is what separates the
    two things being tested: an ordinary run must keep serving the old answer
@@ -2674,10 +2784,12 @@ int main(int argc, char **argv) {
     RUN_TEST(a_requires_entry_without_a_sha256_is_refused);
     RUN_TEST(a_requires_entry_naming_a_path_is_refused);
     RUN_TEST(an_alias_with_a_reserved_character_is_refused);
+    RUN_TEST(a_one_character_alias_is_refused);
     RUN_TEST(a_resolver_may_not_require_a_plugin);
     RUN_TEST(a_hostile_index_metatable_on_a_requires_entry_is_never_consulted);
     RUN_TEST(a_declaration_records_its_exports);
     RUN_TEST(an_export_written_as_a_file_name_is_refused);
+    RUN_TEST(an_export_refusal_does_not_name_daukle_require);
     RUN_TEST(an_export_that_climbs_out_is_refused);
     RUN_TEST(a_resolver_may_not_export);
     RUN_TEST(a_hostile_index_metatable_on_exports_is_never_consulted);
@@ -2711,6 +2823,7 @@ int main(int argc, char **argv) {
     RUN_TEST(dependency_rows_are_sorted_by_required_by_then_alias);
     RUN_TEST(a_transitively_acquired_dependency_appears_in_the_report);
     RUN_TEST(an_overridden_dependency_is_reported_as_overridden);
+    RUN_TEST(a_url_required_by_two_dependents_reports_both_bindings);
     RUN_TEST(plugin_update_re_resolves_and_takes_the_new_url);
     RUN_TEST(plugin_update_persists_the_fresh_url_with_the_cache_disabled);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);

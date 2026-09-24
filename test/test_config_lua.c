@@ -6,6 +6,8 @@
 #include "error.h"
 #include "http.h"
 #include "manifest.h"
+#include "plugin_deps.h"
+#include "plugin_modules.h"
 #include "plugins.h"
 #include "region.h"
 #include "registry.h"
@@ -1634,6 +1636,36 @@ TEST one_dependent_gets_one_copy_of_a_module_per_artifact(void) {
     PASS();
 }
 
+/* A nested sibling require inside a library module used to build that module's
+   environment with the PROVIDER's own label ("java") in the slot
+   outside_the_library_env's message calls the dependent, so the raise read
+   "required by \"java\"" instead of naming gradle, the plugin that actually
+   pulled java in. lib/coords is what gradle reached across the boundary;
+   lib/util is coords's own bare sibling require, which is where the wrong
+   label was built. */
+TEST a_nested_sibling_library_refusal_names_the_true_dependent(void) {
+    xp_reset();
+    const char *java_names[] = { "lib/coords.lua", "lib/util.lua" };
+    const char *java_bodies[] = {
+        "local util = daukle.require(\"lib/util\")\nreturn { util = util }\n",
+        "daukle.fetch(\"https://x/never\")\nreturn {}\n"
+    };
+    const xp_artifact *java = xp_serve_plugin(
+        JAVA_URL, "daukle.plugin{ api = 1, uses = {}, exports = { \"lib/coords\" } }\n",
+        java_names, java_bodies, 2);
+    xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java,
+                                            "daukle.require(\"java:lib/coords\")\n"));
+
+    fr_registry *registry = NULL;
+    int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
+    xp_done(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(xp_message, strstr(xp_message, "required by \"gradle\"") != NULL);
+    ASSERTm(xp_message, strstr(xp_message, "required by \"java\"") == NULL);
+    PASS();
+}
+
 /* A chain of nine providers, each module reaching into the next. The acquisition
    depth cap alone would bound this at eight artifacts, so the dependent requires
    l0 and l5 directly: a root require puts an artifact back at depth 0, while the
@@ -1737,6 +1769,146 @@ TEST no_owner_frame_survives_into_the_next_load(void) {
 
     ASSERT_EQ(FR_ERR, after);
     ASSERTm(xp_message, strstr(xp_message, "single file") != NULL);
+    PASS();
+}
+
+#define LIMIT_OWN_COUNT 40
+#define LIMIT_LIB_COUNT 25
+
+static const char *limit_test_lib_url;
+static const char *limit_test_lib_body;
+static size_t limit_test_lib_length;
+
+/* Serves exactly one url, the way this test's own single dependency needs: any other request is a
+   test bug, not something to answer silently. */
+static int limit_test_serve(const char *url, const fr_http_header *headers, size_t header_count,
+                            char **out_body, size_t *out_length, fr_error *err) {
+    (void) headers;
+    (void) header_count;
+    if (limit_test_lib_url == NULL || strcmp(url, limit_test_lib_url) != 0) {
+        fr_error_set(err, "no stub for %s", url);
+        return FR_ERR;
+    }
+    char *copy = malloc(limit_test_lib_length + 1);
+    if (copy == NULL) {
+        fr_error_set(err, "out of memory serving %s", url);
+        return FR_ERR;
+    }
+    memcpy(copy, limit_test_lib_body, limit_test_lib_length);
+    copy[limit_test_lib_length] = '\0';
+    *out_body = copy;
+    *out_length = limit_test_lib_length;
+    return FR_OK;
+}
+
+/* FR_PLUGIN_MODULE_LIMIT's 64 slots are one budget shared by the whole load, not a separate 64 for
+   every artifact: the dependent here owns 40 modules and requires a library that exports 25, 65 in
+   total, over the limit, even though neither the dependent's own module count nor the library's
+   export count individually is. An implementation that gave every artifact its own 64-slot budget
+   (the pre-branch shape) would pass this. Built through fr_plugin_deps_acquire and
+   fr_lua_plugin_load directly, the same two calls load_one makes, rather than through
+   fr_plugins_load, because there is no manifest step this test needs. */
+TEST the_module_limit_is_shared_across_a_load(void) {
+    static char lib_archive[32768];
+    static char root_archive[65536];
+    static char lib_entry[1024];
+    static char root_entry[4096];
+    char lib_names[LIMIT_LIB_COUNT][16];
+    char own_names[LIMIT_OWN_COUNT][16];
+    static const char TINY_MODULE[] = "return {}\n";
+    fr_error err;
+    int index;
+
+    size_t entry_used = (size_t) snprintf(lib_entry, sizeof lib_entry,
+                                          "daukle.plugin{ api = 1, uses = {}, exports = {");
+    for (index = 0; index < LIMIT_LIB_COUNT; index++) {
+        entry_used += (size_t) snprintf(lib_entry + entry_used, sizeof lib_entry - entry_used,
+                                        "%s\"n%d\"", index == 0 ? " " : ", ", index);
+    }
+    entry_used += (size_t) snprintf(lib_entry + entry_used, sizeof lib_entry - entry_used, " } }\n");
+
+    memset(lib_archive, 0, sizeof lib_archive);
+    size_t offset = fr_test_tar_append(lib_archive, 0, "plugin.lua", '0', lib_entry, entry_used);
+    for (index = 0; index < LIMIT_LIB_COUNT; index++) {
+        snprintf(lib_names[index], sizeof lib_names[index], "n%d.lua", index);
+        offset = fr_test_tar_append(lib_archive, offset, lib_names[index], '0', TINY_MODULE,
+                                    strlen(TINY_MODULE));
+    }
+    size_t lib_length = fr_test_tar_end(lib_archive, offset);
+    char lib_digest[65];
+    fr_sha256_hex(lib_archive, lib_length, lib_digest);
+
+    entry_used = (size_t) snprintf(root_entry, sizeof root_entry,
+                                   "daukle.plugin{ api = 1, uses = {}, requires = { lib = { url ="
+                                   " \"https://x/limit-lib.tar\", sha256 = \"%s\" } } }\n",
+                                   lib_digest);
+    for (index = 0; index < LIMIT_OWN_COUNT; index++) {
+        entry_used += (size_t) snprintf(root_entry + entry_used, sizeof root_entry - entry_used,
+                                        "daukle.require(\"m%d\")\n", index);
+    }
+    for (index = 0; index < LIMIT_LIB_COUNT; index++) {
+        entry_used += (size_t) snprintf(root_entry + entry_used, sizeof root_entry - entry_used,
+                                        "daukle.require(\"lib:n%d\")\n", index);
+    }
+
+    memset(root_archive, 0, sizeof root_archive);
+    offset = fr_test_tar_append(root_archive, 0, "plugin.lua", '0', root_entry, entry_used);
+    for (index = 0; index < LIMIT_OWN_COUNT; index++) {
+        snprintf(own_names[index], sizeof own_names[index], "m%d.lua", index);
+        offset = fr_test_tar_append(root_archive, offset, own_names[index], '0', TINY_MODULE,
+                                    strlen(TINY_MODULE));
+    }
+    size_t root_length = fr_test_tar_end(root_archive, offset);
+
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    fr_http_fn previous_backend = fr_http_set_backend(limit_test_serve);
+    limit_test_lib_url = "https://x/limit-lib.tar";
+    limit_test_lib_body = lib_archive;
+    limit_test_lib_length = lib_length;
+
+    fr_plugin_source *source = NULL;
+    int opened = fr_plugin_source_open_bytes(root_archive, root_length, &source, &err) == FR_OK;
+
+    fr_plugin_declaration declaration;
+    memset(&declaration, 0, sizeof declaration);
+    int declared = opened
+        && fr_plugins_read_declaration(root_entry, entry_used, "@limit-root", "plugin", "gradle",
+                                       &declaration, &err) == FR_OK;
+
+    fr_plugin_deps *deps = NULL;
+    int acquired = declared
+        && fr_plugin_deps_acquire(&declaration, NULL, NULL, 0, &deps, &err) == FR_OK;
+
+    int status = FR_ERR;
+    static char message[512];
+    message[0] = '\0';
+    if (acquired) {
+        const char *chunk = NULL;
+        size_t chunk_length = 0;
+        fr_plugin_source_entry(source, &chunk, &chunk_length, &err);
+        status = fr_lua_plugin_load(chunk, chunk_length, "@limit-root", NULL, 0, source, deps, &err);
+        if (status != FR_OK) snprintf(message, sizeof message, "%s", err.message);
+    } else {
+        snprintf(message, sizeof message, "%s", err.message);
+    }
+
+    fr_plugin_deps_close(deps);
+    fr_plugins_free_declaration(&declaration);
+    fr_plugin_source_close(source);
+    fr_http_set_backend(previous_backend);
+    fr_cache_set_enabled(cache_was_enabled);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERTm(message, opened);
+    ASSERTm(message, declared);
+    ASSERTm(message, acquired);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "a load may require at most 64 modules") != NULL);
     PASS();
 }
 
@@ -1845,9 +2017,11 @@ int main(int argc, char **argv) {
     RUN_TEST(a_library_module_requires_against_its_own_owner);
     RUN_TEST(a_provider_that_is_also_a_root_plugin_still_serves_a_bare_instance);
     RUN_TEST(one_dependent_gets_one_copy_of_a_module_per_artifact);
+    RUN_TEST(a_nested_sibling_library_refusal_names_the_true_dependent);
     RUN_TEST(modules_nesting_deeper_than_the_cap_are_refused);
     RUN_TEST(an_alias_longer_than_the_limit_is_refused_as_too_long);
     RUN_TEST(no_owner_frame_survives_into_the_next_load);
+    RUN_TEST(the_module_limit_is_shared_across_a_load);
     RUN_TEST(a_member_name_carrying_a_second_colon_is_refused);
     RUN_TEST(a_drive_letter_is_an_escape_rather_than_an_alias);
     GREATEST_MAIN_END();
