@@ -585,6 +585,8 @@ static void free_report_entry(fr_plugin_report_entry *entry) {
     free(entry->resolver);
     free(entry->url);
     free(entry->resolved);
+    free(entry->required_by);
+    free(entry->alias);
     for (size_t index = 0; index < entry->uses_count; index++) free(entry->uses[index]);
     free(entry->uses);
 }
@@ -663,6 +665,76 @@ static int append_report_entry(const fr_plugin_entry *entry, const char *origin,
     slot->uses_count = declaration->uses_count;
 
     report_count++;
+    return FR_OK;
+}
+
+/* Appends one dependency's row, owning copies of everything row borrows: row's strings point into
+   the deps graph, which fr_plugin_deps_close (load_one's own cleanup) tears down before the report
+   is ever read. sha256 is row->digest, the value computed while acquiring the node, never
+   recomputed here, so the printed digest is provably the bytes that were verified. */
+static int append_dependency_report_entry(const fr_plugin_deps_row *row, fr_error *err) {
+    fr_plugin_report_entry *grown = realloc(report_entries, (report_count + 1) * sizeof *grown);
+    if (grown == NULL) {
+        fr_error_set(err, "out of memory recording dependency \"%s\" in the report", row->alias);
+        return FR_ERR;
+    }
+    report_entries = grown;
+
+    fr_plugin_report_entry *slot = &report_entries[report_count];
+    memset(slot, 0, sizeof *slot);
+    slot->kind = FR_PLUGIN_URL;
+    memcpy(slot->sha256, row->digest, sizeof slot->sha256);
+    slot->overridden = row->overridden;
+
+    slot->label = fr_dup_string(row->alias);
+    slot->alias = fr_dup_string(row->alias);
+    slot->required_by = fr_dup_string(row->required_by);
+    slot->url = fr_dup_string(row->url);
+    slot->uses = row->uses_count > 0 ? malloc(row->uses_count * sizeof *slot->uses) : NULL;
+    if (slot->label == NULL || slot->alias == NULL || slot->required_by == NULL || slot->url == NULL
+        || (row->uses_count > 0 && slot->uses == NULL)) {
+        free_report_entry(slot);
+        fr_error_set(err, "out of memory recording dependency \"%s\" in the report", row->alias);
+        return FR_ERR;
+    }
+
+    for (size_t index = 0; index < row->uses_count; index++) {
+        slot->uses[index] = fr_dup_string(row->uses[index]);
+        if (slot->uses[index] == NULL) {
+            slot->uses_count = index;
+            free_report_entry(slot);
+            fr_error_set(err, "out of memory recording dependency \"%s\" in the report", row->alias);
+            return FR_ERR;
+        }
+    }
+    slot->uses_count = row->uses_count;
+
+    report_count++;
+    return FR_OK;
+}
+
+/* fr_plugin_deps_acquire walks a requires table with lua_next, whose iteration order is
+   unspecified, so the order nodes were acquired in varies between runs and machines for one
+   unchanged manifest. "daukle config print" is what a person diffs across both, so rows are
+   sorted here, before anything is appended, rather than left in acquisition order. */
+static int compare_deps_rows(const void *left, const void *right) {
+    const fr_plugin_deps_row *a = left;
+    const fr_plugin_deps_row *b = right;
+    int by_required_by = strcmp(a->required_by, b->required_by);
+    return by_required_by != 0 ? by_required_by : strcmp(a->alias, b->alias);
+}
+
+static int append_dependency_report_rows(fr_plugin_deps *deps, fr_error *err) {
+    size_t count = fr_plugin_deps_count(deps);
+    if (count == 0) return FR_OK;
+
+    fr_plugin_deps_row rows[FR_PLUGIN_DEPS_MAX_NODES];
+    for (size_t index = 0; index < count; index++) fr_plugin_deps_row_at(deps, index, &rows[index]);
+    qsort(rows, count, sizeof *rows, compare_deps_rows);
+
+    for (size_t index = 0; index < count; index++) {
+        if (append_dependency_report_entry(&rows[index], err) != FR_OK) return FR_ERR;
+    }
     return FR_OK;
 }
 
@@ -857,6 +929,9 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
     }
     if (status == FR_OK) {
         status = append_report_entry(entry, origin, resolved, digest, &declaration, err);
+    }
+    if (status == FR_OK) {
+        status = append_dependency_report_rows(deps, err);
     }
 
     fr_plugin_deps_close(deps);

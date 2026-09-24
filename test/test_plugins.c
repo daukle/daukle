@@ -1603,6 +1603,131 @@ TEST the_report_names_a_declared_unused_resolver(void) {
     PASS();
 }
 
+/* Every dependency url below serves this same body, so one runtime-computed digest covers all of
+   them; only "gradle.lua" itself serves GRADLE_BODY_FOR_REQUIRES, which each test below fills in
+   with its own requires table before installing this backend. */
+static const char DEP_BODY_FOR_REQUIRES[] = "daukle.plugin{ api = 1, uses = {} }\n";
+static char GRADLE_BODY_FOR_REQUIRES[512];
+
+static int stub_dependency_graph(const char *url, const fr_http_header *headers,
+                                 size_t header_count, char **out_body, size_t *out_length,
+                                 fr_error *err) {
+    (void) headers; (void) header_count; (void) err;
+    const char *body =
+        strstr(url, "/gradle.lua") != NULL ? GRADLE_BODY_FOR_REQUIRES : DEP_BODY_FOR_REQUIRES;
+    *out_body = copy_body(body, out_length);
+    return FR_OK;
+}
+
+/* A [plugins] entry that requires one dependency: the report must carry a second row for it,
+   naming the dependent, the alias it was required under, and the digest computed while acquiring
+   it (never recomputed for the report). The root row is unchanged: required_by stays NULL. */
+TEST a_dependency_appears_in_the_report_with_its_digest(void) {
+    fr_error err;
+    char dep_digest[65];
+    fr_sha256_hex(DEP_BODY_FOR_REQUIRES, strlen(DEP_BODY_FOR_REQUIRES), dep_digest);
+    snprintf(GRADLE_BODY_FOR_REQUIRES, sizeof GRADLE_BODY_FOR_REQUIRES,
+            "daukle.plugin{ api = 1, uses = {}, requires = { java = { url ="
+            " \"https://x/java.lua\", sha256 = \"%s\" } } }\n", dep_digest);
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    fr_http_fn previous = fr_http_set_backend(stub_dependency_graph);
+    fr_registry *registry = NULL;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"gradle\":\"https://x/gradle.lua\"}}");
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = fr_plugins_load(registry, document, ".", &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    int root_required_by_is_null = 0;
+    char dep_label[32] = "", dep_required_by[32] = "", dep_alias[32] = "";
+    size_t dep_sha_length = 0;
+    int dep_overridden = -1;
+    if (count == 2) {
+        root_required_by_is_null = report->entries[0].required_by == NULL;
+        snprintf(dep_label, sizeof dep_label, "%s", report->entries[1].label);
+        snprintf(dep_required_by, sizeof dep_required_by, "%s", report->entries[1].required_by);
+        snprintf(dep_alias, sizeof dep_alias, "%s", report->entries[1].alias);
+        dep_sha_length = strlen(report->entries[1].sha256);
+        dep_overridden = report->entries[1].overridden;
+    }
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+
+    ASSERT(built && began);
+    ASSERTm(message, FR_OK == status);
+    ASSERT_EQ(2u, count);
+    ASSERT(root_required_by_is_null);
+    ASSERT_STR_EQ("java", dep_label);
+    ASSERT_STR_EQ("gradle", dep_required_by);
+    ASSERT_STR_EQ("java", dep_alias);
+    ASSERT_EQ(64u, dep_sha_length);
+    ASSERT_EQ(0, dep_overridden);
+    PASS();
+}
+
+/* fr_plugin_deps_acquire walks its requires table with lua_next, whose order is unspecified: this
+   table is declared "zulu, mike, alpha" so an unsorted report would very likely NOT come out
+   alphabetically by accident. daukle config print must still emit alpha, mike, zulu every time,
+   because it is what a person diffs between runs and between machines. */
+TEST dependency_rows_are_sorted_by_required_by_then_alias(void) {
+    fr_error err;
+    char dep_digest[65];
+    fr_sha256_hex(DEP_BODY_FOR_REQUIRES, strlen(DEP_BODY_FOR_REQUIRES), dep_digest);
+    snprintf(GRADLE_BODY_FOR_REQUIRES, sizeof GRADLE_BODY_FOR_REQUIRES,
+            "daukle.plugin{ api = 1, uses = {}, requires = {"
+            " zulu = { url = \"https://x/zulu.lua\", sha256 = \"%s\" },"
+            " mike = { url = \"https://x/mike.lua\", sha256 = \"%s\" },"
+            " alpha = { url = \"https://x/alpha.lua\", sha256 = \"%s\" } } }\n",
+            dep_digest, dep_digest, dep_digest);
+
+    int cache_was_enabled = fr_cache_enabled();
+    fr_cache_set_enabled(0);
+    fr_http_fn previous = fr_http_set_backend(stub_dependency_graph);
+    fr_registry *registry = NULL;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    cJSON *document = cJSON_Parse("{\"plugins\":{\"gradle\":\"https://x/gradle.lua\"}}");
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = fr_plugins_load(registry, document, ".", &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    const fr_plugin_report *report = fr_plugins_report();
+    size_t count = report->count;
+    char first[32] = "", second[32] = "", third[32] = "";
+    if (count == 4) {
+        snprintf(first, sizeof first, "%s", report->entries[1].alias);
+        snprintf(second, sizeof second, "%s", report->entries[2].alias);
+        snprintf(third, sizeof third, "%s", report->entries[3].alias);
+    }
+
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    fr_http_set_backend(previous);
+    fr_cache_set_enabled(cache_was_enabled);
+
+    ASSERT(built && began);
+    ASSERTm(message, FR_OK == status);
+    ASSERT_EQ(4u, count);
+    ASSERT_STR_EQ("alpha", first);
+    ASSERT_STR_EQ("mike", second);
+    ASSERT_STR_EQ("zulu", third);
+    PASS();
+}
+
 /* The resolver answers from an environment variable, so the test changes what a
    coordinate means without touching the manifest. That is what separates the
    two things being tested: an ordinary run must keep serving the old answer
@@ -2400,6 +2525,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_failed_pin_discards_the_cached_artifact);
     RUN_TEST(the_report_names_the_resolver_and_the_url);
     RUN_TEST(the_report_names_a_declared_unused_resolver);
+    RUN_TEST(a_dependency_appears_in_the_report_with_its_digest);
+    RUN_TEST(dependency_rows_are_sorted_by_required_by_then_alias);
     RUN_TEST(plugin_update_re_resolves_and_takes_the_new_url);
     RUN_TEST(plugin_update_persists_the_fresh_url_with_the_cache_disabled);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);

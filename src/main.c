@@ -145,20 +145,24 @@ static void print_plugin_report(void) {
     printf("daukle: plugins\n");
     for (size_t index = 0; index < report->count; index++) {
         const fr_plugin_report_entry *entry = &report->entries[index];
-        if (entry->kind == FR_PLUGIN_RESOLVED) {
+        if (entry->required_by != NULL) {
+            printf("  %s: %s, sha256 %s, required by %s as %s", entry->label, entry->url,
+                   entry->sha256, entry->required_by, entry->alias);
+        } else if (entry->kind == FR_PLUGIN_RESOLVED) {
             printf("  %s: %s via %s, %s, sha256 %s", entry->label, entry->resolved,
                    entry->resolver, entry->url, entry->sha256);
         } else {
             printf("  %s: %s, sha256 %s", entry->label, entry->resolved, entry->sha256);
         }
         if (entry->uses_count == 0) {
-            printf(", uses none\n");
-            continue;
+            printf(", uses none");
+        } else {
+            printf(", uses ");
+            for (size_t use_index = 0; use_index < entry->uses_count; use_index++) {
+                printf("%s%s", use_index == 0 ? "" : ",", entry->uses[use_index]);
+            }
         }
-        printf(", uses ");
-        for (size_t use_index = 0; use_index < entry->uses_count; use_index++) {
-            printf("%s%s", use_index == 0 ? "" : ",", entry->uses[use_index]);
-        }
+        if (entry->overridden) printf(", overridden");
         printf("\n");
     }
 

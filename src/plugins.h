@@ -43,6 +43,9 @@ typedef struct {
     size_t uses_count;
     char sha256[65];   /* always computed, pinned or not: this is what makes adopting a
                           pin a copy and a paste rather than a separate command */
+    char *required_by; /* the dependent's label, NULL for a root [plugins] entry */
+    char *alias;        /* the alias it was named by, NULL for a root entry */
+    int overridden;     /* 1 when the manifest replaced what the author named */
 } fr_plugin_report_entry;
 
 typedef struct {

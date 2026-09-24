@@ -540,6 +540,21 @@ const char *fr_plugin_deps_label(const fr_plugin_deps *deps) {
     return deps != NULL ? deps->label : NULL;
 }
 
+size_t fr_plugin_deps_count(const fr_plugin_deps *deps) {
+    return deps != NULL ? deps->graph->count : 0;
+}
+
+void fr_plugin_deps_row_at(const fr_plugin_deps *deps, size_t index, fr_plugin_deps_row *out) {
+    const deps_node *node = &deps->graph->nodes[index];
+    out->url = node->url;
+    out->alias = node->label;
+    out->required_by = node->required_by;
+    out->digest = node->digest;
+    out->uses = (const char *const *) node->declaration.uses;
+    out->uses_count = node->declaration.uses_count;
+    out->overridden = node->overridden;
+}
+
 /* A node's own view is owned by the graph, so closing the one
    fr_plugin_deps_member handed back must not take the acquisition down with
    it: only what fr_plugin_deps_acquire produced closes anything. */
