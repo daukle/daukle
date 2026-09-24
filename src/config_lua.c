@@ -1228,7 +1228,16 @@ static int require_own_module(lua_State *state, const char *name) {
 /* Everything the cross-plugin path does once the owner frame is pushed, so that
    the frame can be popped whether it returns or raises. Reached only through
    lua_pcall, and its one argument is the call description as light userdata,
-   which needs no allocation to push and no file static to nest. */
+   which needs no allocation to push and no file static to nest.
+
+   @implNote popping here is the mechanism; fr_lua_plugin_load's
+   owner_stack_depth resets are a backstop, and NO test can tell the two apart.
+   A leaked frame routes the dependent's own bare requires through the provider,
+   where fr_plugin_deps_own_member does not consult exports, but BASE carries no
+   pcall, so nothing can catch a raise mid-load and a leak is observable only
+   across a load boundary, which the resets already own. Do not read a green
+   suite as permission to drop the pop: it will stay green until the sandbox can
+   catch an error, and the hole opens the moment it can. */
 static int protected_run_member(lua_State *state) {
     const module_call *call = lua_touserdata(state, 1);
     lua_settop(state, 0);
@@ -1297,11 +1306,6 @@ static int require_across_plugins(lua_State *state, const char *name, const char
     call.dependent = from_label != NULL ? from_label : "this plugin";
     call.member = member;
 
-    /* The frame is popped on the raising path too. Nothing in the library
-       environment can catch a raise today, so only fr_lua_plugin_load's own
-       reset recovers a leaked frame, and a frame that outlived its module would
-       route the DEPENDENT's bare requires through the provider, where the
-       exports check does not run. */
     lua_pushcfunction(state, protected_run_member);
     lua_pushlightuserdata(state, &call);
     owner_stack[owner_stack_depth].deps = owner;

@@ -1709,12 +1709,13 @@ TEST an_alias_longer_than_the_limit_is_refused_as_too_long(void) {
     PASS();
 }
 
-/* A raise from inside a library module must not leave the owner frame standing,
-   because a standing frame routes the DEPENDENT's own bare requires through the
-   provider, where fr_plugin_deps_own_member does not consult exports. Nothing in
-   the library environment can catch a raise, so the frame can only be observed
-   from the next load, which is what this drives. */
-TEST a_raise_inside_a_library_module_leaves_no_owner_frame(void) {
+/* Named for what it pins and nothing more: after a load whose library module
+   raised, the NEXT load starts with no owner frame standing. It does not pin
+   the pop in require_across_plugins. Nothing in BASE can catch a raise, so a
+   leaked frame is observable only across a load boundary, and
+   fr_lua_plugin_load's own owner_stack_depth resets already own that boundary;
+   see the note on protected_run_member for why the two cannot be told apart. */
+TEST no_owner_frame_survives_into_the_next_load(void) {
     xp_reset();
     const xp_artifact *java = xp_serve_java("error(\"the module raised\")\n");
     xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java,
@@ -1846,7 +1847,7 @@ int main(int argc, char **argv) {
     RUN_TEST(one_dependent_gets_one_copy_of_a_module_per_artifact);
     RUN_TEST(modules_nesting_deeper_than_the_cap_are_refused);
     RUN_TEST(an_alias_longer_than_the_limit_is_refused_as_too_long);
-    RUN_TEST(a_raise_inside_a_library_module_leaves_no_owner_frame);
+    RUN_TEST(no_owner_frame_survives_into_the_next_load);
     RUN_TEST(a_member_name_carrying_a_second_colon_is_refused);
     RUN_TEST(a_drive_letter_is_an_escape_rather_than_an_alias);
     GREATEST_MAIN_END();
