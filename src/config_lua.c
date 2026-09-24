@@ -1082,7 +1082,8 @@ static size_t module_slot_count;
    Bounded explicitly rather than by how deep the C recursion happens to go. */
 typedef struct {
     fr_plugin_deps *deps;
-    const char *label;   /* borrowed from the acquisition, which outlives the chunk */
+    const char *label;      /* this frame's own artifact, borrowed from the acquisition */
+    const char *dependent;  /* who required it, for the library environment's message */
 } owner_frame;
 
 static owner_frame owner_stack[FR_PLUGIN_DEPS_MAX_DEPTH];
@@ -1132,7 +1133,8 @@ static int report_module_cycle(lua_State *state, const char *name) {
 static module_slot *claim_module_slot(lua_State *state, const fr_plugin_deps *owner,
                                       const char *owner_label, const char *name) {
     if (module_slot_count == FR_PLUGIN_MODULE_LIMIT) {
-        luaL_error(state, "a plugin may require at most %d modules", FR_PLUGIN_MODULE_LIMIT);
+        luaL_error(state, "a load may require at most %d modules across every plugin and"
+                          " dependency in it", FR_PLUGIN_MODULE_LIMIT);
     }
 
     module_slot *slot = &module_slots[module_slot_count++];
@@ -1216,7 +1218,7 @@ static int require_own_module(lua_State *state, const char *name) {
     snprintf(chunk_name, sizeof chunk_name, "@%s.lua", name);
 
     if (frame != NULL) {
-        if (fr_lua_verbs_push_library_env(state, frame->label, name, &err) != FR_OK) {
+        if (fr_lua_verbs_push_library_env(state, frame->dependent, name, &err) != FR_OK) {
             return luaL_error(state, "%s", err.message);
         }
     } else {
@@ -1310,6 +1312,7 @@ static int require_across_plugins(lua_State *state, const char *name, const char
     lua_pushlightuserdata(state, &call);
     owner_stack[owner_stack_depth].deps = owner;
     owner_stack[owner_stack_depth].label = owner_label;
+    owner_stack[owner_stack_depth].dependent = call.dependent;
     owner_stack_depth++;
     int status = lua_pcall(state, 1, 1, 0);
     owner_stack_depth--;

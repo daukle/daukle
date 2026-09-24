@@ -342,7 +342,7 @@ static int record_exports(lua_State *state, fr_plugin_declaration *declaration) 
         }
         const char *name = lua_tostring(state, -1);
         fr_error name_err;
-        if (fr_plugin_module_name_check(name, &name_err) != FR_OK) {
+        if (fr_plugin_export_name_check(name, &name_err) != FR_OK) {
             return luaL_error(state, "%s \"%s\": %s", declaration->kind, declaration->label,
                               name_err.message);
         }
@@ -416,6 +416,18 @@ static int record_requires(lua_State *state, fr_plugin_declaration *declaration)
             return luaL_error(state, "plugin \"%s\": the alias \"%s\" may hold only letters, digits,"
                                      " \"-\" and \"_\"",
                               declaration->label, alias);
+        }
+        if (strlen(alias) == 1) {
+            /* "c:x" is the Windows drive-letter shape fr_lua_sandbox_climbs_out
+               refuses before a require ever reaches the colon split, so a
+               one-letter alias could declare a dependency daukle.require could
+               never name. The acquisition spec records the identical hazard for
+               a one-letter resolver label. */
+            return luaL_error(state, "plugin \"%s\": the alias \"%s\" is one letter, and a letter"
+                                     " before \":\" is a Windows drive letter, so"
+                                     " daukle.require(\"%s:...\") could never reach it. Use a longer"
+                                     " alias",
+                              declaration->label, alias, alias);
         }
         if (strlen(alias) > FR_PLUGIN_MAX_ALIAS) {
             return luaL_error(state, "plugin \"%s\": the alias \"%s\" is longer than %d bytes",
@@ -617,6 +629,14 @@ const fr_plugin_report *fr_plugins_report(void) {
     return &view;
 }
 
+size_t fr_plugins_report_declared_count(const fr_plugin_report *report) {
+    size_t count = 0;
+    for (size_t index = 0; index < report->count; index++) {
+        if (report->entries[index].required_by == NULL) count++;
+    }
+    return count;
+}
+
 /* Appends one entry, owning copies of everything it stores: entry and declaration are both
    about to be freed by their callers (fr_plugins_free and fr_plugins_free_declaration), so
    nothing here may keep a pointer into either. origin is the url a URL or resolved entry fetched, or the
@@ -682,7 +702,7 @@ static int append_dependency_report_entry(const fr_plugin_deps_row *row, fr_erro
 
     fr_plugin_report_entry *slot = &report_entries[report_count];
     memset(slot, 0, sizeof *slot);
-    slot->kind = FR_PLUGIN_URL;
+    slot->kind = row->kind;
     memcpy(slot->sha256, row->digest, sizeof slot->sha256);
     slot->overridden = row->overridden;
 
@@ -725,17 +745,27 @@ static int compare_deps_rows(const void *left, const void *right) {
 }
 
 static int append_dependency_report_rows(fr_plugin_deps *deps, fr_error *err) {
-    size_t count = fr_plugin_deps_count(deps);
+    size_t count = fr_plugin_deps_row_count(deps);
     if (count == 0) return FR_OK;
 
-    fr_plugin_deps_row rows[FR_PLUGIN_DEPS_MAX_NODES];
+    /* One row per binding rather than one per node, so this can exceed
+       FR_PLUGIN_DEPS_MAX_NODES when a url is bound under more than one alias:
+       heap-allocated because the worst case (every node's own requires table
+       full) is larger than a stack buffer should carry. */
+    fr_plugin_deps_row *rows = malloc(count * sizeof *rows);
+    if (rows == NULL) {
+        fr_error_set(err, "out of memory recording dependencies in the report");
+        return FR_ERR;
+    }
     for (size_t index = 0; index < count; index++) fr_plugin_deps_row_at(deps, index, &rows[index]);
     qsort(rows, count, sizeof *rows, compare_deps_rows);
 
-    for (size_t index = 0; index < count; index++) {
-        if (append_dependency_report_entry(&rows[index], err) != FR_OK) return FR_ERR;
+    int status = FR_OK;
+    for (size_t index = 0; index < count && status == FR_OK; index++) {
+        status = append_dependency_report_entry(&rows[index], err);
     }
-    return FR_OK;
+    free(rows);
+    return status;
 }
 
 static int unknown_resolver(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,

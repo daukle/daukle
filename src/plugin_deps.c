@@ -39,6 +39,7 @@ struct deps_node {
     char *label;              /* the alias it was first named by, for messages */
     char *required_by;        /* and who named it, for a disagreement over its pin */
     const char *required_by_kind;
+    fr_plugin_kind kind;       /* FR_PLUGIN_URL for an ordinary fetch, whatever the override used otherwise */
     char digest[65];
     char *text;
     size_t length;
@@ -223,6 +224,7 @@ static int acquire_override(deps_graph *graph, fr_plugin_deps *view, size_t dept
         fr_plugins_free_entry(&entry);
         return FR_ERR;
     }
+    fr_plugin_kind kind = entry.kind;
 
     char *text = NULL;
     char *origin = NULL;
@@ -244,6 +246,7 @@ static int acquire_override(deps_graph *graph, fr_plugin_deps *view, size_t dept
     node->parent = DEPS_NONE;
     node->depth = depth;
     node->overridden = 1;
+    node->kind = kind;
     snprintf(node->digest, sizeof node->digest, "%s", digest);
     node->url = origin;
     node->label = fr_dup_string(requirement->alias);
@@ -340,6 +343,7 @@ static int acquire_one(deps_graph *graph, fr_plugin_deps *view, size_t parent, s
     node->length = length;
     node->parent = parent;
     node->depth = depth;
+    node->kind = FR_PLUGIN_URL;
     snprintf(node->digest, sizeof node->digest, "%s", digest);
     node->url = fr_dup_string(url);
     node->label = fr_dup_string(requirement->alias);
@@ -529,7 +533,10 @@ int fr_plugin_deps_own_member(fr_plugin_deps *deps, const char *member, const ch
     *out_text = NULL;
     *out_length = 0;
 
-    if (deps == NULL || deps->artifact == NULL) {
+    /* deps->artifact is never NULL here: the only caller passes an owner
+       frame's view, which is always an acquired node's own view, never the
+       root view fr_plugin_deps_acquire returns. */
+    if (deps == NULL) {
         fr_error_set(err, "daukle.require(\"%s\"): no required artifact owns this module", member);
         return FR_ERR;
     }
@@ -544,18 +551,52 @@ size_t fr_plugin_deps_count(const fr_plugin_deps *deps) {
     return deps != NULL ? deps->graph->count : 0;
 }
 
+size_t fr_plugin_deps_row_count(const fr_plugin_deps *deps) {
+    if (deps == NULL) return 0;
+    size_t count = deps->binding_count;
+    const deps_graph *graph = deps->graph;
+    for (size_t index = 0; index < graph->count; index++) {
+        count += graph->nodes[index].view.binding_count;
+    }
+    return count;
+}
+
+/* Finds the view (the root's own, or one acquired node's) that holds the binding at index, walking
+   the same views fr_plugin_deps_row_count sums so the two always agree on how many rows there are. */
+static const fr_plugin_deps *view_for_row(const fr_plugin_deps *deps, size_t *index) {
+    if (*index < deps->binding_count) return deps;
+    *index -= deps->binding_count;
+
+    const deps_graph *graph = deps->graph;
+    for (size_t node_index = 0; node_index < graph->count; node_index++) {
+        const fr_plugin_deps *view = &graph->nodes[node_index].view;
+        if (*index < view->binding_count) return view;
+        *index -= view->binding_count;
+    }
+    return NULL;
+}
+
+/* One row per binding rather than one per node: two dependents naming the same url are two
+   bindings, and reporting them as one would keep whichever dependent's alias a Lua table walk
+   reached first, silently dropping the other's attribution. The artifact fields (url, digest, uses,
+   kind, overridden) come from the node the binding names; alias and required_by come from the
+   binding's own view, so every row is attributed to whoever actually named it. */
 void fr_plugin_deps_row_at(const fr_plugin_deps *deps, size_t index, fr_plugin_deps_row *out) {
     if (deps == NULL) {
         memset(out, 0, sizeof *out);
         return;
     }
-    const deps_node *node = &deps->graph->nodes[index];
+    const fr_plugin_deps *view = view_for_row(deps, &index);
+    const deps_binding *binding = &view->bindings[index];
+    const deps_node *node = &deps->graph->nodes[binding->node];
+
     out->url = node->url;
-    out->alias = node->label;
-    out->required_by = node->required_by;
+    out->alias = binding->alias;
+    out->required_by = view->label;
     out->digest = node->digest;
     out->uses = (const char *const *) node->declaration.uses;
     out->uses_count = node->declaration.uses_count;
+    out->kind = node->kind;
     out->overridden = node->overridden;
 }
 

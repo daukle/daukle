@@ -55,9 +55,13 @@ int fr_plugin_deps_own_member(fr_plugin_deps *deps, const char *member, const ch
    fr_plugin_deps_close. */
 const char *fr_plugin_deps_label(const fr_plugin_deps *deps);
 
-/* One acquired node's reportable fields, borrowed from the acquisition and invalid after
-   fr_plugin_deps_close. digest is the hex sha256 computed while acquiring the node (verified
-   against its pin when it had one), never recomputed by a caller building a report from it. */
+/* One binding's reportable fields, borrowed from the acquisition and invalid after
+   fr_plugin_deps_close. url, digest, uses, kind and overridden describe the artifact the binding
+   names; alias and required_by describe the binding itself, so a url two dependents both name
+   prints one row per dependent, never one row shared between them. digest is the hex sha256
+   computed while acquiring the artifact (verified against its pin when it had one), never
+   recomputed by a caller building a report from it. kind is FR_PLUGIN_URL for an ordinary fetch and
+   whatever the manifest override actually used otherwise, never assumed. */
 typedef struct {
     const char *url;
     const char *alias;
@@ -65,16 +69,23 @@ typedef struct {
     const char *digest;
     const char *const *uses;
     size_t uses_count;
+    fr_plugin_kind kind;
     int overridden;
 } fr_plugin_deps_row;
 
-/* How many artifacts fr_plugin_deps_acquire acquired transitively (every depth, root's own view
-   included). 0 for deps == NULL or a plugin that requires nothing. */
+/* How many artifacts fr_plugin_deps_acquire acquired transitively (every depth, not counting the
+   root view fr_plugin_deps_acquire itself returned, which belongs to no artifact). 0 for
+   deps == NULL or a plugin that requires nothing. */
 size_t fr_plugin_deps_count(const fr_plugin_deps *deps);
 
-/* Fills out with the node at index's reportable fields. index must be < fr_plugin_deps_count(deps).
-   Rows come out in acquisition order, which fr_plugin_deps_acquire's Lua table walk leaves
-   unspecified: a caller building a report from them sorts before it settles on one. */
+/* How many (dependent, alias) bindings the acquisition holds: the root's own requires plus every
+   acquired artifact's own requires. A url reached by two dependents is two bindings even though it
+   is one artifact, because a binding is what a report row means. 0 for deps == NULL. */
+size_t fr_plugin_deps_row_count(const fr_plugin_deps *deps);
+
+/* Fills out with the binding at index's reportable fields. index must be < fr_plugin_deps_row_count
+   (deps). Rows come out in an order fr_plugin_deps_acquire's Lua table walks leave unspecified: a
+   caller building a report from them sorts before it settles on one. */
 void fr_plugin_deps_row_at(const fr_plugin_deps *deps, size_t index, fr_plugin_deps_row *out);
 
 void fr_plugin_deps_close(fr_plugin_deps *deps);

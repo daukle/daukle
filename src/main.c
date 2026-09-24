@@ -566,7 +566,7 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
     fr_task_plan plan;
     if (fr_tasks_plan(&set, task_name, &plan, &err) != FR_OK) {
         int unknown = fr_tasks_find(&set, task_name) == NULL;
-        size_t plugin_count = fr_plugins_report()->count;
+        size_t plugin_count = fr_plugins_report_declared_count(fr_plugins_report());
         fr_tasks_set_free(&set);
         fr_session_close(&session);
         report_error(&err, verbose);

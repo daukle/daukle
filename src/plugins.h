@@ -72,9 +72,8 @@ typedef struct {
     char *sha256;
 } fr_plugin_requirement;
 
-/* What one daukle.plugin{...} call declared: task 3 fills exports and task 4
-   consumes requires, but the reader below is one struct for both rather than
-   a second walk over the same table per key. */
+/* What one daukle.plugin{...} call declared: uses, exports and requires all come
+   from one struct rather than a second walk over the table per key. */
 typedef struct {
     const char *kind;    /* "plugin" or "resolver" */
     const char *label;
@@ -166,6 +165,12 @@ int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const c
    every call so a manifest declaring no plugins reports none, not whatever the
    previous manifest loaded. Never NULL; count is 0 before any load. */
 const fr_plugin_report *fr_plugins_report(void);
+
+/* How many of report's rows are plugins the manifest itself declared, rather than an artifact one
+   of them required: a dependency row always carries a non-NULL required_by, so counting the rows
+   that do not is what separates "this project declares N plugins" from "this project's plugins and
+   their dependencies come to N artifacts". */
+size_t fr_plugins_report_declared_count(const fr_plugin_report *report);
 
 /* Frees every copy fr_plugins_report holds. Called alongside
    fr_lua_runtime_shutdown once a caller is done reading the report, and

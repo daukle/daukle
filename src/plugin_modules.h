@@ -38,10 +38,15 @@ int fr_plugin_source_entry(fr_plugin_source *source, const char **out_text, size
 int fr_plugin_source_member(fr_plugin_source *source, const char *module_name,
                             const char **out_text, size_t *out_length, fr_error *err);
 
-/* The rules a module name obeys, callable from outside because an "exports"
-   entry is a module name declared somewhere else and is refused where it is
-   written rather than at the require that misses it. */
+/* The rules a module name obeys, worded as a daukle.require(...) refusal: for the
+   name an author actually wrote in a require call, so the refusal points at it. */
 int fr_plugin_module_name_check(const char *name, fr_error *err);
+
+/* The same rules, worded as an exports[...] refusal: callable from outside because
+   an "exports" entry is a module name declared somewhere else and must be refused
+   where it is written, not at the require that later misses it, and an author
+   reading the message should be sent back to the exports list, not to daukle.require. */
+int fr_plugin_export_name_check(const char *name, fr_error *err);
 
 void fr_plugin_source_close(fr_plugin_source *source);
 
