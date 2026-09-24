@@ -845,9 +845,6 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
         status = read_declaration(state, chunk, chunk_length, origin, &declaration, err);
     }
 
-    /* Acquired before the chunk runs and closed after it returns: the chunk's
-       daukle.require of another plugin's module reads from this, and nothing
-       it holds may outlive the load. */
     fr_plugin_deps *deps = NULL;
     if (status == FR_OK) {
         status = fr_plugin_deps_acquire(&declaration, entry->overrides, resolvers, resolver_count,

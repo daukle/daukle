@@ -229,8 +229,6 @@ TEST a_module_name_past_the_length_limit_is_refused(void) {
     PASS();
 }
 
-/* The syntax child spec 6 will use is refused by name now, so arriving later is
-   not a breaking change. */
 /* One colon separates a plugin from its module, and config_lua.c splits on the
    first one before it gets here, so what reaches this check is the member half
    alone: a second colon in it names nothing. */
