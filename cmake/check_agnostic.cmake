@@ -1,11 +1,12 @@
-# plugins.c/.h and resolvers.c/.h stay out: their own manifest-table key text collides with a
-# forbidden literal below. The forge-host rule further down reads every file in src/, so they are
-# still covered against naming a forge.
+# The files that decide where a plugin comes from carry the "path" manifest-table key text, which
+# collides with a forbidden literal below, so they stay out of this list. The forge-host rule
+# further down reads every file in src/, so they remain covered against naming a host.
 set(CORE_FILES
     resolve.c resolve.h manifest.c manifest.h registry.c registry.h
     types.h sync.c sync.h main.c cli.c cli.h config.c config.h
     derived.c derived.h generate.c generate.h tasks.c tasks.h
-    plugin_fetch.c plugin_fetch.h tar.c tar.h plugin_modules.c plugin_modules.h)
+    plugin_fetch.c plugin_fetch.h tar.c tar.h plugin_modules.c plugin_modules.h
+    plugin_deps.c plugin_deps.h)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
@@ -29,10 +30,9 @@ if(FINDINGS)
     message(FATAL_ERROR "core names a plugin")
 endif()
 
-# Every file in src/, not just CORE_FILES: the three files excluded above for
-# carrying the "path" key are exactly the ones that decide where a plugin comes
-# from, so the list that catches a hardcoded host cannot be the list that
-# excludes them.
+# Every file in src/, not just CORE_FILES: the files excluded above carry the
+# "path" key precisely because they decide where a plugin comes from, so the
+# list that catches a hardcoded host cannot be the list that excludes them.
 file(GLOB ALL_SOURCES "${SOURCE_DIR}/src/*.c" "${SOURCE_DIR}/src/*.h")
 set(FORBIDDEN_HOSTS "api\\.github\\.com" "github\\.com" "gitlab" "bitbucket")
 
