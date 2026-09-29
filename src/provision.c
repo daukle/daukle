@@ -237,8 +237,9 @@ int fr_provision(const char *url, const char *sha256_hex, fr_provision_result *o
         return FR_ERR;
     }
 
-    char archive_path[1088];
-    char tree_path[1088];
+    /* Sized from the directory they extend, so neither call can truncate. */
+    char archive_path[sizeof temporary + sizeof "/archive"];
+    char tree_path[sizeof temporary + sizeof "/tree"];
     snprintf(archive_path, sizeof archive_path, "%s/archive", temporary);
     snprintf(tree_path, sizeof tree_path, "%s/tree", temporary);
 
