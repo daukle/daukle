@@ -492,8 +492,108 @@ TEST a_contained_symlink_is_created_on_posix_and_named_on_windows(void) {
     PASS();
 }
 
+/* Three members, each contained when judged on its own: "a/b" -> ".." has
+   depth 1 and climbs one, "a/b/c" -> ".." has depth 2 and climbs one, and a
+   plain file needs no judgement at all. Written in order they walk the file to
+   the cache root's parent, which only a record of the links already created can
+   see. The assertion is on daukle's own refusal (ruling 16): Windows creates no
+   link, so "nothing appeared" would pass there whatever the code decided. */
+TEST a_chain_of_symlinks_cannot_walk_a_later_member_out(void) {
+    static char failure[768];
+    char enclosing[1024];
+    snprintf(enclosing, sizeof enclosing, "%s/unpack-chain-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_remove_tree(enclosing);
+    fr_test_make_directory(enclosing);
+
+    char destination[1152];
+    snprintf(destination, sizeof destination, "%s/tree", enclosing);
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t first = 0;
+    size_t used = fr_test_tar_append(buffer, first, "a/b", '2', "", 0);
+    memcpy(buffer + first + 157, "..", 2);
+    fr_test_tar_fix_checksum(buffer, first);
+
+    size_t second = used;
+    used = fr_test_tar_append(buffer, second, "a/b/c", '2', "", 0);
+    memcpy(buffer + second + 157, "..", 2);
+    fr_test_tar_fix_checksum(buffer, second);
+
+    used = fr_test_tar_append(buffer, used, "a/b/c/evil", '0', "owned", 5);
+    fr_test_tar_end(buffer, used);
+
+    fr_archive *archive = NULL;
+    fr_error err;
+    err.message[0] = '\0';
+    int opened = open_archive_from_bytes(buffer, sizeof buffer, &archive, &err);
+    fr_unpack_report report;
+    int result = opened == FR_OK
+               ? fr_unpack(archive, destination, &FR_UNPACK_DEFAULTS, &report, &err)
+               : FR_ERR;
+    if (archive != NULL) fr_archive_close(archive);
+
+    char escaped[1152];
+    snprintf(escaped, sizeof escaped, "%s/evil", enclosing);
+    char probe[16];
+    int landed_outside = read_back(escaped, probe, sizeof probe) >= 0;
+
+    int named_the_link = strstr(err.message, "through the symlink") != NULL
+                      && strstr(err.message, "a/b") != NULL;
+    snprintf(failure, sizeof failure, "opened %d, result %d, outside %d, err \"%s\"", opened,
+             result, landed_outside, err.message);
+    fr_test_remove_tree(enclosing);
+
+    ASSERT_EQm(failure, FR_OK, opened);
+    ASSERT_EQm(failure, FR_ERR, result);
+    ASSERTm(failure, named_the_link);
+    ASSERTm(failure, !landed_outside);
+    PASS();
+}
+
+/* The ceiling bounds what the reader expands, and the reader consumes (and for
+   a .tar.gz inflates) the payload of every typeflag. A member counted only when
+   it is a regular file leaves the bound naming a number it does not enforce. */
+TEST a_non_file_member_counts_against_the_expansion_ceiling(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-dirbomb-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_remove_tree(destination);
+    fr_test_make_directory(destination);
+
+    fr_unpack_limits limits = FR_UNPACK_DEFAULTS;
+    limits.max_total_bytes = 1000;
+
+    static char payload[600];
+    memset(payload, 'a', sizeof payload);
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = fr_test_tar_append(buffer, 0, "one/", '5', payload, sizeof payload);
+    used = fr_test_tar_append(buffer, used, "two/", '5', payload, sizeof payload);
+    fr_test_tar_end(buffer, used);
+
+    fr_archive *archive = NULL;
+    fr_error err;
+    err.message[0] = '\0';
+    int opened = open_archive_from_bytes(buffer, sizeof buffer, &archive, &err);
+    fr_unpack_report report;
+    int result = opened == FR_OK ? fr_unpack(archive, destination, &limits, &report, &err) : FR_ERR;
+    if (archive != NULL) fr_archive_close(archive);
+    snprintf(message, sizeof message, "opened %d, err \"%s\"", opened, err.message);
+    fr_test_remove_tree(destination);
+
+    ASSERT_EQm(message, FR_ERR, result);
+    ASSERTm(message, strstr(message, "1000") != NULL);
+    PASS();
+}
+
 TEST a_tar_members_execute_bit_reaches_the_file(void) {
-#ifndef _WIN32
+#ifdef _WIN32
+    SKIPm("apply_permissions carries no mode on Windows, so there is nothing here to assert");
+#else
     static char message[512];
     char destination[1024];
     snprintf(destination, sizeof destination, "%s/unpack-mode-%d", fr_test_temp_base(),
@@ -538,8 +638,8 @@ TEST a_tar_members_execute_bit_reaches_the_file(void) {
     ASSERT_EQm(message, FR_OK, result);
     ASSERTm(message, runnable_executable);
     ASSERTm(message, plain_not_executable);
-#endif
     PASS();
+#endif
 }
 
 TEST a_unix_produced_zip_carries_its_execute_bit_and_a_windows_one_does_not(void) {
@@ -663,6 +763,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_symlink_with_an_absolute_target_is_refused);
     RUN_TEST(a_symlink_whose_relative_target_climbs_out_is_refused);
     RUN_TEST(a_contained_symlink_is_created_on_posix_and_named_on_windows);
+    RUN_TEST(a_chain_of_symlinks_cannot_walk_a_later_member_out);
+    RUN_TEST(a_non_file_member_counts_against_the_expansion_ceiling);
     RUN_TEST(a_tar_members_execute_bit_reaches_the_file);
     RUN_TEST(a_unix_produced_zip_carries_its_execute_bit_and_a_windows_one_does_not);
     RUN_TEST(a_setuid_member_is_refused_by_name);

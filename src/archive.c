@@ -258,6 +258,7 @@ static void publish(fr_archive *archive, fr_member_kind kind, size_t length, int
     archive->member.kind = kind;
     archive->member.bytes = kind == FR_MEMBER_FILE ? archive->member_bytes : NULL;
     archive->member.length = kind == FR_MEMBER_FILE ? length : 0;
+    archive->member.payload_length = length;
     archive->member.link_target = kind == FR_MEMBER_SYMLINK ? archive->link_target : NULL;
     archive->member.executable = executable;
     archive->member.setuid = setuid;

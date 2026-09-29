@@ -18,6 +18,12 @@ typedef struct {
     fr_member_kind kind;
     const char *bytes;
     size_t length;
+    /* What the archive made the reader consume for this member, and for a
+       .tar.gz inflate, whatever its kind. length is zero for everything but a
+       regular file, so a caller bounding an archive's expansion has to bound
+       this instead: a tarball of directory members each declaring 256 MiB
+       inflates a terabyte while length never moves. */
+    size_t payload_length;
     const char *link_target;
     int executable;
     /* Set-user-ID or set-group-ID, reported rather than masked so a caller can

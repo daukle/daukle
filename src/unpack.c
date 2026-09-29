@@ -11,6 +11,7 @@
 #ifdef _WIN32
 #include <direct.h>
 #else
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -238,9 +239,25 @@ static int apply_permissions(const char *native, const fr_archive_member *member
 #endif
 }
 
+/* @implNote O_NOFOLLOW is belt and braces over the ancestor check below: it is
+   what stops a file landing THROUGH a link on the final component even if that
+   check is somehow wrong. Windows creates no symlink, so plain fopen there. */
+static FILE *open_new_file(const char *native) {
+#ifdef _WIN32
+    return fopen(native, "wb");
+#else
+    int descriptor = open(native, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0666);
+    if (descriptor < 0) return NULL;
+
+    FILE *file = fdopen(descriptor, "wb");
+    if (file == NULL) close(descriptor);
+    return file;
+#endif
+}
+
 static int write_file_bytes(const char *native, const char *bytes, size_t length,
                             const char *relative, fr_error *err) {
-    FILE *file = fopen(native, "wb");
+    FILE *file = open_new_file(native);
     if (file == NULL) {
         fr_error_set(err, "cannot create the member \"%s\"", relative);
         return FR_ERR;
@@ -315,6 +332,17 @@ static int name_set_add(name_set *set, const char *name) {
     return 1;
 }
 
+static int name_set_contains(const name_set *set, const char *name) {
+    if (set->slots == NULL) return 0;
+
+    size_t index = (size_t) name_hash(name) & set->mask;
+    while (set->slots[index] != NULL) {
+        if (strcmp(set->slots[index], name) == 0) return 1;
+        index = (index + 1) & set->mask;
+    }
+    return 0;
+}
+
 static void name_set_free(name_set *set) {
     for (size_t index = 0; set->slots != NULL && index <= set->mask; index++) {
         free(set->slots[index]);
@@ -347,19 +375,73 @@ static int refuse_unwritable_name(const fr_archive_member *member,
     return FR_OK;
 }
 
+/* @implNote The lexical target check is judged per member, but an earlier
+   symlink changes what a later member's path MEANS: "a/b" -> ".." is contained
+   on its own, and "a/b/c/evil" written through it is not. Every link daukle
+   creates is recorded here and no member may be reached through one, which
+   closes the chain the per-member check cannot see. A fresh temporary tree with
+   a single writer makes the record complete and unraceable. The name is
+   recorded on Windows too, where no link is created, so the refusal is the same
+   sentence on both platforms rather than one the host happens to provide. */
+static int refuse_reaching_through_a_link(const char *name, const name_set *links,
+                                          fr_error *err) {
+    char prefix[UNPACK_MAX_NATIVE];
+    size_t length = strlen(name);
+    if (length >= sizeof prefix) {
+        fr_error_set(err, "the member \"%s\" is too long to check against the links already"
+                          " created", name);
+        return FR_ERR;
+    }
+    memcpy(prefix, name, length + 1);
+
+    for (size_t index = 0; index < length; index++) {
+        if (prefix[index] != '/') continue;
+
+        prefix[index] = '\0';
+        int through_a_link = name_set_contains(links, prefix);
+        prefix[index] = '/';
+        if (through_a_link) {
+            fr_error_set(err, "the member \"%s\" would be written through the symlink \"%.*s\"",
+                         name, (int) index, name);
+            return FR_ERR;
+        }
+    }
+    return FR_OK;
+}
+
+/* A member name may carry the one trailing separator the name check allows,
+   and an ancestor prefix never does, so it is stripped before recording. */
+static int record_link(const char *name, name_set *links, fr_error *err) {
+    char trimmed[UNPACK_MAX_NATIVE];
+    size_t length = strlen(name);
+    while (length > 0 && name[length - 1] == '/') length--;
+    if (length == 0 || length >= sizeof trimmed) {
+        fr_error_set(err, "the symlink member \"%s\" cannot be recorded", name);
+        return FR_ERR;
+    }
+
+    memcpy(trimmed, name, length);
+    trimmed[length] = '\0';
+    if (name_set_add(links, trimmed) < 0) {
+        fr_error_set(err, "out of memory while unpacking \"%s\"", name);
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
 static int refuse_oversized_member(const fr_archive_member *member,
                                    const fr_unpack_limits *limits, size_t *total, fr_error *err) {
-    if (member->length > limits->max_member_bytes) {
+    if (member->payload_length > limits->max_member_bytes) {
         fr_error_set(err, "the member \"%s\" is larger than the %zu byte limit", member->name,
                      limits->max_member_bytes);
         return FR_ERR;
     }
-    if (member->length > limits->max_total_bytes - *total) {
+    if (member->payload_length > limits->max_total_bytes - *total) {
         fr_error_set(err, "the archive expands past the %zu byte limit", limits->max_total_bytes);
         return FR_ERR;
     }
 
-    *total += member->length;
+    *total += member->payload_length;
     return FR_OK;
 }
 
@@ -425,12 +507,19 @@ static int write_symlink_member(const fr_archive_member *member, const native_ro
 }
 
 static int write_member(const fr_archive_member *member, const native_root *root,
-                        const fr_unpack_limits *limits, name_set *seen, size_t *total,
-                        fr_unpack_report *report, fr_error *err) {
+                        const fr_unpack_limits *limits, name_set *seen, name_set *links,
+                        size_t *total, fr_unpack_report *report, fr_error *err) {
     if (refuse_unwritable_name(member, limits, seen, err) != FR_OK) return FR_ERR;
+    if (refuse_reaching_through_a_link(member->name, links, err) != FR_OK) return FR_ERR;
+    /* Counted before the kind is looked at, because the reader has already
+       consumed (and for a .tar.gz inflated) the payload of every kind, so a
+       ceiling that skipped a directory member would not bound the expansion it
+       claims to. */
+    if (refuse_oversized_member(member, limits, total, err) != FR_OK) return FR_ERR;
 
     if (member->kind == FR_MEMBER_SYMLINK) {
-        return write_symlink_member(member, root, report, err);
+        if (write_symlink_member(member, root, report, err) != FR_OK) return FR_ERR;
+        return record_link(member->name, links, err);
     }
     if (member->kind == FR_MEMBER_DIRECTORY) {
         return write_directory_member(member, root, report, err);
@@ -443,7 +532,6 @@ static int write_member(const fr_archive_member *member, const native_root *root
         fr_error_set(err, "the member \"%s\" carries a setuid or setgid bit", member->name);
         return FR_ERR;
     }
-    if (refuse_oversized_member(member, limits, total, err) != FR_OK) return FR_ERR;
     return write_file_member(member, root, report, err);
 }
 
@@ -459,6 +547,8 @@ int fr_unpack(fr_archive *archive, const char *destination, const fr_unpack_limi
 
     name_set seen;
     memset(&seen, 0, sizeof seen);
+    name_set links;
+    memset(&links, 0, sizeof links);
 
     size_t members = 0;
     size_t total = 0;
@@ -478,10 +568,11 @@ int fr_unpack(fr_archive *archive, const char *destination, const fr_unpack_limi
         }
         members++;
 
-        result = write_member(member, &root, limits, &seen, &total, report, err);
+        result = write_member(member, &root, limits, &seen, &links, &total, report, err);
         if (result != FR_OK) break;
     }
 
     name_set_free(&seen);
+    name_set_free(&links);
     return result;
 }
