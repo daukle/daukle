@@ -5,12 +5,17 @@
 
 /* label and url are the two things a plugin can make daukle print; digest is
    always core's own, and empty on a row for an installed tool (there is
-   nothing to pin an already-installed binary against). */
+   nothing to pin an already-installed binary against). provisioned tells a
+   renderer which of those two cases it has: an empty digest alone cannot,
+   since it is also what a provisioned row would show if its digest were
+   somehow blank, and a report that cannot tell "installed" from
+   "provisioned, digest missing" defeats the reason it exists. */
 typedef struct {
     char label[128];
     char url[1024];
     char digest[65];
     int cached;
+    int provisioned;
 } fr_toolreport_row;
 
 /* Refuses any control character, including every ANSI escape: a label is

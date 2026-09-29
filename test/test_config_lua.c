@@ -712,6 +712,34 @@ TEST a_provisioned_root_is_readable_as_a_toolreport_row(void) {
     ASSERT_STR_EQ(label, row->label);
     ASSERT_STR_EQ(url, row->url);
     ASSERT_STR_EQ(digest, row->digest);
+    ASSERT_EQ(1, row->provisioned);
+    PASS();
+}
+
+/* print_toolreport renders an installed row and a provisioned row
+   differently (a path with no digest versus a url with one), so the row
+   itself has to keep saying which one it is: a blank digest alone means
+   the same thing on both kinds and cannot tell a reader apart. */
+TEST an_installed_tool_is_readable_as_a_toolreport_row_with_no_provisioned_flag(void) {
+    static char name[128];
+    static char path[1024];
+    snprintf(name, sizeof name, "gcc");
+    snprintf(path, sizeof path, "/usr/bin/gcc");
+
+    fr_toolreport_reset();
+    fr_toolreport_used_installed(name, NULL, path);
+
+    size_t count = fr_toolreport_row_count();
+    const fr_toolreport_row *row = count == 1 ? fr_toolreport_row_at(0) : NULL;
+
+    fr_toolreport_reset();
+
+    ASSERT_EQ(1u, (unsigned) count);
+    ASSERT(row != NULL);
+    ASSERT_STR_EQ(name, row->label);
+    ASSERT_STR_EQ(path, row->url);
+    ASSERT_STR_EQ("", row->digest);
+    ASSERT_EQ(0, row->provisioned);
     PASS();
 }
 
@@ -2180,6 +2208,7 @@ int main(int argc, char **argv) {
     RUN_TEST(the_generate_context_carries_the_toolchain_version);
     RUN_TEST(the_generate_context_still_hides_dependencies_from_config);
     RUN_TEST(a_provisioned_root_is_readable_as_a_toolreport_row);
+    RUN_TEST(an_installed_tool_is_readable_as_a_toolreport_row_with_no_provisioned_flag);
     RUN_TEST(a_toolchain_generate_must_return_a_table);
     RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_path);
     RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_contents);

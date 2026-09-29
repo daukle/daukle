@@ -175,7 +175,10 @@ static void print_plugin_report(void) {
 /* Mirrors print_plugin_report's shape so the two reports read as one
    program's output: a "daukle: " header, then two-space-indented rows. The
    row table is toolreport.c's, filled as a toolchain plugin provisions or
-   reuses a tool during this run. */
+   reuses a tool during this run. An installed row's url field actually holds
+   its path (see fr_toolreport_used_installed) and carries no digest, so it
+   is rendered without one rather than beside a blank "sha256 " that would
+   read as a provisioned row missing its pin. */
 static void print_toolreport(void) {
     size_t count = fr_toolreport_row_count();
     if (count == 0) return;
@@ -183,7 +186,11 @@ static void print_toolreport(void) {
     printf("daukle: tools\n");
     for (size_t index = 0; index < count; index++) {
         const fr_toolreport_row *row = fr_toolreport_row_at(index);
-        printf("  %s: %s, sha256 %s\n", row->label, row->url, row->digest);
+        if (row->provisioned) {
+            printf("  %s: %s, sha256 %s\n", row->label, row->url, row->digest);
+        } else {
+            printf("  %s: %s\n", row->label, row->url);
+        }
     }
 }
 

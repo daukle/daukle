@@ -77,6 +77,7 @@ static void record(row_kind kind, const char *label, const char *url, const char
     snprintf(row->url, sizeof row->url, "%s", url);
     snprintf(row->digest, sizeof row->digest, "%s", digest);
     row->cached = cached;
+    row->provisioned = kind == ROW_PROVISIONED;
     g_kinds[g_row_count] = kind;
     g_row_count++;
 }
