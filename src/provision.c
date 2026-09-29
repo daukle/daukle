@@ -160,6 +160,31 @@ static int current_process_id(void) {
 #endif
 }
 
+static int is_safe_host_character(char character) {
+    return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'z')
+        || (character >= 'A' && character <= 'Z') || character == '-' || character == '_';
+}
+
+/* @implNote A pid alone names a temporary tree uniquely on ONE machine, and the
+   cache is routinely a home directory shared over NFS or SMB. Two machines that
+   collide there delete each other's in-flight tree while make_parent_directories
+   recreates as it goes, and the loser can then rename an INCOMPLETE tree under
+   the content key, which breaks "a present directory is a complete one"
+   permanently and with no digest re-check to catch it. */
+static void host_component(char *out, size_t size) {
+#ifdef _WIN32
+    DWORD length = (DWORD) size;
+    if (!GetComputerNameA(out, &length)) out[0] = '\0';
+#else
+    if (gethostname(out, size) != 0) out[0] = '\0';
+    out[size - 1] = '\0';
+#endif
+    for (char *cursor = out; *cursor != '\0'; cursor++) {
+        if (!is_safe_host_character(*cursor)) *cursor = '-';
+    }
+    if (out[0] == '\0') snprintf(out, size, "host");
+}
+
 static int fetch_and_verify(const char *url, const char *sha256_hex, const char *archive_path,
                             fr_error *err) {
     fr_sha256 digest;
@@ -222,8 +247,11 @@ int fr_provision(const char *url, const char *sha256_hex, fr_provision_result *o
     }
     fr_cache_make_directories(toolchains);
 
+    char host[64];
+    host_component(host, sizeof host);
+
     char temporary[1024];
-    int written = snprintf(temporary, sizeof temporary, "%s/.partial-%d-%u", toolchains,
+    int written = snprintf(temporary, sizeof temporary, "%s/.partial-%s-%d-%u", toolchains, host,
                            current_process_id(), next_attempt());
     if (written < 0 || (size_t) written >= sizeof temporary) {
         fr_error_set(err, "the temporary provisioning directory is too long");
