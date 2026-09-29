@@ -11,7 +11,7 @@ resolver.
 
 Living document. Update it in the same commit as the change it describes.
 
-Verified against disk on 2026-09-23.
+Verified against disk on 2026-09-29.
 
 ---
 
@@ -91,6 +91,11 @@ the client tier's rules.
 | spawning a process on POSIX with `fork`/`execv`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `exec_posix.c`, tested by `test/test_exec.c` | building the command line, which stays in `exec.c` because Windows needs it too |
 | spawning a process on Windows with `CreateProcessA`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `exec_win32.c`, tested by `test/test_exec.c` | building the command line, which it calls into `exec.c` for |
 | resolving an executable name to an absolute path by searching the host's `PATH` | `tool.c`, tested by `test/test_tool.c` | provisioning a missing tool. Discovery only, per spec section 3.1; child spec 4 extends the same `fr_tool_resolve` with that later. Reachable from Lua through `daukle.tool`, which returns an unforgeable full-userdata handle, never the path itself. A name that resolves only to a `.bat` or `.cmd` is refused naming the file, since starting one needs `cmd.exe` |
+| enumerating and decompressing a tar, a tar.gz or a zip: bytes sniffed for their kind in, an ordered stream of members out | `src/archive.c`, tested by `test/test_archive.c` | deciding where a member lands or writing it anywhere. It never opens a destination file; that decision and every write belong to `unpack.c` |
+| every path decision and every write when an archive is expanded onto disk: containment, what a symlink, a directory and a plain file each become, and the byte and member-count limits in `FR_UNPACK_DEFAULTS` | `src/unpack.c`, tested by `test/test_unpack.c` | telling a tar header from a zip central directory record, or any other format detail. It reads an already-opened `fr_archive` and knows nothing of what is inside it beyond a member's name, kind and bytes |
+| composing a fetch, a digest verification and an unpack behind one pinned call, and the content-addressed cache of provisioned toolchains that keys on the digest alone so two urls serving the same bytes share one tree | `src/provision.c`, tested by `test/test_provision.c` | any Lua surface. `daukle.provision` and the root handle's `:tool` method are `lua_verbs.c`'s, which is `provision.c`'s only caller |
+| what a provisioned or installed tool's report line says, and deduping it to one line per distinct tool per run | `src/toolreport.c`, tested by `test/test_provision.c` | deciding what tool to use or whether to provision one at all. That decision is made before anything reaches `toolreport.c`; it only renders the fact of it |
+| decompressing and enumerating a zip's central directory | `vendor/miniz`, compiled with `MINIZ_NO_STDIO` | opening or creating a file. Without stdio it cannot, even by a caller's own mistake, which is what keeps every path decision and every write inside `unpack.c` |
 
 **A `daukle.lua` runs against a curated globals table, not Lua's own.** The two lists that define it
 are `KEPT` and `REMOVED` at the top of `src/lua_sandbox.c`, and reading a removed name raises an
