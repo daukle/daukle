@@ -7,6 +7,7 @@
 #include "sha256.h"
 #include "support.h"
 #include "tar.h"
+#include "toolreport.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -361,6 +362,84 @@ TEST a_digest_that_is_not_64_hex_characters_is_refused(void) {
     PASS();
 }
 
+TEST a_label_holding_a_control_character_is_refused(void) {
+    static char message[256];
+    ASSERTm("a plain label is safe", fr_toolreport_label_is_safe("temurin 21.0.5"));
+    ASSERTm(message, !fr_toolreport_label_is_safe("temurin\x1b[2K21"));
+    ASSERTm(message, !fr_toolreport_label_is_safe("a\nb"));
+    ASSERTm(message, !fr_toolreport_label_is_safe("a\rb"));
+    ASSERTm(message, !fr_toolreport_label_is_safe("a\tb"));
+    PASS();
+}
+
+TEST one_line_per_distinct_tool_per_run(void) {
+    static char message[256];
+    fr_toolreport_reset();
+
+    const char *url = "https://example.invalid/toolchains/temurin-21.tar.gz";
+    const char *digest = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
+
+    fr_toolreport_provisioned(NULL, url, digest, 1);
+    fr_toolreport_provisioned(NULL, url, digest, 1);
+    fr_toolreport_provisioned(NULL, url, digest, 1);
+
+    size_t count = fr_toolreport_row_count();
+    snprintf(message, sizeof message, "row_count %zu", count);
+
+    ASSERT_EQm(message, 1u, count);
+    PASS();
+}
+
+TEST a_missing_label_falls_back_to_a_fact_rather_than_to_nothing(void) {
+    static char message[512];
+    fr_toolreport_reset();
+
+    fr_toolreport_used_installed("gcc", NULL, "/usr/bin/gcc");
+    const char *url = "https://example.invalid/toolchains/temurin-21.tar.gz";
+    const char *digest = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678";
+    fr_toolreport_provisioned(NULL, url, digest, 0);
+
+    const fr_toolreport_row *installed = fr_toolreport_row_at(0);
+    const fr_toolreport_row *provisioned = fr_toolreport_row_at(1);
+    snprintf(message, sizeof message, "installed label \"%s\", provisioned label \"%s\"",
+             installed == NULL ? "" : installed->label,
+             provisioned == NULL ? "" : provisioned->label);
+
+    ASSERTm(message, installed != NULL);
+    ASSERTm(message, provisioned != NULL);
+    ASSERTm(message, strcmp(installed->label, "gcc") == 0);
+    ASSERTm(message, strcmp(provisioned->label, "temurin-21.tar.gz") == 0);
+    PASS();
+}
+
+TEST the_row_keeps_the_url_and_digest_whatever_the_label_says(void) {
+    static char message[512];
+    fr_toolreport_reset();
+
+    /* Longer than the label field, so a bug that let the label buffer bleed
+       into the url field could not pass by accident. */
+    const char *url = "https://example.invalid/dist/toolchains/gcc-14.1.0/"
+                      "gcc-14.1.0-x86_64-linux-gnu-full-static-toolchain-with-debug-symbols-"
+                      "and-extra-target-libraries-included.tar.gz";
+    const char *digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd";
+    const char *lying_label = "system gcc 14.1.0";
+
+    fr_toolreport_provisioned(lying_label, url, digest, 0);
+
+    size_t count = fr_toolreport_row_count();
+    const fr_toolreport_row *row = fr_toolreport_row_at(0);
+    snprintf(message, sizeof message, "count %zu, label \"%s\", url \"%s\", digest \"%s\"", count,
+             row == NULL ? "" : row->label, row == NULL ? "" : row->url,
+             row == NULL ? "" : row->digest);
+
+    ASSERT_EQm(message, 1u, count);
+    ASSERTm(message, row != NULL);
+    ASSERTm(message, strcmp(row->label, lying_label) == 0);
+    ASSERTm(message, strcmp(row->url, url) == 0);
+    ASSERTm(message, strcmp(row->digest, digest) == 0);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_pinned_archive_is_fetched_verified_and_unpacked);
@@ -369,5 +448,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_partial_directory_is_not_mistaken_for_a_provisioned_tree);
     RUN_TEST(two_urls_serving_identical_bytes_share_one_tree);
     RUN_TEST(a_digest_that_is_not_64_hex_characters_is_refused);
+    RUN_TEST(a_label_holding_a_control_character_is_refused);
+    RUN_TEST(one_line_per_distinct_tool_per_run);
+    RUN_TEST(a_missing_label_falls_back_to_a_fact_rather_than_to_nothing);
+    RUN_TEST(the_row_keeps_the_url_and_digest_whatever_the_label_says);
     GREATEST_MAIN_END();
 }
