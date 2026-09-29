@@ -3,6 +3,10 @@ project(daukle C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+# Stated rather than inherited: OFF means -std=c11, which puts glibc into
+# __STRICT_ANSI__ and hides symlink and chmod from src/unpack.c and ftruncate
+# and fileno from src/http_curl.c.
+set(CMAKE_C_EXTENSIONS ON)
 
 if(MSVC)
     set(DAUKLE_WARNING_FLAGS /W4 /WX /D_CRT_SECURE_NO_WARNINGS)

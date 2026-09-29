@@ -111,6 +111,13 @@ static int refuse_unsafe_link_target(const fr_archive_member *member, fr_error *
         fr_error_set(err, "the symlink member \"%s\" points at an absolute target", member->name);
         return FR_ERR;
     }
+    /* The walker below knows one separator, so "..\\..\\x" would be a single
+       component; refused outright, as a member name already is. */
+    if (strchr(target, '\\') != NULL) {
+        fr_error_set(err, "the symlink member \"%s\" points at a target holding a backslash",
+                     member->name);
+        return FR_ERR;
+    }
     if (!target_stays_inside(member->name, target)) {
         fr_error_set(err, "the symlink member \"%s\" points outside the destination",
                      member->name);
@@ -422,11 +429,6 @@ static int write_member(const fr_archive_member *member, const native_root *root
                         fr_unpack_report *report, fr_error *err) {
     if (refuse_unwritable_name(member, limits, seen, err) != FR_OK) return FR_ERR;
 
-    if (member->setuid) {
-        fr_error_set(err, "the member \"%s\" carries a setuid or setgid bit", member->name);
-        return FR_ERR;
-    }
-
     if (member->kind == FR_MEMBER_SYMLINK) {
         return write_symlink_member(member, root, report, err);
     }
@@ -434,6 +436,13 @@ static int write_member(const fr_archive_member *member, const native_root *root
         return write_directory_member(member, root, report, err);
     }
 
+    /* Regular files only: a setgid directory is routine in a tarball made on
+       macOS or BSD, and apply_permissions never carries an archive's mode
+       across anyway. */
+    if (member->setuid) {
+        fr_error_set(err, "the member \"%s\" carries a setuid or setgid bit", member->name);
+        return FR_ERR;
+    }
     if (refuse_oversized_member(member, limits, total, err) != FR_OK) return FR_ERR;
     return write_file_member(member, root, report, err);
 }

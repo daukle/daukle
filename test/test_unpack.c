@@ -600,6 +600,56 @@ TEST a_setuid_member_is_refused_by_name(void) {
     PASS();
 }
 
+TEST a_symlink_target_holding_a_backslash_is_refused(void) {
+    static char message[512];
+    /* The component walker knows only "/", so "..\..\outside" would be a
+       single ordinary component and climb out unnoticed the day the Windows
+       skip is lifted. A member NAME already refuses a backslash outright. */
+    fr_unpack_report report;
+    int result = unpack_one_symlink("..\\..\\outside", &report, message, sizeof message);
+    ASSERT_EQm(message, FR_ERR, result);
+    ASSERTm(message, strstr(message, "backslash") != NULL);
+    PASS();
+}
+
+TEST a_setgid_directory_is_unpacked_rather_than_refused(void) {
+    static char message[512];
+    /* drwxr-sr-x is routine in a tarball made on macOS or BSD, so refusing it
+       would fail an ordinary JDK or Node archive. The bit reaches no file
+       either way: apply_permissions only ever writes 0755 or 0644. */
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-setgid-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 8];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = fr_test_tar_append(buffer, 0, "share/", '5', "", 0);
+    memcpy(buffer + 100, "0002755", 7);
+    fr_test_tar_fix_checksum(buffer, 0);
+    fr_test_tar_end(buffer, used);
+
+    fr_archive *archive = NULL;
+    fr_error err;
+    err.message[0] = '\0';
+    int opened = open_archive_from_bytes(buffer, sizeof buffer, &archive, &err);
+    fr_unpack_report report;
+    memset(&report, 0, sizeof report);
+    int result = opened == FR_OK
+               ? fr_unpack(archive, destination, &FR_UNPACK_DEFAULTS, &report, &err)
+               : FR_ERR;
+    if (archive != NULL) fr_archive_close(archive);
+
+    size_t directories = report.directories_created;
+    snprintf(message, sizeof message, "result %d, directories %zu, err \"%s\"", result,
+             directories, err.message);
+    fr_test_remove_tree(destination);
+
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERT_EQm(message, 1u, directories);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(every_escaping_member_name_is_refused);
@@ -616,6 +666,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_tar_members_execute_bit_reaches_the_file);
     RUN_TEST(a_unix_produced_zip_carries_its_execute_bit_and_a_windows_one_does_not);
     RUN_TEST(a_setuid_member_is_refused_by_name);
+    RUN_TEST(a_symlink_target_holding_a_backslash_is_refused);
+    RUN_TEST(a_setgid_directory_is_unpacked_rather_than_refused);
     remove(input_path);
     GREATEST_MAIN_END();
 }
