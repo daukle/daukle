@@ -3,12 +3,15 @@
 #include "error.h"
 
 #include <limits.h>
+#include <stdio.h>
 #include <string.h>
 
 #define NAME_FIELD 0
+#define MODE_FIELD 100
 #define SIZE_FIELD 124
 #define CHECKSUM_FIELD 148
 #define TYPEFLAG_FIELD 156
+#define LINKNAME_FIELD 157
 #define MAGIC_FIELD 257
 #define PREFIX_FIELD 345
 
@@ -67,25 +70,75 @@ int fr_tar_looks_like_archive(const char *bytes, size_t length) {
     return checksum_matches(block);
 }
 
-static int member_name(const unsigned char *block, char *out, fr_error *err) {
-    char raw[101];
-    memcpy(raw, block + NAME_FIELD, 100);
-    raw[100] = '\0';
+/* The trailing "/" + name can reach 155 + 1 + 100 bytes; the +2 over
+   FR_TAR_MAX_FULL_NAME leaves room to detect that overflow rather than
+   silently truncate it. */
+static int assemble_name(const unsigned char *block, fr_tar_header *out, fr_error *err) {
+    char raw_name[101];
+    memcpy(raw_name, block + NAME_FIELD, 100);
+    raw_name[100] = '\0';
 
-    const char *name = raw;
+    const char *name = raw_name;
     if (strncmp(name, "./", 2) == 0) name += 2;
 
-    size_t length = strlen(name);
-    if (length == 0) {
+    char raw_prefix[156];
+    memcpy(raw_prefix, block + PREFIX_FIELD, 155);
+    raw_prefix[155] = '\0';
+
+    out->used_prefix = raw_prefix[0] != '\0';
+
+    char joined[FR_TAR_MAX_FULL_NAME + 2];
+    if (out->used_prefix) {
+        snprintf(joined, sizeof joined, "%s/%s", raw_prefix, name);
+    } else {
+        snprintf(joined, sizeof joined, "%s", name);
+    }
+
+    size_t joined_length = strlen(joined);
+    if (joined_length == 0) {
         fr_error_set(err, "the archive has a member with no name");
         return FR_ERR;
     }
-    if (length > FR_TAR_MAX_NAME) {
-        fr_error_set(err, "the archive member \"%s\" has a name longer than %d bytes", name,
-                     FR_TAR_MAX_NAME);
+    if (joined_length > FR_TAR_MAX_FULL_NAME) {
+        fr_error_set(err, "the archive member \"%s\" has a name longer than %d bytes", joined,
+                     FR_TAR_MAX_FULL_NAME);
         return FR_ERR;
     }
-    memcpy(out, name, length + 1);
+    memcpy(out->name, joined, joined_length + 1);
+    return FR_OK;
+}
+
+int fr_tar_read_header(const unsigned char *block, fr_tar_header *out, int *out_end_of_archive,
+                       fr_error *err) {
+    *out_end_of_archive = 0;
+    if (is_zero_block(block)) {
+        *out_end_of_archive = 1;
+        return FR_OK;
+    }
+
+    if (!checksum_matches(block)) {
+        fr_error_set(err, "the archive has a bad header checksum");
+        return FR_ERR;
+    }
+
+    if (assemble_name(block, out, err) != FR_OK) return FR_ERR;
+
+    if (read_octal((const char *) block + SIZE_FIELD, 12, &out->size) != FR_OK) {
+        fr_error_set(err, "the archive member \"%s\" has a size that is not octal", out->name);
+        return FR_ERR;
+    }
+
+    unsigned long long mode = 0;
+    if (read_octal((const char *) block + MODE_FIELD, 8, &mode) != FR_OK) {
+        fr_error_set(err, "the archive member \"%s\" has a mode that is not octal", out->name);
+        return FR_ERR;
+    }
+    out->mode = (unsigned long) mode;
+
+    memcpy(out->link_target, block + LINKNAME_FIELD, 100);
+    out->link_target[100] = '\0';
+
+    out->typeflag = (char) block[TYPEFLAG_FIELD];
     return FR_OK;
 }
 
@@ -102,54 +155,51 @@ int fr_tar_read(const char *bytes, size_t length, fr_tar *out, fr_error *err) {
     size_t offset = 0;
     while (offset + FR_TAR_BLOCK <= length) {
         const unsigned char *block = (const unsigned char *) bytes + offset;
-        if (is_zero_block(block)) return FR_OK;
 
-        if (!checksum_matches(block)) {
-            fr_error_set(err, "the archive has a bad header checksum at offset %zu", offset);
-            return FR_ERR;
-        }
-        if (block[PREFIX_FIELD] != '\0') {
+        fr_tar_header header;
+        int end_of_archive = 0;
+        if (fr_tar_read_header(block, &header, &end_of_archive, err) != FR_OK) return FR_ERR;
+        if (end_of_archive) return FR_OK;
+
+        /* The plugin reader's own policy, not the parser's limitation: a
+           prefixed name would not fit fr_tar_member's storage. */
+        if (header.used_prefix) {
             fr_error_set(err, "the archive has a member whose name is too long to store in one"
                               " field");
             return FR_ERR;
         }
-
-        char name[FR_TAR_MAX_NAME + 1];
-        if (member_name(block, name, err) != FR_OK) return FR_ERR;
-
-        unsigned long long size = 0;
-        if (read_octal((const char *) block + SIZE_FIELD, 12, &size) != FR_OK) {
-            fr_error_set(err, "the archive member \"%s\" has a size that is not octal", name);
+        if (strlen(header.name) > FR_TAR_MAX_NAME) {
+            fr_error_set(err, "the archive member \"%s\" has a name longer than %d bytes",
+                         header.name, FR_TAR_MAX_NAME);
             return FR_ERR;
         }
         /* Bounded before anything else uses it, so every arithmetic below is on
            a number the reader has already agreed to. */
-        if (size > FR_TAR_MAX_MEMBER_BYTES) {
-            fr_error_set(err, "the archive member \"%s\" is larger than %u bytes", name,
+        if (header.size > FR_TAR_MAX_MEMBER_BYTES) {
+            fr_error_set(err, "the archive member \"%s\" is larger than %u bytes", header.name,
                          (unsigned) FR_TAR_MAX_MEMBER_BYTES);
             return FR_ERR;
         }
 
-        char typeflag = (char) block[TYPEFLAG_FIELD];
         offset += FR_TAR_BLOCK;
 
         /* Written as a subtraction because offset + size can wrap, and a wrapped
            comparison is the out-of-bounds read this reader exists not to have. */
-        if (size > length - offset) {
-            fr_error_set(err, "the archive ends inside \"%s\"", name);
+        if (header.size > length - offset) {
+            fr_error_set(err, "the archive ends inside \"%s\"", header.name);
             return FR_ERR;
         }
         size_t content = offset;
-        offset += (size_t) ((size + FR_TAR_BLOCK - 1) / FR_TAR_BLOCK) * FR_TAR_BLOCK;
+        offset += (size_t) ((header.size + FR_TAR_BLOCK - 1) / FR_TAR_BLOCK) * FR_TAR_BLOCK;
 
-        if (typeflag == '5') continue;
-        if (typeflag != '0' && typeflag != '\0') {
-            fr_error_set(err, "the archive member \"%s\" is not a regular file (type '%c')", name,
-                         typeflag);
+        if (header.typeflag == '5') continue;
+        if (header.typeflag != '0' && header.typeflag != '\0') {
+            fr_error_set(err, "the archive member \"%s\" is not a regular file (type '%c')",
+                         header.name, header.typeflag);
             return FR_ERR;
         }
-        if (already_present(out, name)) {
-            fr_error_set(err, "the archive names \"%s\" twice", name);
+        if (already_present(out, header.name)) {
+            fr_error_set(err, "the archive names \"%s\" twice", header.name);
             return FR_ERR;
         }
         if (out->count == FR_TAR_MAX_MEMBERS) {
@@ -158,9 +208,9 @@ int fr_tar_read(const char *bytes, size_t length, fr_tar *out, fr_error *err) {
         }
 
         fr_tar_member *member = &out->members[out->count++];
-        memcpy(member->name, name, strlen(name) + 1);
+        memcpy(member->name, header.name, strlen(header.name) + 1);
         member->bytes = bytes + content;
-        member->length = (size_t) size;
+        member->length = (size_t) header.size;
     }
 
     return FR_OK;
