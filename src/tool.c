@@ -17,7 +17,25 @@ static const char *const BATCH_EXTENSIONS[] = { ".bat", ".cmd" };
 static const char *const EXTENSIONS[] = { "" };
 #endif
 
-static int is_executable_file(const char *path) {
+static int ends_with_ignoring_case(const char *text, const char *suffix) {
+    size_t text_length = strlen(text);
+    size_t suffix_length = strlen(suffix);
+    if (text_length < suffix_length) return 0;
+
+    const char *tail = text + text_length - suffix_length;
+    for (size_t index = 0; index < suffix_length; index++) {
+        char character = tail[index];
+        if (character >= 'A' && character <= 'Z') character = (char) (character - 'A' + 'a');
+        if (character != suffix[index]) return 0;
+    }
+    return 1;
+}
+
+int fr_tool_is_batch_file(const char *path) {
+    return ends_with_ignoring_case(path, ".bat") || ends_with_ignoring_case(path, ".cmd");
+}
+
+int fr_tool_is_executable_file(const char *path) {
 #ifdef _WIN32
     FILE *probe = fopen(path, "rb");
     if (probe == NULL) return 0;
@@ -49,22 +67,22 @@ static char *first_existing(const char *dir, size_t dir_length, const char *name
             *out_of_memory = 1;
             return NULL;
         }
-        if (is_executable_file(candidate)) return candidate;
+        if (fr_tool_is_executable_file(candidate)) return candidate;
         free(candidate);
     }
     return NULL;
 }
 
-/* A PATH entry may itself be relative, and the two backends would then
-   disagree about what it means: POSIX chdir()s into options.cwd before
-   execv(), so the program would resolve against the child's new directory,
-   while CreateProcess resolves it against daukle's own. */
-static int absolute_form(char *candidate, const char *name, char **out_path, fr_error *err) {
+char *fr_tool_absolute_path(const char *path) {
 #ifdef _WIN32
-    char *absolute = _fullpath(NULL, candidate, 0);
+    return _fullpath(NULL, path, 0);
 #else
-    char *absolute = realpath(candidate, NULL);
+    return realpath(path, NULL);
 #endif
+}
+
+static int absolute_form(char *candidate, const char *name, char **out_path, fr_error *err) {
+    char *absolute = fr_tool_absolute_path(candidate);
     free(candidate);
     if (absolute == NULL) {
         fr_error_set(err, "\"%s\" was found but its absolute path could not be resolved", name);
@@ -91,6 +109,15 @@ int fr_tool_resolve(const char *name, char **out_path, fr_error *err) {
                 fr_error_set(err, "out of memory resolving \"%s\"", name);
                 return FR_ERR;
             }
+            /* The "" entry in EXTENSIONS finds a literal "build.bat" before
+               BATCH_EXTENSIONS is ever consulted, so without this the search
+               path hands back a handle for exactly what a provisioned root's
+               member is refused for. */
+            if (found != NULL && fr_tool_is_batch_file(found)) {
+                fr_error_set(err, FR_TOOL_BATCH_REFUSAL, name, found);
+                free(found);
+                return FR_ERR;
+            }
             if (found != NULL) return absolute_form(found, name, out_path, err);
 #ifdef _WIN32
             /* Refused by name rather than reported as missing: CreateProcess cannot
@@ -104,8 +131,7 @@ int fr_tool_resolve(const char *name, char **out_path, fr_error *err) {
                 return FR_ERR;
             }
             if (batch != NULL) {
-                fr_error_set(err, "daukle cannot run a batch file, and \"%s\" resolved to %s",
-                            name, batch);
+                fr_error_set(err, FR_TOOL_BATCH_REFUSAL, name, batch);
                 free(batch);
                 return FR_ERR;
             }

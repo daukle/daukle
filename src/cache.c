@@ -108,6 +108,22 @@ int fr_cache_root(char *out, size_t out_size, fr_error *err) {
     return cache_root_dir(out, out_size, err);
 }
 
+int fr_cache_toolchains_root(char *out, size_t out_size, fr_error *err) {
+    char root[1024];
+    if (cache_root_dir(root, sizeof root, err) != FR_OK) return FR_ERR;
+    return check_root_fit(snprintf(out, out_size, "%s/toolchains", root), out_size, err);
+}
+
+int fr_cache_directory_exists(const char *path) {
+#ifdef _WIN32
+    DWORD attributes = GetFileAttributesA(path);
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+#endif
+}
+
 int fr_cache_path(const char *project, const char *version, const char *artifact,
                   char **out_path, fr_error *err) {
     *out_path = NULL;
@@ -179,6 +195,20 @@ static void make_parent_directories(char *path) {
         make_directory(path);
         *slash = '/';
     }
+}
+
+void fr_cache_make_directories(char *path) {
+    make_parent_directories(path);
+    make_directory(path);
+}
+
+int fr_cache_rename_directory(const char *from, const char *to) {
+#ifdef _WIN32
+    if (MoveFileExA(from, to, 0)) return FR_OK;
+#else
+    if (rename(from, to) == 0) return FR_OK;
+#endif
+    return fr_cache_directory_exists(to) ? FR_OK : FR_ERR;
 }
 
 static int rename_into_place(const char *temp_path, const char *final_path) {

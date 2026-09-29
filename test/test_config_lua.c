@@ -14,6 +14,7 @@
 #include "sha256.h"
 #include "sync.h"
 #include "support.h"
+#include "toolreport.h"
 
 #include "cJSON.h"
 
@@ -565,16 +566,15 @@ TEST a_toolchain_generate_bridges_project_config_root_and_host(void) {
     PASS();
 }
 
-/* config is built member by member skipping "version" and "dependencies"
-   specifically, not by duplicating the block and deleting keys: dependencies
-   already reaches the plugin as its own resolved argument, so a raw copy in
-   config would let a plugin see it twice, once raw and once resolved.
-   version's raw constraint has no plugin use in this version (spec section
-   7) and is dropped for the same reason. A plugin that reads
-   toolchain.config.version or toolchain.config.dependencies must see nil
-   either way, and this only shows up in the set of keys the table actually
-   holds. Same cleanup-before-ASSERT shape as above. */
-TEST a_toolchain_config_excludes_the_reserved_version_and_dependencies_keys(void) {
+/* config is built member by member skipping "dependencies" specifically, not
+   by duplicating the block and deleting keys: dependencies already reaches
+   the plugin as its own resolved argument, so a raw copy in config would let
+   a plugin see it twice, once raw and once resolved. version carries no such
+   duplication (the tests below cover it) and is no longer skipped. A plugin
+   that reads toolchain.config.dependencies must see nil, and this only shows
+   up in the set of keys the table actually holds. Same cleanup-before-ASSERT
+   shape as above. */
+TEST a_toolchain_config_excludes_the_reserved_dependencies_key(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest = {0};
     fr_error err;
@@ -605,7 +605,141 @@ TEST a_toolchain_config_excludes_the_reserved_version_and_dependencies_keys(void
     ASSERT(plugin != NULL);
     ASSERT_EQ(FR_OK, status);
     ASSERT_EQ(1, (int) file_count);
-    ASSERT_STR_EQ("flag,target", text);
+    ASSERT_STR_EQ("flag,target,version", text);
+    PASS();
+}
+
+/* The task context already carries the toolchain's declared version as its
+   own field (config_lua.c's protected_task_run); generate had no equivalent,
+   leaving one fact readable from one plugin kind and not the other, before
+   provisioning gave a generate-time plugin a use for it. */
+TEST the_generate_context_carries_the_toolchain_version(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest = {0};
+    fr_error err;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-config/daukle.toml",
+                                              registry, &manifest, &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int status = FR_ERR;
+    if (plugin != NULL) {
+        fr_error gen_err;
+        status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
+                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+    }
+
+    char text[256] = "";
+    if (status == FR_OK && file_count == 1) snprintf(text, sizeof text, "%s", files[0].text);
+
+    fr_derived_free_files(files, file_count);
+    if (loaded) fr_manifest_free(&manifest);
+    if (built) fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT(plugin != NULL);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_EQ(1, (int) file_count);
+    ASSERT(strstr(text, "version") != NULL);
+    PASS();
+}
+
+/* The strip is narrowing, not disappearing: dependencies still reach the
+   plugin as their own resolved argument and must not also appear in config,
+   even once version is let through. */
+TEST the_generate_context_still_hides_dependencies_from_config(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest = {0};
+    fr_error err;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-config/daukle.toml",
+                                              registry, &manifest, &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int status = FR_ERR;
+    if (plugin != NULL) {
+        fr_error gen_err;
+        status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
+                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+    }
+
+    char text[256] = "";
+    if (status == FR_OK && file_count == 1) snprintf(text, sizeof text, "%s", files[0].text);
+
+    fr_derived_free_files(files, file_count);
+    if (loaded) fr_manifest_free(&manifest);
+    if (built) fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT(plugin != NULL);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_EQ(1, (int) file_count);
+    ASSERT(strstr(text, "dependencies") == NULL);
+    PASS();
+}
+
+/* main.c has no test binary (see its own print_plugin_report comment), so
+   this exercises the row table print_toolreport() reads from
+   (fr_toolreport_row_count/fr_toolreport_row_at) rather than main.c's
+   printed output, which nothing here can capture. */
+TEST a_provisioned_root_is_readable_as_a_toolreport_row(void) {
+    static char label[128];
+    static char url[1024];
+    static char digest[65];
+    snprintf(label, sizeof label, "temurin 21.0.5");
+    snprintf(url, sizeof url, "https://example.test/jdk.tar.gz");
+    snprintf(digest, sizeof digest,
+             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+    fr_toolreport_reset();
+    fr_toolreport_provisioned(label, url, digest, 0);
+
+    size_t count = fr_toolreport_row_count();
+    const fr_toolreport_row *row = count == 1 ? fr_toolreport_row_at(0) : NULL;
+
+    fr_toolreport_reset();
+
+    ASSERT_EQ(1u, (unsigned) count);
+    ASSERT(row != NULL);
+    ASSERT_STR_EQ(label, row->label);
+    ASSERT_STR_EQ(url, row->url);
+    ASSERT_STR_EQ(digest, row->digest);
+    ASSERT_EQ(1, row->provisioned);
+    PASS();
+}
+
+/* print_toolreport renders an installed row and a provisioned row
+   differently (a path with no digest versus a url with one), so the row
+   itself has to keep saying which one it is: a blank digest alone means
+   the same thing on both kinds and cannot tell a reader apart. */
+TEST an_installed_tool_is_readable_as_a_toolreport_row_with_no_provisioned_flag(void) {
+    static char name[128];
+    static char path[1024];
+    snprintf(name, sizeof name, "gcc");
+    snprintf(path, sizeof path, "/usr/bin/gcc");
+
+    fr_toolreport_reset();
+    fr_toolreport_used_installed(name, NULL, path);
+
+    size_t count = fr_toolreport_row_count();
+    const fr_toolreport_row *row = count == 1 ? fr_toolreport_row_at(0) : NULL;
+
+    fr_toolreport_reset();
+
+    ASSERT_EQ(1u, (unsigned) count);
+    ASSERT(row != NULL);
+    ASSERT_STR_EQ(name, row->label);
+    ASSERT_STR_EQ(path, row->url);
+    ASSERT_STR_EQ("", row->digest);
+    ASSERT_EQ(0, row->provisioned);
     PASS();
 }
 
@@ -737,6 +871,44 @@ TEST a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare(void) {
     const char *chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
     ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "squatter.lua", NULL, 0, NULL, NULL, &err));
     ASSERT(strstr(err.message, "declares no toolchain \"cmake\"") != NULL);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+/* A task keeps exec and provision by inheriting them from the toolchain that
+   owns it, and a colon-free name in a chunk declaring no toolchain owns
+   nothing. Without this a plugin declares one such task and keeps the
+   capability with no toolchain anywhere. */
+TEST a_task_without_a_toolchain_may_not_keep_provision(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *uses[] = { "provision" };
+    const char *chunk = "daukle.task{ name = 'build', run = function() end }\n";
+    ASSERT_EQ(FR_ERR,
+              fr_lua_plugin_load(chunk, strlen(chunk), "squatter.lua", uses, 1, NULL, NULL, &err));
+    ASSERT(strstr(err.message, "daukle.provision is available only to a toolchain plugin") != NULL);
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+/* The companion: the toolchain the chunk declares is what the task inherits
+   from, so the same verbs must still load beside one. */
+TEST a_task_beside_a_toolchain_still_keeps_provision(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *uses[] = { "provision" };
+    const char *chunk =
+        "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n"
+        "daukle.task{ name = 'cmake:build', run = function() end }\n";
+    ASSERT_EQ(FR_OK,
+              fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", uses, 1, NULL, NULL, &err));
+    ASSERT(fr_registry_task(registry, "daukle.task/cmake:build") != NULL);
+
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
     PASS();
@@ -1080,6 +1252,97 @@ TEST a_refused_resolver_chunk_reports_none_declared(void) {
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
     ASSERT_EQ(0, declared);
+    PASS();
+}
+
+/* Builds a chunk that declares "provision" in uses and then makes one further
+   declaration, and loads it. is_resolver mirrors load_resolver_chunk above:
+   a resolver may only ever be declared by a chunk acquired as one, so this
+   routes through it for that one kind and through fr_lua_plugin_load
+   directly for every other kind. */
+static int load_declaring_provision(const char *declaration, int is_resolver, fr_error *err) {
+    char source[1024];
+    snprintf(source, sizeof source,
+             "daukle.plugin{ api = 1, uses = { \"provision\" } }\n%s\n", declaration);
+    const char *verbs[] = { "provision" };
+    return is_resolver
+        ? load_resolver_chunk(source, "provision-refusal.lua", verbs, 1, err)
+        : fr_lua_plugin_load(source, strlen(source), "provision-refusal.lua", verbs, 1, NULL, NULL, err);
+}
+
+/* Three separate tests, not a loop over the three kinds: child spec 8 found
+   that the exec refusal lives in daukle.language and daukle.source
+   individually, so daukle.resolver refused nothing until it carried the same
+   check on its own. A loop would keep passing the day a fourth kind is added
+   without one; deleting one kind's check here must turn exactly one test red. */
+TEST a_language_plugin_declaring_provision_is_refused(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = load_declaring_provision(
+        "daukle.language{ name = 'x', apply = function() return {} end }", 0, &err);
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_ERR, status);
+    ASSERTm(message, strstr(message, "provision") != NULL);
+    ASSERTm(message, strstr(message, "toolchain") != NULL);
+    PASS();
+}
+
+TEST a_source_plugin_declaring_provision_is_refused(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = load_declaring_provision(
+        "daukle.source{ name = 'x', load = function() return {} end }", 0, &err);
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_ERR, status);
+    ASSERTm(message, strstr(message, "provision") != NULL);
+    PASS();
+}
+
+TEST a_resolver_plugin_declaring_provision_is_refused(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = load_declaring_provision(
+        "daukle.resolver{ resolve = function(c) return { url = c } end }", 1, &err);
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_ERR, status);
+    ASSERTm(message, strstr(message, "provision") != NULL);
+    PASS();
+}
+
+/* The positive case, and it is not optional: without it, all three refusals
+   above would pass against an implementation that refuses "provision" to
+   every kind, which would make the capability unreachable. */
+TEST a_toolchain_plugin_declaring_provision_loads(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = load_declaring_provision(
+        "daukle.toolchain{ name = 'x', generate = function() return {} end }", 0, &err);
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_OK, status);
     PASS();
 }
 
@@ -1979,12 +2242,18 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_declares_a_toolchain_and_it_reaches_the_registry);
     RUN_TEST(a_toolchain_needs_a_generate_function);
     RUN_TEST(a_toolchain_generate_bridges_project_config_root_and_host);
-    RUN_TEST(a_toolchain_config_excludes_the_reserved_version_and_dependencies_keys);
+    RUN_TEST(a_toolchain_config_excludes_the_reserved_dependencies_key);
+    RUN_TEST(the_generate_context_carries_the_toolchain_version);
+    RUN_TEST(the_generate_context_still_hides_dependencies_from_config);
+    RUN_TEST(a_provisioned_root_is_readable_as_a_toolreport_row);
+    RUN_TEST(an_installed_tool_is_readable_as_a_toolreport_row_with_no_provisioned_flag);
     RUN_TEST(a_toolchain_generate_must_return_a_table);
     RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_path);
     RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_contents);
     RUN_TEST(a_task_is_declared_and_registered);
     RUN_TEST(a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare);
+    RUN_TEST(a_task_without_a_toolchain_may_not_keep_provision);
+    RUN_TEST(a_task_beside_a_toolchain_still_keeps_provision);
     RUN_TEST(an_aggregator_needs_no_run);
     RUN_TEST(a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain);
     RUN_TEST(a_hostile_index_metatable_on_the_task_table_is_never_consulted);
@@ -2000,6 +2269,10 @@ int main(int argc, char **argv) {
     RUN_TEST(a_hostile_metatable_returning_a_function_is_never_used_as_resolve);
     RUN_TEST(a_chunk_declaring_no_resolver_reports_none_declared);
     RUN_TEST(a_refused_resolver_chunk_reports_none_declared);
+    RUN_TEST(a_language_plugin_declaring_provision_is_refused);
+    RUN_TEST(a_source_plugin_declaring_provision_is_refused);
+    RUN_TEST(a_resolver_plugin_declaring_provision_is_refused);
+    RUN_TEST(a_toolchain_plugin_declaring_provision_loads);
     RUN_TEST(a_module_supplies_what_the_entry_chunk_requires);
     RUN_TEST(a_module_may_declare_a_language);
     RUN_TEST(a_module_may_not_use_a_verb_the_plugin_did_not_declare);

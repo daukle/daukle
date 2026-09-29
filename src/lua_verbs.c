@@ -10,9 +10,11 @@
 #include "lang_region.h"
 #include "lua_sandbox.h"
 #include "luax.h"
+#include "provision.h"
 #include "region.h"
 #include "registry.h"
 #include "tool.h"
+#include "toolreport.h"
 
 #include "cJSON.h"
 #include "lauxlib.h"
@@ -31,7 +33,7 @@ static const char *BASE[] = {
 
 static const char *KNOWN_VERBS[] = {
     "fetch", "read", "cache", "env", "region", "json_set", "json_parse", "parse", "exec", "tool",
-    "publish"
+    "provision", "publish"
 };
 
 /* daukle.publish is spec section 10's next reserved name: a fourth table and
@@ -56,6 +58,7 @@ int fr_lua_verbs_is_reserved(const char *name) {
 
 static int env_declared_exec;
 static int env_declared_tool;
+static int env_declared_provision;
 
 int fr_lua_verbs_env_declared_exec(void) {
     return env_declared_exec;
@@ -63,6 +66,10 @@ int fr_lua_verbs_env_declared_exec(void) {
 
 int fr_lua_verbs_env_declared_tool(void) {
     return env_declared_tool;
+}
+
+int fr_lua_verbs_env_declared_provision(void) {
+    return env_declared_provision;
 }
 
 static int verb_env(lua_State *state) {
@@ -321,14 +328,36 @@ static int tool_name_is_valid(const char *name) {
     return strpbrk(name, "/\\") == NULL;
 }
 
+/* Reads the "as" field of the options table at table_index without honoring
+   a metatable, for the same reason raw_getfield in config_lua.c does:
+   __index is a base global reachable in this sandbox. The value stays on the
+   stack, since the returned pointer points into it. */
+static const char *tool_option_label(lua_State *state, int table_index) {
+    lua_pushstring(state, "as");
+    lua_rawget(state, table_index);
+    return lua_type(state, -1) == LUA_TSTRING ? lua_tostring(state, -1) : NULL;
+}
+
 static int verb_tool(lua_State *state) {
     if (fr_lua_generation_is_running()) {
         return luaL_error(state, "daukle.tool is not available while generating; "
                                  "generation is a pure function of the manifest");
     }
     const char *name = luaL_checkstring(state, 1);
+    const char *label = NULL;
     if (!lua_isnoneornil(state, 2)) {
-        return luaL_error(state, "daukle.tool: version constraints are not implemented yet");
+        if (lua_type(state, 2) == LUA_TSTRING) {
+            return luaL_error(state, "daukle.tool does not match version constraints: resolving"
+                                     " one is the plugin's own business, not core's");
+        }
+        luaL_checktype(state, 2, LUA_TTABLE);
+        label = tool_option_label(state, 2);
+        if (label == NULL && !lua_isnil(state, -1)) {
+            return luaL_error(state, "daukle.tool option \"as\" must be a string");
+        }
+        if (label != NULL && !fr_toolreport_label_is_safe(label)) {
+            return luaL_error(state, "daukle.tool option \"as\" may not hold a control character");
+        }
     }
     if (!tool_name_is_valid(name)) {
         return luaL_error(state, "\"%s\" is not a tool name: a tool is named, not pathed", name);
@@ -342,6 +371,7 @@ static int verb_tool(lua_State *state) {
     char *path = NULL;
     fr_error err;
     if (fr_tool_resolve(name, &path, &err) != FR_OK) return luaL_error(state, "%s", err.message);
+    fr_toolreport_used_installed(name, label, path);
 
     fr_lua_tool *handle = lua_newuserdatauv(state, sizeof *handle, 0);
     int path_written = snprintf(handle->path, sizeof handle->path, "%s", path);
@@ -351,6 +381,160 @@ static int verb_tool(lua_State *state) {
     }
     snprintf(handle->name, sizeof handle->name, "%s", name);
 
+    luaL_getmetatable(state, FR_TOOL_HANDLE);
+    lua_setmetatable(state, -2);
+    if (g_verbose) fprintf(stderr, "tool %s (%s)\n", handle->name, handle->path);
+    return 1;
+}
+
+#define FR_PROVISION_HANDLE "daukle.provision.root"
+
+typedef struct {
+    /* Sized like fr_provision_result.root, so taking that root cannot truncate. */
+    char root[1024];
+} fr_lua_root;
+
+static const char *const PROVISION_FIELDS[] = { "url", "sha256", "as" };
+
+static int provision_field_is_known(const char *key) {
+    for (size_t index = 0; index < sizeof PROVISION_FIELDS / sizeof PROVISION_FIELDS[0]; index++) {
+        if (strcmp(PROVISION_FIELDS[index], key) == 0) return 1;
+    }
+    return 0;
+}
+
+/* Refused by name rather than ignored: a silently dropped version = "21" is a
+   user believing they pinned something. The message names whichever key the
+   walk reached and never a fixed one, because lua_next's order over a plugin's
+   table is unspecified, so with two unknown keys either may be the one seen. */
+static int refuse_an_unknown_provision_field(lua_State *state) {
+    lua_pushnil(state);
+    while (lua_next(state, 1) != 0) {
+        if (lua_type(state, -2) != LUA_TSTRING) {
+            return luaL_error(state, "daukle.provision takes named fields only");
+        }
+        const char *key = lua_tostring(state, -2);
+        if (!provision_field_is_known(key)) {
+            return luaL_error(state, "daukle.provision does not take \"%s\"; it takes url, sha256"
+                                     " and as", key);
+        }
+        lua_pop(state, 1);
+    }
+    return 0;
+}
+
+/* Raw, never lua_getfield: setmetatable is a base global a plugin keeps, so a
+   field answered by an __index could hand one digest to the check here and a
+   different one to the fetch, and the digest read IS the whole enforcement of
+   the pin. The value stays on the stack, since the answer points into it. */
+static const char *provision_field(lua_State *state, const char *key) {
+    lua_pushstring(state, key);
+    lua_rawget(state, 1);
+    return lua_type(state, -1) == LUA_TSTRING ? lua_tostring(state, -1) : NULL;
+}
+
+static int verb_provision(lua_State *state) {
+    if (fr_lua_generation_is_running()) {
+        return luaL_error(state, "daukle.provision is not available while generating; "
+                                 "generation is a pure function of the manifest");
+    }
+    /* The per-kind refusals in config_lua fire when daukle.language and its
+       siblings are CALLED, by which time a chunk that provisioned at its top
+       level has already put a tree on disk during `daukle check`. The refusal
+       has to reach the call, exactly as daukle.exec's does. */
+    if (fr_lua_plugin_exec_is_refused()) {
+        return luaL_error(state, "daukle.provision is available only to a toolchain plugin");
+    }
+    luaL_checktype(state, 1, LUA_TTABLE);
+    refuse_an_unknown_provision_field(state);
+
+    const char *url = provision_field(state, "url");
+    if (url == NULL) return luaL_error(state, "daukle.provision needs a url string");
+
+    const char *digest = provision_field(state, "sha256");
+    if (digest == NULL) {
+        return luaL_error(state, "daukle.provision needs a sha256 string: there is no unpinned"
+                                 " form of it and no flag that relaxes one");
+    }
+
+    const char *label = provision_field(state, "as");
+    if (label == NULL && !lua_isnil(state, -1)) {
+        return luaL_error(state, "daukle.provision field \"as\" must be a string");
+    }
+    if (label != NULL && !fr_toolreport_label_is_safe(label)) {
+        return luaL_error(state, "daukle.provision field \"as\" may not hold a control character");
+    }
+
+    fr_provision_result result;
+    fr_error err;
+    if (fr_provision(url, digest, &result, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    fr_toolreport_provisioned(label, url, digest, result.was_cached);
+    fr_toolreport_symlinks_skipped(digest, result.unpack.symlinks_skipped,
+                                   result.unpack.first_symlink_skipped);
+
+    fr_lua_root *handle = lua_newuserdatauv(state, sizeof *handle, 0);
+    snprintf(handle->root, sizeof handle->root, "%s", result.root);
+    luaL_getmetatable(state, FR_PROVISION_HANDLE);
+    lua_setmetatable(state, -2);
+    return 1;
+}
+
+static const char *member_base_name(const char *member) {
+    const char *slash = strrchr(member, '/');
+    return slash != NULL ? slash + 1 : member;
+}
+
+/* A member is pathed where a tool name never is: the tree it indexes was
+   chosen and verified by the plugin's own digest, so nesting into it is the
+   point. The containment rule still holds, and a backslash is refused because
+   it separates on one host only, so the same member would name a file there
+   and a strangely named one everywhere else. */
+static int root_tool(lua_State *state) {
+    fr_lua_root *root = luaL_testudata(state, 1, FR_PROVISION_HANDLE);
+    if (root == NULL) {
+        return luaL_error(state, "tool must be called on a root from daukle.provision");
+    }
+    const char *member = luaL_checkstring(state, 2);
+    if (member[0] == '\0') return luaL_error(state, "a provisioned root's member needs a name");
+    if (fr_lua_sandbox_climbs_out(member)) {
+        return luaL_error(state, "\"%s\" climbs out of the provisioned root", member);
+    }
+    if (strchr(member, '\\') != NULL) {
+        return luaL_error(state, "\"%s\" names a member with a backslash; a member inside a"
+                                 " provisioned root is spelled with forward slashes", member);
+    }
+
+    char path[sizeof root->root];
+    int written = snprintf(path, sizeof path, "%s/%s", root->root, member);
+    if (written < 0 || (size_t) written >= sizeof path) {
+        return luaL_error(state, "\"%s\" is too long a path inside the provisioned root", member);
+    }
+    if (fr_tool_is_batch_file(member)) {
+        return luaL_error(state, FR_TOOL_BATCH_REFUSAL, member, path);
+    }
+    /* No extension is guessed: the plugin already branches on host.os to choose
+       which archive to pin, so it can name the member that archive holds. */
+    if (!fr_tool_is_executable_file(path)) {
+        return luaL_error(state, "the provisioned root holds no executable \"%s\"", member);
+    }
+
+    /* A provisioned root inherits DAUKLE_CACHE_DIR verbatim and may be relative. */
+    char *absolute = fr_tool_absolute_path(path);
+    if (absolute == NULL) {
+        return luaL_error(state, "\"%s\" is in the provisioned root but its absolute path could"
+                                 " not be resolved", member);
+    }
+
+    fr_lua_tool *handle = lua_newuserdatauv(state, sizeof *handle, 0);
+    int path_written = snprintf(handle->path, sizeof handle->path, "%s", absolute);
+    free(absolute);
+    if (path_written < 0 || (size_t) path_written >= sizeof handle->path) {
+        return luaL_error(state, "the absolute path of \"%s\" is too long for a tool handle",
+                          member);
+    }
+    snprintf(handle->name, sizeof handle->name, "%s", member_base_name(member));
     luaL_getmetatable(state, FR_TOOL_HANDLE);
     lua_setmetatable(state, -2);
     if (g_verbose) fprintf(stderr, "tool %s (%s)\n", handle->name, handle->path);
@@ -517,6 +701,9 @@ static void install_one(lua_State *state, const char *name) {
     } else if (strcmp(name, "tool") == 0) {
         env_declared_tool = 1;
         lua_pushcfunction(state, verb_tool);
+    } else if (strcmp(name, "provision") == 0) {
+        env_declared_provision = 1;
+        lua_pushcfunction(state, verb_provision);
     } else if (strcmp(name, "exec") == 0) {
         env_declared_exec = 1;
         lua_pushcfunction(state, verb_exec);
@@ -544,6 +731,15 @@ static int protected_push_env(lua_State *state) {
     luaL_newmetatable(state, FR_TOOL_HANDLE);
     lua_pushboolean(state, 0);
     lua_setfield(state, -2, "__metatable");
+    lua_pop(state, 1);
+
+    luaL_newmetatable(state, FR_PROVISION_HANDLE);
+    lua_pushboolean(state, 0);
+    lua_setfield(state, -2, "__metatable");
+    lua_newtable(state);
+    lua_pushcfunction(state, root_tool);
+    lua_setfield(state, -2, "tool");
+    lua_setfield(state, -2, "__index");
     lua_pop(state, 1);
 
     lua_newtable(state);
@@ -633,6 +829,7 @@ int fr_lua_verbs_push_env(lua_State *state, const char *const *verbs, size_t ver
                           fr_error *err) {
     env_declared_exec = 0;
     env_declared_tool = 0;
+    env_declared_provision = 0;
     pending_verbs = verbs;
     pending_verb_count = verb_count;
     lua_pushcfunction(state, protected_push_env);

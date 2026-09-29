@@ -343,6 +343,112 @@ TEST a_real_tar_archive_reads(void) {
     PASS();
 }
 
+TEST the_header_parser_joins_a_prefix_to_a_name(void) {
+    static char message[512];
+    unsigned char block[FR_TAR_BLOCK];
+    char local_bytes[FR_TAR_BLOCK * 4];
+    memset(local_bytes, 0, sizeof local_bytes);
+    fr_test_tar_append(local_bytes, 0, "deep/inner.txt", '0', "x", 1);
+    /* The prefix field is 155 bytes at offset 345, and a reader that ignores it
+       silently produces a DIFFERENT file's name, which is the defect. */
+    memcpy(local_bytes + 345, "outer", 5);
+    fr_test_tar_fix_checksum(local_bytes, 0);
+    memcpy(block, local_bytes, FR_TAR_BLOCK);
+
+    fr_tar_header header;
+    int end = 0;
+    fr_error err;
+    err.message[0] = '\0';
+    int result = fr_tar_read_header(block, 0, &header, &end, &err);
+
+    snprintf(message, sizeof message, "result %d, name \"%s\", err \"%s\"", result, header.name,
+             err.message);
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERT_EQm(message, 0, end);
+    ASSERT_STR_EQm(message, "outer/deep/inner.txt", header.name);
+    ASSERT_EQm(message, 1, header.used_prefix);
+    PASS();
+}
+
+TEST the_plugin_reader_still_refuses_a_prefix(void) {
+    static char message[512];
+    char local_bytes[FR_TAR_BLOCK * 4];
+    memset(local_bytes, 0, sizeof local_bytes);
+    size_t offset = fr_test_tar_append(local_bytes, 0, "inner.txt", '0', "x", 1);
+    memcpy(local_bytes + 345, "outer", 5);
+    fr_test_tar_fix_checksum(local_bytes, 0);
+    fr_test_tar_end(local_bytes, offset);
+
+    fr_tar archive;
+    fr_error err;
+    err.message[0] = '\0';
+    int result = fr_tar_read(local_bytes, sizeof local_bytes, &archive, &err);
+
+    snprintf(message, sizeof message, "%s", err.message);
+    ASSERT_EQm(message, FR_ERR, result);
+    ASSERTm(message, strstr(message, "too long to store in one") != NULL);
+    PASS();
+}
+
+TEST the_header_parser_reports_the_zero_block_as_the_end(void) {
+    unsigned char block[FR_TAR_BLOCK];
+    memset(block, 0, sizeof block);
+
+    fr_tar_header header;
+    int end = 0;
+    fr_error err;
+    int result = fr_tar_read_header(block, 0, &header, &end, &err);
+
+    ASSERT_EQ(FR_OK, result);
+    ASSERT_EQ(1, end);
+    PASS();
+}
+
+TEST the_header_parser_reads_the_mode_and_the_link_target(void) {
+    static char message[512];
+    char local_bytes[FR_TAR_BLOCK * 4];
+    memset(local_bytes, 0, sizeof local_bytes);
+    fr_test_tar_append(local_bytes, 0, "bin/tool", '2', "", 0);
+    memcpy(local_bytes + 100, "0000755", 7);           /* mode field, 8 bytes at 100 */
+    memcpy(local_bytes + 157, "../real/tool", 12);     /* linkname field, 100 bytes at 157 */
+    fr_test_tar_fix_checksum(local_bytes, 0);
+
+    fr_tar_header header;
+    int end = 0;
+    fr_error err;
+    int result = fr_tar_read_header((const unsigned char *) local_bytes, 0, &header, &end, &err);
+
+    snprintf(message, sizeof message, "result %d, mode %lo, link \"%s\"", result, header.mode,
+             header.link_target);
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERT_EQm(message, '2', header.typeflag);
+    ASSERTm(message, (header.mode & 0111u) != 0);
+    ASSERT_STR_EQm(message, "../real/tool", header.link_target);
+    PASS();
+}
+
+TEST the_header_parser_names_the_offset_of_a_bad_checksum(void) {
+    static char message[512];
+    char local_bytes[FR_TAR_BLOCK * 3];
+    memset(local_bytes, 0, sizeof local_bytes);
+    size_t offset = fr_test_tar_append(local_bytes, 0, "first.txt", '0', "", 0);
+    fr_test_tar_append(local_bytes, offset, "second.txt", '0', "y", 1);
+    local_bytes[offset + 10] = 'z';
+
+    fr_tar_header header;
+    int end = 0;
+    fr_error err;
+    err.message[0] = '\0';
+    int result = fr_tar_read_header((const unsigned char *) local_bytes + offset, offset, &header,
+                                    &end, &err);
+
+    snprintf(message, sizeof message, "result %d, offset %zu, err \"%s\"", result, offset,
+             err.message);
+    ASSERT_EQm(message, FR_ERR, result);
+    ASSERTm(message, strstr(err.message, "at offset 512") != NULL);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(an_archive_lists_its_members_in_order);
@@ -367,5 +473,10 @@ int main(int argc, char **argv) {
     RUN_TEST(a_lua_chunk_is_not_taken_for_an_archive);
     RUN_TEST(an_archive_is_recognised);
     RUN_TEST(a_real_tar_archive_reads);
+    RUN_TEST(the_header_parser_joins_a_prefix_to_a_name);
+    RUN_TEST(the_plugin_reader_still_refuses_a_prefix);
+    RUN_TEST(the_header_parser_reports_the_zero_block_as_the_end);
+    RUN_TEST(the_header_parser_reads_the_mode_and_the_link_target);
+    RUN_TEST(the_header_parser_names_the_offset_of_a_bad_checksum);
     GREATEST_MAIN_END();
 }

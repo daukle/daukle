@@ -3,6 +3,10 @@ project(daukle C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+# Stated rather than inherited: OFF means -std=c11, which puts glibc into
+# __STRICT_ANSI__ and hides symlink and chmod from src/unpack.c and ftruncate
+# and fileno from src/http_curl.c.
+set(CMAKE_C_EXTENSIONS ON)
 
 if(MSVC)
     set(DAUKLE_WARNING_FLAGS /W4 /WX /D_CRT_SECURE_NO_WARNINGS)
@@ -15,8 +19,12 @@ else()
 endif()
 
 file(GLOB DAUKLE_LUA_SOURCES CONFIGURE_DEPENDS vendor/lua/*.c)
-add_library(daukle_vendor STATIC vendor/cJSON/cJSON.c vendor/toml/toml.c ${DAUKLE_LUA_SOURCES})
-target_include_directories(daukle_vendor PUBLIC vendor/cJSON vendor/toml vendor/lua)
+add_library(daukle_vendor STATIC vendor/cJSON/cJSON.c vendor/toml/toml.c vendor/miniz/miniz.c
+            ${DAUKLE_LUA_SOURCES})
+target_include_directories(daukle_vendor PUBLIC vendor/cJSON vendor/toml vendor/lua vendor/miniz)
+# miniz decompresses and enumerates; every path decision and every write is
+# daukle's. Without stdio it cannot open or create a file even by mistake.
+target_compile_definitions(daukle_vendor PUBLIC MINIZ_NO_STDIO)
 if(NOT WIN32)
     target_compile_definitions(daukle_vendor PRIVATE LUA_USE_POSIX)
     target_link_libraries(daukle_vendor PUBLIC m)
@@ -58,6 +66,7 @@ enable_testing()
 add_library(daukle_test_support STATIC test/support.c test/http_server.c)
 target_include_directories(daukle_test_support PUBLIC test)
 target_compile_options(daukle_test_support PRIVATE ${DAUKLE_WARNING_FLAGS})
+target_link_libraries(daukle_test_support PUBLIC daukle_vendor)
 
 if(WIN32)
     target_link_libraries(daukle_test_support PUBLIC ws2_32)

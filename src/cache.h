@@ -8,6 +8,28 @@
    fr_cache_path builds, so there remains exactly one place that computes it. */
 int fr_cache_root(char *out, size_t out_size, fr_error *err);
 
+/* The directory a provisioned toolchain tree lives under, built on
+   fr_cache_root (see it) rather than recomputing the root. */
+int fr_cache_toolchains_root(char *out, size_t out_size, fr_error *err);
+
+/* Whether path names an existing directory. The provisioning probe and the
+   rename below both ask whether a tree is already there, and two answers to
+   one question are two answers that will disagree. */
+int fr_cache_directory_exists(const char *path);
+
+/* Creates path and every ancestor of it, for a cache shape (see fr_cache_root)
+   whose entries are directories rather than the files fr_cache_write_atomic
+   makes. Silent like the rest: a directory that could not be created simply
+   makes the later write fail. path is mutated and restored, so it must be a
+   writable buffer, not a string literal. */
+void fr_cache_make_directories(char *path);
+
+/* Moves a fully built directory into its final place without replacing what is
+   already there, and reports success when the target exists afterwards either
+   way: a target that already exists means another daukle finished the same
+   work first, and its tree is the one to use. */
+int fr_cache_rename_directory(const char *from, const char *to);
+
 /* Answers whether text may be spliced into a cache path as one component:
    no "..", no leading separator, no backslash, no ':', no trailing-dot
    component (Windows strips it, aliasing two names to one directory), and

@@ -1,6 +1,8 @@
 #ifndef DAUKLE_TEST_HTTP_SERVER_H
 #define DAUKLE_TEST_HTTP_SERVER_H
 
+#include <stddef.h>
+
 /* A loopback HTTP server for testing what the real http backends put on the
    wire. Routes are declared before start and observations are read after stop
    has joined the accept thread, so that thread owns the routes for as long as
@@ -16,6 +18,10 @@ int fr_test_server_port(const fr_test_server *server);
 void fr_test_server_add_redirect(fr_test_server *server, const char *path,
                                  int status, const char *location);
 void fr_test_server_add_body(fr_test_server *server, const char *path, const char *body);
+/* Like fr_test_server_add_body but takes an explicit length, for a body that
+   holds an embedded NUL that strlen would truncate at. */
+void fr_test_server_add_body_bytes(fr_test_server *server, const char *path, const char *body,
+                                   size_t length);
 
 void fr_test_server_start(fr_test_server *server);
 /* Closes the listener, which is what ends the accept thread, then joins it. */

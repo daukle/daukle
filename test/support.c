@@ -1,5 +1,7 @@
 #include "support.h"
 
+#include "miniz.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -238,6 +240,118 @@ size_t fr_test_tar_append(char *buffer, size_t offset, const char *name, char ty
 size_t fr_test_tar_end(char *buffer, size_t offset) {
     memset(buffer + offset, 0, 2 * TAR_BLOCK);
     return offset + 2 * TAR_BLOCK;
+}
+
+#define ZIP_END_OF_CENTRAL_DIRECTORY 0x06054b50u
+#define ZIP_CENTRAL_HEADER 0x02014b50u
+#define ZIP_CENTRAL_HEADER_SIZE 46u
+#define ZIP_END_OF_CENTRAL_DIRECTORY_SIZE 22u
+
+static unsigned long read_little_endian(const unsigned char *bytes, size_t width) {
+    unsigned long value = 0;
+    for (size_t index = width; index > 0; index--) {
+        value = (value << 8) | bytes[index - 1];
+    }
+    return value;
+}
+
+static void write_little_endian(unsigned char *bytes, size_t width, unsigned long value) {
+    for (size_t index = 0; index < width; index++) {
+        bytes[index] = (unsigned char) (value & 0xffu);
+        value >>= 8;
+    }
+}
+
+static unsigned long unix_mode_of(const char *name, int executable) {
+    size_t length = strlen(name);
+    if (length > 0 && name[length - 1] == '/') return 040755u;
+    return executable ? 0100755u : 0100644u;
+}
+
+/* miniz's writer has no say over "version made by" or the external attributes,
+   so the fixture patches the central directory it produced. The attributes are
+   written either way and only unix_made_by decides whether a reader may believe
+   them, which is what lets one test pin both halves of that rule. */
+static void write_unix_attributes(unsigned char *zip, size_t length, const char *const *names,
+                                  const int *executable, int unix_made_by) {
+    if (length < ZIP_END_OF_CENTRAL_DIRECTORY_SIZE) return;
+    size_t end = length - ZIP_END_OF_CENTRAL_DIRECTORY_SIZE;
+    while (read_little_endian(zip + end, 4) != ZIP_END_OF_CENTRAL_DIRECTORY) {
+        if (end == 0) return;
+        end--;
+    }
+
+    size_t count = (size_t) read_little_endian(zip + end + 10, 2);
+    size_t entry = (size_t) read_little_endian(zip + end + 16, 4);
+    for (size_t index = 0; index < count; index++) {
+        if (entry + ZIP_CENTRAL_HEADER_SIZE > length) return;
+        if (read_little_endian(zip + entry, 4) != ZIP_CENTRAL_HEADER) return;
+
+        if (unix_made_by) zip[entry + 5] = 3;
+        write_little_endian(zip + entry + 38, 4, unix_mode_of(names[index], executable[index]) << 16);
+
+        entry += ZIP_CENTRAL_HEADER_SIZE + (size_t) read_little_endian(zip + entry + 28, 2)
+                 + (size_t) read_little_endian(zip + entry + 30, 2)
+                 + (size_t) read_little_endian(zip + entry + 32, 2);
+    }
+}
+
+size_t fr_test_zip_build(char *buffer, size_t size, const char *const *names,
+                         const char *const *contents, const int *executable, size_t count,
+                         int unix_made_by) {
+    mz_zip_archive zip;
+    memset(&zip, 0, sizeof zip);
+    if (!mz_zip_writer_init_heap(&zip, 0, 64 * 1024)) return 0;
+
+    for (size_t index = 0; index < count; index++) {
+        if (!mz_zip_writer_add_mem(&zip, names[index], contents[index], strlen(contents[index]),
+                                   MZ_NO_COMPRESSION)) {
+            mz_zip_writer_end(&zip);
+            return 0;
+        }
+    }
+
+    void *built = NULL;
+    size_t built_length = 0;
+    if (!mz_zip_writer_finalize_heap_archive(&zip, &built, &built_length)) {
+        mz_zip_writer_end(&zip);
+        return 0;
+    }
+
+    size_t length = built_length <= size ? built_length : 0;
+    if (length > 0) memcpy(buffer, built, length);
+    mz_zip_writer_end(&zip);
+
+    if (length > 0) {
+        write_unix_attributes((unsigned char *) buffer, length, names, executable, unix_made_by);
+    }
+    return length;
+}
+
+size_t fr_test_gzip(char *out, size_t out_size, const char *data, size_t length) {
+    static const unsigned char gzip_header[10] = { 0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 0xff };
+
+    int flags = (int) tdefl_create_comp_flags_from_zip_params(MZ_DEFAULT_LEVEL, -15,
+                                                              MZ_DEFAULT_STRATEGY);
+    size_t deflated_length = 0;
+    void *deflated = tdefl_compress_mem_to_heap(data, length, &deflated_length, flags);
+    if (deflated == NULL) return 0;
+
+    size_t total = sizeof gzip_header + deflated_length + 8;
+    if (total > out_size) {
+        mz_free(deflated);
+        return 0;
+    }
+
+    unsigned char *cursor = (unsigned char *) out;
+    memcpy(cursor, gzip_header, sizeof gzip_header);
+    memcpy(cursor + sizeof gzip_header, deflated, deflated_length);
+    cursor += sizeof gzip_header + deflated_length;
+    write_little_endian(cursor, 4, mz_crc32(MZ_CRC32_INIT, (const unsigned char *) data, length));
+    write_little_endian(cursor + 4, 4, (unsigned long) length);
+
+    mz_free(deflated);
+    return total;
 }
 
 void fr_test_sleep_past_mtime_resolution(void) {

@@ -29,7 +29,8 @@ typedef struct {
     char path[128];
     int status;
     char location[512];
-    char body[512];
+    char *body;
+    size_t body_length;
     int requested;
     char request_head[MAX_REQUEST];
 } fr_test_route;
@@ -154,14 +155,19 @@ static void serve_connection(fr_test_server *server, socket_handle client) {
     int written;
     if (entry->status == 200) {
         written = snprintf(response, sizeof response,
-                           "HTTP/1.1 200 OK\r\nContent-Length: %u\r\nConnection: close\r\n\r\n%s",
-                           (unsigned) strlen(entry->body), entry->body);
-    } else {
-        written = snprintf(response, sizeof response,
-                           "HTTP/1.1 %d Found\r\nLocation: %s\r\nContent-Length: 0\r\n"
-                           "Connection: close\r\n\r\n",
-                           entry->status, entry->location);
+                           "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n",
+                           entry->body_length);
+        if (written > 0 && (size_t) written < sizeof response) {
+            send_all(client, response, (size_t) written);
+            send_all(client, entry->body, entry->body_length);
+        }
+        return;
     }
+
+    written = snprintf(response, sizeof response,
+                       "HTTP/1.1 %d Found\r\nLocation: %s\r\nContent-Length: 0\r\n"
+                       "Connection: close\r\n\r\n",
+                       entry->status, entry->location);
     if (written > 0 && (size_t) written < sizeof response) send_all(client, response, (size_t) written);
 }
 
@@ -273,11 +279,19 @@ void fr_test_server_add_redirect(fr_test_server *server, const char *path,
     snprintf(entry->location, sizeof entry->location, "%s", location);
 }
 
-void fr_test_server_add_body(fr_test_server *server, const char *path, const char *body) {
+void fr_test_server_add_body_bytes(fr_test_server *server, const char *path, const char *body,
+                                   size_t length) {
     fr_test_route *entry = add_route(server, path);
     if (entry == NULL) return;
     entry->status = 200;
-    snprintf(entry->body, sizeof entry->body, "%s", body);
+    entry->body = malloc(length > 0 ? length : 1);
+    if (entry->body == NULL) return;
+    memcpy(entry->body, body, length);
+    entry->body_length = length;
+}
+
+void fr_test_server_add_body(fr_test_server *server, const char *path, const char *body) {
+    fr_test_server_add_body_bytes(server, path, body, strlen(body));
 }
 
 void fr_test_server_start(fr_test_server *server) {
@@ -311,6 +325,7 @@ void fr_test_server_stop(fr_test_server *server) {
 }
 
 void fr_test_server_free(fr_test_server *server) {
+    for (size_t index = 0; index < server->route_count; index++) free(server->routes[index].body);
     free(server);
 }
 

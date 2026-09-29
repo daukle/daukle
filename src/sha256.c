@@ -56,47 +56,81 @@ static void sha256_compress(uint32_t state[8], const unsigned char block[64]) {
     state[4] += e; state[5] += f; state[6] += g; state[7] += h;
 }
 
-void fr_sha256_hex(const char *data, size_t length, char out_hex[65]) {
-    uint32_t state[8] = {
+void fr_sha256_init(fr_sha256 *context) {
+    static const uint32_t initial_state[8] = {
         0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
         0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U
     };
+    memcpy(context->state, initial_state, sizeof initial_state);
+    context->total_length = 0;
+    context->pending = 0;
+}
 
+void fr_sha256_update(fr_sha256 *context, const void *data, size_t length) {
     const unsigned char *bytes = (const unsigned char *) data;
-    size_t full_blocks = length / 64;
-    for (size_t i = 0; i < full_blocks; i++) {
-        sha256_compress(state, bytes + i * 64);
+    context->total_length += length;
+
+    if (context->pending > 0) {
+        size_t needed = 64 - context->pending;
+        size_t take = length < needed ? length : needed;
+        memcpy(context->block + context->pending, bytes, take);
+        context->pending += take;
+        bytes += take;
+        length -= take;
+        if (context->pending == 64) {
+            sha256_compress(context->state, context->block);
+            context->pending = 0;
+        }
     }
 
+    while (length >= 64) {
+        sha256_compress(context->state, bytes);
+        bytes += 64;
+        length -= 64;
+    }
+
+    if (length > 0) {
+        memcpy(context->block + context->pending, bytes, length);
+        context->pending += length;
+    }
+}
+
+void fr_sha256_final(fr_sha256 *context, char out_hex[65]) {
     unsigned char tail[128];
-    size_t remaining = length - full_blocks * 64;
-    memcpy(tail, bytes + full_blocks * 64, remaining);
-    size_t tail_used = remaining;
+    size_t tail_used = context->pending;
+    memcpy(tail, context->block, tail_used);
     tail[tail_used++] = 0x80;
 
     size_t pad_to = (tail_used <= 56) ? 56 : 120;
     memset(tail + tail_used, 0, pad_to - tail_used);
     tail_used = pad_to;
 
-    uint64_t bit_length = (uint64_t) length * 8;
+    uint64_t bit_length = context->total_length * 8;
     for (int i = 0; i < 8; i++) {
         tail[tail_used + (size_t) i] = (unsigned char) (bit_length >> (56 - i * 8));
     }
     tail_used += 8;
 
     for (size_t i = 0; i < tail_used; i += 64) {
-        sha256_compress(state, tail + i);
+        sha256_compress(context->state, tail + i);
     }
 
     static const char hex_digits[] = "0123456789abcdef";
     for (unsigned int i = 0; i < 8; i++) {
         for (unsigned int b = 0; b < 4; b++) {
-            unsigned char byte = (unsigned char) (state[i] >> (24 - b * 8));
+            unsigned char byte = (unsigned char) (context->state[i] >> (24 - b * 8));
             out_hex[i * 8 + b * 2] = hex_digits[byte >> 4];
             out_hex[i * 8 + b * 2 + 1] = hex_digits[byte & 0x0fU];
         }
     }
     out_hex[64] = '\0';
+}
+
+void fr_sha256_hex(const char *data, size_t length, char out_hex[65]) {
+    fr_sha256 context;
+    fr_sha256_init(&context);
+    fr_sha256_update(&context, data, length);
+    fr_sha256_final(&context, out_hex);
 }
 
 int fr_sha256_hex_equal(const char *left, const char *right) {

@@ -14,6 +14,7 @@
 #include "sync.h"
 #include "tasks.h"
 #include "tomledit.h"
+#include "toolreport.h"
 
 #include "cJSON.h"
 
@@ -171,6 +172,28 @@ static void print_plugin_report(void) {
     }
 }
 
+/* Mirrors print_plugin_report's shape so the two reports read as one
+   program's output: a "daukle: " header, then two-space-indented rows. The
+   row table is toolreport.c's, filled as a toolchain plugin provisions or
+   reuses a tool during this run. An installed row's url field actually holds
+   its path (see fr_toolreport_used_installed) and carries no digest, so it
+   is rendered without one rather than beside a blank "sha256 " that would
+   read as a provisioned row missing its pin. */
+static void print_toolreport(void) {
+    size_t count = fr_toolreport_row_count();
+    if (count == 0) return;
+
+    printf("daukle: tools\n");
+    for (size_t index = 0; index < count; index++) {
+        const fr_toolreport_row *row = fr_toolreport_row_at(index);
+        if (row->provisioned) {
+            printf("  %s: %s, sha256 %s\n", row->label, row->url, row->digest);
+        } else {
+            printf("  %s: %s\n", row->label, row->url);
+        }
+    }
+}
+
 static int print_config(const char *manifest_path, int use_cache, int verbose) {
     fr_error err;
     fr_cache_set_enabled(use_cache);
@@ -221,6 +244,7 @@ static int print_config(const char *manifest_path, int use_cache, int verbose) {
     print_env_reads(env_reads);
     cJSON_Delete(env_reads);
     print_plugin_report();
+    print_toolreport();
     fr_plugins_report_clear();
     fr_resolvers_clear();
     fr_manifest_free(&manifest);

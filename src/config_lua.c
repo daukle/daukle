@@ -276,12 +276,12 @@ static int protected_toolchain_generate(lua_State *state) {
         const cJSON *member = block->child;
         while (member != NULL) {
             /* dependencies already reach the plugin as their own argument, so
-               config must not also carry the raw copy. version is dropped too:
-               its raw constraint has no plugin use in this version (spec
-               section 7), and the "version" argument now carries the
-               project's own version instead. */
-            if (strcmp(member->string, "version") != 0 &&
-                strcmp(member->string, "dependencies") != 0) {
+               config must not also carry the raw copy. version stays: a
+               generated file may legitimately depend on the requested
+               version, e.g. "engines": { "node": ">=20" }, and core does not
+               parse the string to know whether it is a version, a range or a
+               codename. */
+            if (strcmp(member->string, "dependencies") != 0) {
                 fr_error push_err;
                 if (fr_lua_push_json(state, member, &push_err) != FR_OK) {
                     return luaL_error(state, "%s", push_err.message);
@@ -550,6 +550,9 @@ static int lua_declare_language(lua_State *state) {
     if (fr_lua_verbs_env_declared_exec()) {
         return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
     }
+    if (fr_lua_verbs_env_declared_provision()) {
+        return luaL_error(state, "daukle.provision is available only to a toolchain plugin");
+    }
     if (chunk_declared_resolver) {
         return luaL_error(state, "a resolver chunk declares only a resolver");
     }
@@ -571,6 +574,9 @@ static int lua_declare_language(lua_State *state) {
 static int lua_declare_source(lua_State *state) {
     if (fr_lua_verbs_env_declared_exec()) {
         return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+    }
+    if (fr_lua_verbs_env_declared_provision()) {
+        return luaL_error(state, "daukle.provision is available only to a toolchain plugin");
     }
     if (chunk_declared_resolver) {
         return luaL_error(state, "a resolver chunk declares only a resolver");
@@ -601,6 +607,9 @@ static int lua_declare_resolver(lua_State *state) {
     if (fr_lua_verbs_env_declared_tool()) {
         return luaL_error(state, "a resolver may not start a process, so it may not declare"
                                  " daukle.tool");
+    }
+    if (fr_lua_verbs_env_declared_provision()) {
+        return luaL_error(state, "daukle.provision is available only to a toolchain plugin");
     }
     luaL_checktype(state, 1, LUA_TTABLE);
     if (chunk_declared_other || chunk_declared_resolver) {
@@ -934,6 +943,18 @@ static void release_task_slot(fr_lua_plugin_slot *slot) {
 static int lua_declare_task(lua_State *state) {
     if (chunk_declared_resolver) {
         return luaL_error(state, "a resolver chunk declares only a resolver");
+    }
+    /* A task keeps exec and provision by inheriting them from the toolchain
+       that owns it, which holds only where there IS one: a chunk declaring no
+       toolchain has nothing to pass the capability down from, and a colon-free
+       name names no owner either. */
+    if (chunk_toolchain_count == 0) {
+        if (fr_lua_verbs_env_declared_exec()) {
+            return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+        }
+        if (fr_lua_verbs_env_declared_provision()) {
+            return luaL_error(state, "daukle.provision is available only to a toolchain plugin");
+        }
     }
     chunk_declared_other = 1;
     luaL_checktype(state, 1, LUA_TTABLE);
