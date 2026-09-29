@@ -479,24 +479,6 @@ static int verb_provision(lua_State *state) {
     return 1;
 }
 
-static int ends_with_ignoring_case(const char *text, const char *suffix) {
-    size_t text_length = strlen(text);
-    size_t suffix_length = strlen(suffix);
-    if (text_length < suffix_length) return 0;
-
-    const char *tail = text + text_length - suffix_length;
-    for (size_t index = 0; index < suffix_length; index++) {
-        char character = tail[index];
-        if (character >= 'A' && character <= 'Z') character = (char) (character - 'A' + 'a');
-        if (character != suffix[index]) return 0;
-    }
-    return 1;
-}
-
-static int member_is_a_batch_file(const char *member) {
-    return ends_with_ignoring_case(member, ".bat") || ends_with_ignoring_case(member, ".cmd");
-}
-
 static const char *member_base_name(const char *member) {
     const char *slash = strrchr(member, '/');
     return slash != NULL ? slash + 1 : member;
@@ -527,7 +509,7 @@ static int root_tool(lua_State *state) {
     if (written < 0 || (size_t) written >= sizeof path) {
         return luaL_error(state, "\"%s\" is too long a path inside the provisioned root", member);
     }
-    if (member_is_a_batch_file(member)) {
+    if (fr_tool_is_batch_file(member)) {
         return luaL_error(state, FR_TOOL_BATCH_REFUSAL, member, path);
     }
     /* No extension is guessed: the plugin already branches on host.os to choose

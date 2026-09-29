@@ -18,6 +18,14 @@ int fr_tool_resolve(const char *name, char **out_path, fr_error *err);
    about the same prohibition. */
 #define FR_TOOL_BATCH_REFUSAL "daukle cannot run a batch file, and \"%s\" resolved to %s"
 
+/* The test behind that refusal, and the other half of the parity: the search
+   path and a provisioned root both ask this about the path they arrived at, so
+   neither can start something the other would refuse. Case-insensitive and
+   applied on every platform, because the suffix is what makes a file a batch
+   file to the host that has cmd.exe, and a POSIX host running daukle can hand
+   the same name to a Windows one. */
+int fr_tool_is_batch_file(const char *path);
+
 /* Whether path names something daukle could start: a regular file with execute
    permission where that is what decides, and any openable file on Windows,
    where it is not. Exposed so a member named inside a provisioned root is held

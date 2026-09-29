@@ -164,6 +164,17 @@ TEST a_batch_file_on_the_search_path_is_refused_as_one(void) {
     char message[sizeof err.message];
     snprintf(message, sizeof message, "%s", err.message);
 
+    /* Named with its extension the "" entry in EXTENSIONS finds it literally,
+       before BATCH_EXTENSIONS is ever reached, so this is the arm where the
+       search path used to hand back a handle for what a provisioned root's
+       member is refused for. */
+    char *literal_path = NULL;
+    fr_error literal_err;
+    int literal_status = fr_tool_resolve("daukle-fake-batch.bat", &literal_path, &literal_err);
+    char literal_message[sizeof literal_err.message];
+    snprintf(literal_message, sizeof literal_message, "%s", literal_err.message);
+    free(literal_path);
+
     fr_test_set_env("PATH", old_path);
     free(old_path);
     free(path);
@@ -172,13 +183,18 @@ TEST a_batch_file_on_the_search_path_is_refused_as_one(void) {
     ASSERT(made_temp_dir);
     ASSERT(made_batch);
     ASSERT_EQ(FR_ERR, status);
+    ASSERT_EQ(FR_ERR, literal_status);
 #ifdef _WIN32
     ASSERT(strstr(message, "cannot run a batch file") != NULL);
     ASSERT(strstr(message, "is not installed") == NULL);
+    ASSERT(strstr(literal_message, "cannot run a batch file") != NULL);
 #else
     /* POSIX never treated ".bat" as an extension of the name, so there the
-       file simply is not the tool and the ordinary message is the right one. */
+       file simply is not the tool and the ordinary message is the right one.
+       The literal name reaches the same file, which carries no execute bit
+       here, so it is not found either. */
     ASSERT(strstr(message, "is not installed") != NULL);
+    ASSERT(strstr(literal_message, "is not installed") != NULL);
 #endif
     PASS();
 }
