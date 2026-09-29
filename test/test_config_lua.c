@@ -876,6 +876,44 @@ TEST a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare(void) {
     PASS();
 }
 
+/* A task keeps exec and provision by inheriting them from the toolchain that
+   owns it, and a colon-free name in a chunk declaring no toolchain owns
+   nothing. Without this a plugin declares one such task and keeps the
+   capability with no toolchain anywhere. */
+TEST a_task_without_a_toolchain_may_not_keep_provision(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *uses[] = { "provision" };
+    const char *chunk = "daukle.task{ name = 'build', run = function() end }\n";
+    ASSERT_EQ(FR_ERR,
+              fr_lua_plugin_load(chunk, strlen(chunk), "squatter.lua", uses, 1, NULL, NULL, &err));
+    ASSERT(strstr(err.message, "daukle.provision is available only to a toolchain plugin") != NULL);
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+/* The companion: the toolchain the chunk declares is what the task inherits
+   from, so the same verbs must still load beside one. */
+TEST a_task_beside_a_toolchain_still_keeps_provision(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *uses[] = { "provision" };
+    const char *chunk =
+        "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n"
+        "daukle.task{ name = 'cmake:build', run = function() end }\n";
+    ASSERT_EQ(FR_OK,
+              fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", uses, 1, NULL, NULL, &err));
+    ASSERT(fr_registry_task(registry, "daukle.task/cmake:build") != NULL);
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 TEST an_aggregator_needs_no_run(void) {
     fr_registry *registry = fr_registry_create();
     fr_error err;
@@ -2214,6 +2252,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_contents);
     RUN_TEST(a_task_is_declared_and_registered);
     RUN_TEST(a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare);
+    RUN_TEST(a_task_without_a_toolchain_may_not_keep_provision);
+    RUN_TEST(a_task_beside_a_toolchain_still_keeps_provision);
     RUN_TEST(an_aggregator_needs_no_run);
     RUN_TEST(a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain);
     RUN_TEST(a_hostile_index_metatable_on_the_task_table_is_never_consulted);

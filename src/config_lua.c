@@ -944,6 +944,18 @@ static int lua_declare_task(lua_State *state) {
     if (chunk_declared_resolver) {
         return luaL_error(state, "a resolver chunk declares only a resolver");
     }
+    /* A task keeps exec and provision by inheriting them from the toolchain
+       that owns it, which holds only where there IS one: a chunk declaring no
+       toolchain has nothing to pass the capability down from, and a colon-free
+       name names no owner either. */
+    if (chunk_toolchain_count == 0) {
+        if (fr_lua_verbs_env_declared_exec()) {
+            return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+        }
+        if (fr_lua_verbs_env_declared_provision()) {
+            return luaL_error(state, "daukle.provision is available only to a toolchain plugin");
+        }
+    }
     chunk_declared_other = 1;
     luaL_checktype(state, 1, LUA_TTABLE);
 

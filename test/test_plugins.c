@@ -460,6 +460,28 @@ TEST a_plugin_execing_before_it_declares_is_refused_at_the_call(void) {
     PASS();
 }
 
+/* The per-kind gates fire when daukle.language and its siblings are CALLED, so
+   a chunk that provisions at its top level has already fetched and unpacked a
+   tree by then, during `daukle check` and `daukle config print`. Asserting the
+   refusal names daukle.provision is what makes this a refusal test: without the
+   gate the load still fails, on the unreachable url instead. */
+TEST a_plugin_provisioning_before_it_declares_is_refused_at_the_call(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_ERR,
+              fr_config_load_file("test/fixtures/plugin-provision-before-declaring/daukle.toml",
+                                  registry, &manifest, &err));
+    ASSERT(strstr(err.message, "daukle.provision is available only to a toolchain plugin") != NULL);
+    ASSERT(strstr(err.message, "127.0.0.1") == NULL);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 /* daukle.tool alone must still load: the refusal is exec's alone, not tool's. */
 TEST a_language_plugin_declaring_tool_but_not_exec_still_loads(void) {
     fr_error err;
@@ -2774,6 +2796,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_language_plugin_may_not_declare_exec);
     RUN_TEST(a_source_plugin_may_not_declare_exec);
     RUN_TEST(a_plugin_execing_before_it_declares_is_refused_at_the_call);
+    RUN_TEST(a_plugin_provisioning_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_language_plugin_declaring_tool_but_not_exec_still_loads);
     RUN_TEST(a_verb_uses_does_not_know_is_refused);
     RUN_TEST(a_plugin_written_against_a_later_api_says_which);
