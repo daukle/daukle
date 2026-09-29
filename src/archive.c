@@ -27,6 +27,7 @@
 #define ZIP_MADE_ON_UNIX 3u
 
 #define INFLATE_INPUT_BYTES 4096
+#define ARCHIVE_FIRST_MEMBER_BYTES 65536u
 
 typedef struct {
     tinfl_decompressor inflator;
@@ -46,6 +47,7 @@ struct fr_archive {
     long length;
     size_t max_member_bytes;
     char *member_bytes;
+    size_t member_capacity;
 
     inflate_stream *stream;
     size_t offset;
@@ -237,13 +239,39 @@ static int refuse_past_cap(fr_archive *archive, unsigned long long size, fr_erro
 }
 
 /* The bound on the write itself, which is not allowed to depend on the cap
-   having been applied first. */
+   having been applied first.
+   @implNote The buffer grows to the largest member seen rather than to the cap,
+   because committing max_member_bytes up front charges a 2 KB tarball the full
+   256 MiB and a memory-capped container then cannot read an archive that
+   trivially fits. The cap still bounds the growth. */
 static int fits_the_member_buffer(fr_archive *archive, size_t length, fr_error *err) {
     if (length > archive->max_member_bytes) {
         fr_error_set(err, "the archive member \"%s\" does not fit the buffer it is read into",
                      archive->name);
         return 0;
     }
+    if (length + 1 <= archive->member_capacity) return 1;
+
+    size_t capacity = archive->member_capacity;
+    while (capacity < length + 1) {
+        if (capacity > (size_t) -1 / 2) {
+            capacity = length + 1;
+            break;
+        }
+        capacity *= 2;
+    }
+    if (capacity > archive->max_member_bytes && archive->max_member_bytes < (size_t) -1) {
+        capacity = archive->max_member_bytes + 1;
+    }
+
+    char *grown = realloc(archive->member_bytes, capacity);
+    if (grown == NULL) {
+        fr_error_set(err, "there is not enough memory to read the archive member \"%s\"",
+                     archive->name);
+        return 0;
+    }
+    archive->member_bytes = grown;
+    archive->member_capacity = capacity;
     return 1;
 }
 
@@ -503,7 +531,11 @@ int fr_archive_open(const char *path, size_t max_member_bytes, fr_archive **out,
         return FR_ERR;
     }
     archive->max_member_bytes = max_member_bytes;
-    archive->member_bytes = malloc(max_member_bytes + 1);
+    archive->member_capacity = ARCHIVE_FIRST_MEMBER_BYTES;
+    if (max_member_bytes < (size_t) -1 && max_member_bytes + 1 < archive->member_capacity) {
+        archive->member_capacity = max_member_bytes + 1;
+    }
+    archive->member_bytes = malloc(archive->member_capacity);
     if (archive->member_bytes == NULL) {
         fr_error_set(err, "there is not enough memory to read an archive");
         fr_archive_close(archive);
