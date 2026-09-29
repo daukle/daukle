@@ -19,9 +19,10 @@ int fr_http_get(const char *url, const fr_http_header *headers, size_t header_co
                 char **out_body, size_t *out_length, fr_error *err);
 
 /* Streams the response to path, never holding more than one buffer of it.
-   digest may be NULL; when it is not, it is updated with every byte written,
-   so the caller needs no second read of the file to verify it. On any
-   failure the partial file is removed before returning. */
+   digest may be NULL; when it is not, this function initialises it and
+   updates it with every byte written, so the caller needs no second read of
+   the file to verify it. On any failure the partial file is removed before
+   returning. */
 int fr_http_get_to_file(const char *url, const fr_http_header *headers, size_t header_count,
                         const char *path, size_t max_bytes, fr_sha256 *digest,
                         size_t *out_length, fr_error *err);
