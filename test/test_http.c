@@ -43,6 +43,39 @@ TEST restores_the_previous_backend(void) {
     PASS();
 }
 
+/* Runs against the installed (real) backend rather than stub_get: what this
+   pins is the platform backend's own redirect handling, which routes_through_
+   the_installed_backend never exercises. */
+TEST the_memory_fetch_follows_a_redirect(void) {
+    static char message[512];
+    const char body[] = "redirected-payload";
+
+    fr_test_server *server = fr_test_server_create();
+    fr_test_server_add_redirect(server, "/from", 302, "/to");
+    fr_test_server_add_body_bytes(server, "/to", body, sizeof body - 1);
+    fr_test_server_start(server);
+
+    char url[256];
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/from", fr_test_server_port(server));
+
+    char *response_body = NULL;
+    size_t length = 0;
+    fr_error err;
+    int result = fr_http_get(url, NULL, 0, &response_body, &length, &err);
+    int reached = fr_test_server_was_requested(server, "/to");
+    int matches = result == FR_OK && response_body != NULL && strcmp(response_body, body) == 0;
+    free(response_body);
+    fr_test_server_stop(server);
+    fr_test_server_free(server);
+
+    snprintf(message, sizeof message, "result %d, length %zu", result, length);
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERT_EQm(message, sizeof body - 1, length);
+    ASSERTm(message, matches);
+    ASSERTm(message, reached);
+    PASS();
+}
+
 TEST a_streamed_body_lands_in_the_file_with_its_digest(void) {
     static char message[512];
     char body[70000];
@@ -153,6 +186,7 @@ int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(routes_through_the_installed_backend);
     RUN_TEST(restores_the_previous_backend);
+    RUN_TEST(the_memory_fetch_follows_a_redirect);
     RUN_TEST(a_streamed_body_lands_in_the_file_with_its_digest);
     RUN_TEST(a_body_past_the_ceiling_is_refused_by_name);
     RUN_TEST(the_streamed_fetch_follows_a_redirect);
