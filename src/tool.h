@@ -23,4 +23,14 @@ int fr_tool_resolve(const char *name, char **out_path, fr_error *err);
    to the same test as a name found on the search path. */
 int fr_tool_is_executable_file(const char *path);
 
+/* The absolute form of path, which the caller frees, or NULL when it cannot be
+   resolved. Every program path reaches the exec backends through this, because
+   a relative one makes the two disagree about what it names: POSIX chdir()s
+   into options.cwd before execv(), so the program would resolve against the
+   child's new directory, while CreateProcess resolves it against daukle's own.
+   Both a PATH entry and a provisioned root (which inherits DAUKLE_CACHE_DIR
+   verbatim) may be relative, which is why this is shared rather than local to
+   the search. */
+char *fr_tool_absolute_path(const char *path);
+
 #endif

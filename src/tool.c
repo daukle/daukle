@@ -55,16 +55,16 @@ static char *first_existing(const char *dir, size_t dir_length, const char *name
     return NULL;
 }
 
-/* A PATH entry may itself be relative, and the two backends would then
-   disagree about what it means: POSIX chdir()s into options.cwd before
-   execv(), so the program would resolve against the child's new directory,
-   while CreateProcess resolves it against daukle's own. */
-static int absolute_form(char *candidate, const char *name, char **out_path, fr_error *err) {
+char *fr_tool_absolute_path(const char *path) {
 #ifdef _WIN32
-    char *absolute = _fullpath(NULL, candidate, 0);
+    return _fullpath(NULL, path, 0);
 #else
-    char *absolute = realpath(candidate, NULL);
+    return realpath(path, NULL);
 #endif
+}
+
+static int absolute_form(char *candidate, const char *name, char **out_path, fr_error *err) {
+    char *absolute = fr_tool_absolute_path(candidate);
     free(candidate);
     if (absolute == NULL) {
         fr_error_set(err, "\"%s\" was found but its absolute path could not be resolved", name);

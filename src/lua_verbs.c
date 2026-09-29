@@ -506,8 +506,20 @@ static int root_tool(lua_State *state) {
         return luaL_error(state, "the provisioned root holds no executable \"%s\"", member);
     }
 
+    /* A provisioned root inherits DAUKLE_CACHE_DIR verbatim and may be relative. */
+    char *absolute = fr_tool_absolute_path(path);
+    if (absolute == NULL) {
+        return luaL_error(state, "\"%s\" is in the provisioned root but its absolute path could"
+                                 " not be resolved", member);
+    }
+
     fr_lua_tool *handle = lua_newuserdatauv(state, sizeof *handle, 0);
-    snprintf(handle->path, sizeof handle->path, "%s", path);
+    int path_written = snprintf(handle->path, sizeof handle->path, "%s", absolute);
+    free(absolute);
+    if (path_written < 0 || (size_t) path_written >= sizeof handle->path) {
+        return luaL_error(state, "the absolute path of \"%s\" is too long for a tool handle",
+                          member);
+    }
     snprintf(handle->name, sizeof handle->name, "%s", member_base_name(member));
     luaL_getmetatable(state, FR_TOOL_HANDLE);
     lua_setmetatable(state, -2);

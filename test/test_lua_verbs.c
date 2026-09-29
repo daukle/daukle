@@ -1093,12 +1093,25 @@ TEST an_older_library_environments_raiser_survives_a_newer_one_being_built(void)
 #define PROVISION_PIN "1111111111111111111111111111111111111111111111111111111111111111"
 #define PROVISION_URL "http://127.0.0.1:1/toolchain.tar"
 
-static void use_private_provision_cache(const char *name, char *out, size_t size) {
+static void use_cache_directory(const char *directory, char *saved, size_t saved_size) {
+    const char *previous = getenv("DAUKLE_CACHE_DIR");
+    snprintf(saved, saved_size, "%s", previous != NULL ? previous : "");
+    fr_test_remove_tree(directory);
+    fr_test_make_directory(directory);
+    fr_test_set_env("DAUKLE_CACHE_DIR", directory);
+}
+
+/* An empty saved value means there was none, and unsetting is what restores
+   that: leaving one set would make whichever test runs next share this cache. */
+static void restore_cache_directory(const char *saved) {
+    fr_test_set_env("DAUKLE_CACHE_DIR", saved[0] != '\0' ? saved : NULL);
+}
+
+static void use_private_provision_cache(const char *name, char *out, size_t size, char *saved,
+                                        size_t saved_size) {
     snprintf(out, size, "%s/verbs-provision-%s-%d", fr_test_temp_base(), name,
              fr_test_process_id());
-    fr_test_remove_tree(out);
-    fr_test_make_directory(out);
-    fr_test_set_env("DAUKLE_CACHE_DIR", out);
+    use_cache_directory(out, saved, saved_size);
 }
 
 static int write_stub_program(const char *path) {
@@ -1223,8 +1236,9 @@ TEST a_root_handle_refuses_a_member_that_climbs_out(void) {
     static char climb_message[512];
     static char drive_message[512];
     char cache[1024];
+    char saved_cache[1024];
     char root[1024];
-    use_private_provision_cache("climb", cache, sizeof cache);
+    use_private_provision_cache("climb", cache, sizeof cache, saved_cache, sizeof saved_cache);
     int prepared = prepare_provisioned_root(root, sizeof root);
 
     fr_registry *registry = fr_registry_create();
@@ -1251,6 +1265,7 @@ TEST a_root_handle_refuses_a_member_that_climbs_out(void) {
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
 
     ASSERT(prepared);
     ASSERT(rooted);
@@ -1264,8 +1279,9 @@ TEST a_root_handle_refuses_a_member_that_climbs_out(void) {
 TEST a_root_handle_refuses_a_batch_file(void) {
     static char message[512];
     char cache[1024];
+    char saved_cache[1024];
     char root[1024];
-    use_private_provision_cache("batch", cache, sizeof cache);
+    use_private_provision_cache("batch", cache, sizeof cache, saved_cache, sizeof saved_cache);
     int prepared = prepare_provisioned_root(root, sizeof root);
 
     fr_registry *registry = fr_registry_create();
@@ -1287,6 +1303,7 @@ TEST a_root_handle_refuses_a_batch_file(void) {
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
 
     ASSERT(prepared);
     ASSERT(rooted);
@@ -1298,8 +1315,9 @@ TEST a_root_handle_refuses_a_batch_file(void) {
 TEST a_root_handle_does_not_guess_an_extension(void) {
     static char message[512];
     char cache[1024];
+    char saved_cache[1024];
     char root[1024];
-    use_private_provision_cache("extension", cache, sizeof cache);
+    use_private_provision_cache("extension", cache, sizeof cache, saved_cache, sizeof saved_cache);
     int prepared = prepare_provisioned_root(root, sizeof root);
 
     fr_registry *registry = fr_registry_create();
@@ -1323,12 +1341,104 @@ TEST a_root_handle_does_not_guess_an_extension(void) {
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
 
     ASSERT(prepared);
     ASSERT(rooted);
     ASSERT(named_exactly);
     ASSERT(guessed);
     ASSERTm(message, strstr(message, "bin/java") != NULL);
+    PASS();
+}
+
+TEST a_root_handle_refuses_a_member_spelled_with_a_backslash(void) {
+    static char message[512];
+    char cache[1024];
+    char saved_cache[1024];
+    char root[1024];
+    use_private_provision_cache("backslash", cache, sizeof cache, saved_cache, sizeof saved_cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    /* The member names the file that really is there, so only its spelling can
+       be what the refusal is about. */
+    int refused = rooted
+        && fr_lua_run_in_env(state, "root:tool('bin\\\\java.exe')", "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "backslash") != NULL);
+    PASS();
+}
+
+/* A relative DAUKLE_CACHE_DIR is legitimate and ordinary in CI, and the root a
+   provision returns inherits it verbatim. The handle must still hold an
+   absolute path, or the two exec backends disagree about what it names: POSIX
+   chdir()s into the task's cwd before execv, where Windows resolves against
+   daukle's own directory. The proof is behavioural: exec names the program it
+   could not start, so the message carries the path the handle actually holds. */
+TEST a_root_handle_is_absolute_from_a_relative_cache_directory(void) {
+    static char message[512];
+    char cache[1024];
+    char saved_cache[1024];
+    char root[1024];
+    char working_directory[1024];
+    snprintf(cache, sizeof cache, "build/verbs-provision-relative-%d", fr_test_process_id());
+    use_cache_directory(cache, saved_cache, sizeof saved_cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+    int have_working_directory =
+        fr_test_get_working_directory(working_directory, sizeof working_directory);
+
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    err.message[0] = '\0';
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    lua_State *state = began ? fr_lua_runtime_state() : NULL;
+    const char *verbs[] = { "provision", "exec" };
+    int pushed = began && fr_lua_verbs_push_env(state, verbs, 2, &err) == FR_OK;
+    int env = pushed ? lua_gettop(state) : 0;
+
+    int rooted = pushed && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    /* bin/java.exe holds four bytes of text, so starting it always fails. */
+    int failed_to_start = rooted
+        && fr_lua_run_in_env(state, "daukle.exec(root:tool('bin/java.exe'), {})", "=t", env,
+                             &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERT(have_working_directory);
+    ASSERT(failed_to_start);
+    ASSERTm(message, strstr(message, "bin") != NULL);
+    ASSERTm(message, strstr(message, working_directory) != NULL);
     PASS();
 }
 
@@ -1439,6 +1549,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_root_handle_refuses_a_member_that_climbs_out);
     RUN_TEST(a_root_handle_refuses_a_batch_file);
     RUN_TEST(a_root_handle_does_not_guess_an_extension);
+    RUN_TEST(a_root_handle_refuses_a_member_spelled_with_a_backslash);
+    RUN_TEST(a_root_handle_is_absolute_from_a_relative_cache_directory);
     RUN_TEST(provision_is_refused_while_generating);
     GREATEST_MAIN_END();
 }
