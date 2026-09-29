@@ -6,7 +6,7 @@ set(CORE_FILES
     types.h sync.c sync.h main.c cli.c cli.h config.c config.h
     derived.c derived.h generate.c generate.h tasks.c tasks.h
     plugin_fetch.c plugin_fetch.h tar.c tar.h plugin_modules.c plugin_modules.h
-    plugin_deps.c plugin_deps.h)
+    plugin_deps.c plugin_deps.h archive.c archive.h)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"

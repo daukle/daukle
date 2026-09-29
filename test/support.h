@@ -38,4 +38,15 @@ size_t fr_test_tar_end(char *buffer, size_t offset);
    for a test that edited a field after appending it. */
 void fr_test_tar_fix_checksum(char *buffer, size_t offset);
 
+/* Builds an uncompressed zip in buffer and returns its length. Each of the
+   count entries is name, content, and whether the Unix mode says executable.
+   unix_made_by writes 3 into the high byte of "version made by", which is
+   what decides whether a reader may believe the external attributes. */
+size_t fr_test_zip_build(char *buffer, size_t size, const char *const *names,
+                         const char *const *contents, const int *executable, size_t count,
+                         int unix_made_by);
+
+/* gzip-wraps length bytes of data using miniz, for a .tar.gz fixture. */
+size_t fr_test_gzip(char *out, size_t out_size, const char *data, size_t length);
+
 #endif
