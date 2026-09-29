@@ -45,6 +45,9 @@ static const unsigned char real_zip_bytes[] = {
 static const char real_tool_line[] =
     "a real tool wrote this, a real tool wrote this, a real tool wrote this";
 
+#define ZIP_LOCAL_NAME_OFFSET 30
+#define ZIP_LOCAL_SIZE_OFFSET 22
+
 static int write_bytes_to_file(const char *file_name, const char *bytes, size_t length) {
     FILE *file = fopen(file_name, "wb");
     if (file == NULL) return 0;
@@ -59,38 +62,52 @@ static const char *kind_name(fr_member_kind kind) {
     return "file";
 }
 
-/* Writes archive to a temp file whose suffix the caller chooses, iterates it,
-   and renders what came back as "name:kind:contents|", a symlink's target
-   standing in for its contents, so three formats can be compared against one
-   string. out_kind is optional and reports what the bytes were taken for. */
-static int render_members(const char *bytes, size_t length, const char *suffix,
-                          fr_archive_kind *out_kind, char *out, size_t out_size) {
+typedef struct {
+    fr_archive_kind kind;
+    int first_executable;
+    char rendered[512];
+    char error[512];
+} iteration;
+
+/* Writes archive to a temp file whose suffix the caller chooses and iterates
+   it, recording the kind the bytes were taken for, the first member's execute
+   bit, every member as "name:kind:contents|" with a symlink's target standing
+   in for its contents, and the message of any refusal. first_executable stays
+   -1 when nothing was handed out, so a refusal cannot pass for a member that
+   simply is not executable. */
+static int iterate_archive(const char *bytes, size_t length, const char *suffix, iteration *out) {
+    out->kind = FR_ARCHIVE_ZIP;
+    out->first_executable = -1;
+    out->rendered[0] = '\0';
+    out->error[0] = '\0';
+
     char archive_file[1024];
     snprintf(archive_file, sizeof archive_file, "%s/archive-render-%d%s", fr_test_temp_base(),
              fr_test_process_id(), suffix);
-    out[0] = '\0';
     if (!write_bytes_to_file(archive_file, bytes, length)) return FR_ERR;
 
     fr_archive *archive = NULL;
     fr_error err;
     err.message[0] = '\0';
     int result = fr_archive_open(archive_file, 64 * 1024, &archive, &err);
-    if (result == FR_OK && out_kind != NULL) *out_kind = fr_archive_opened_kind(archive);
+    if (result == FR_OK) out->kind = fr_archive_opened_kind(archive);
 
     size_t used = 0;
     while (result == FR_OK) {
         const fr_archive_member *member = NULL;
         result = fr_archive_next(archive, &member, &err);
         if (result != FR_OK || member == NULL) break;
+        if (out->first_executable < 0) out->first_executable = member->executable;
+
         const char *shown = member->kind == FR_MEMBER_SYMLINK ? member->link_target
                                                              : member->bytes;
         size_t shown_length = member->kind == FR_MEMBER_SYMLINK
                                   ? strlen(member->link_target == NULL ? "" : member->link_target)
                                   : member->length;
-        int written = snprintf(out + used, out_size - used, "%s:%s:%.*s|", member->name,
-                               kind_name(member->kind), (int) shown_length,
+        int written = snprintf(out->rendered + used, sizeof out->rendered - used, "%s:%s:%.*s|",
+                               member->name, kind_name(member->kind), (int) shown_length,
                                shown == NULL ? "" : shown);
-        if (written < 0 || (size_t) written >= out_size - used) {
+        if (written < 0 || (size_t) written >= sizeof out->rendered - used) {
             result = FR_ERR;
             break;
         }
@@ -99,7 +116,15 @@ static int render_members(const char *bytes, size_t length, const char *suffix,
 
     if (archive != NULL) fr_archive_close(archive);
     remove(archive_file);
+    snprintf(out->error, sizeof out->error, "%s", err.message);
     return result;
+}
+
+static size_t build_one_member_zip(char *buffer, size_t size) {
+    const char *names[] = { "a.txt" };
+    const char *contents[] = { "hello" };
+    const int executable[] = { 0 };
+    return fr_test_zip_build(buffer, size, names, contents, executable, 1, 1);
 }
 
 TEST the_kind_is_decided_by_content_not_by_the_url(void) {
@@ -112,11 +137,8 @@ TEST the_kind_is_decided_by_content_not_by_the_url(void) {
     char gz[4096];
     size_t gz_length = fr_test_gzip(gz, sizeof gz, tar, sizeof tar);
 
-    const char *names[] = { "a.txt" };
-    const char *contents[] = { "hello" };
-    const int executable[] = { 0 };
     char zip[4096];
-    size_t zip_length = fr_test_zip_build(zip, sizeof zip, names, contents, executable, 1, 1);
+    size_t zip_length = build_one_member_zip(zip, sizeof zip);
 
     fr_archive_kind kind;
     fr_error err;
@@ -129,25 +151,20 @@ TEST the_kind_is_decided_by_content_not_by_the_url(void) {
 
     /* Each file is named after a format it is not, so a reader that believed
        the suffix would have to be wrong about all three. */
-    fr_archive_kind opened_tar = FR_ARCHIVE_ZIP;
-    fr_archive_kind opened_gz = FR_ARCHIVE_TAR;
-    fr_archive_kind opened_zip = FR_ARCHIVE_TAR_GZ;
-    char from_tar[256];
-    char from_gz[256];
-    char from_zip[256];
-    int tar_named_zip = render_members(tar, sizeof tar, ".zip", &opened_tar, from_tar,
-                                       sizeof from_tar) == FR_OK
-                     && opened_tar == FR_ARCHIVE_TAR;
-    int gz_named_tar = render_members(gz, gz_length, ".tar", &opened_gz, from_gz, sizeof from_gz)
-                           == FR_OK
-                    && opened_gz == FR_ARCHIVE_TAR_GZ;
-    int zip_named_gz = render_members(zip, zip_length, ".tar.gz", &opened_zip, from_zip,
-                                      sizeof from_zip) == FR_OK
-                    && opened_zip == FR_ARCHIVE_ZIP;
+    iteration from_tar;
+    iteration from_gz;
+    iteration from_zip;
+    int tar_named_zip = iterate_archive(tar, sizeof tar, ".zip", &from_tar) == FR_OK
+                     && from_tar.kind == FR_ARCHIVE_TAR;
+    int gz_named_tar = iterate_archive(gz, gz_length, ".tar", &from_gz) == FR_OK
+                    && from_gz.kind == FR_ARCHIVE_TAR_GZ;
+    int zip_named_gz = iterate_archive(zip, zip_length, ".tar.gz", &from_zip) == FR_OK
+                    && from_zip.kind == FR_ARCHIVE_ZIP;
 
     snprintf(message, sizeof message,
              "bytes tar %d gz %d zip %d, named tar %d \"%s\" gz %d \"%s\" zip %d \"%s\"", tar_ok,
-             gz_ok, zip_ok, tar_named_zip, from_tar, gz_named_tar, from_gz, zip_named_gz, from_zip);
+             gz_ok, zip_ok, tar_named_zip, from_tar.rendered, gz_named_tar, from_gz.rendered,
+             zip_named_gz, from_zip.rendered);
     ASSERTm(message, tar_ok);
     ASSERTm(message, gz_ok);
     ASSERTm(message, zip_ok);
@@ -156,9 +173,9 @@ TEST the_kind_is_decided_by_content_not_by_the_url(void) {
     ASSERTm(message, zip_named_gz);
     /* The sniff picks the reader, so a mis-sniff shows up here as a parse
        failure or missing members, not only as a wrong enum. */
-    ASSERT_STR_EQm(message, "a.txt:file:hello|", from_tar);
-    ASSERT_STR_EQm(message, from_tar, from_gz);
-    ASSERT_STR_EQm(message, from_tar, from_zip);
+    ASSERT_STR_EQm(message, "a.txt:file:hello|", from_tar.rendered);
+    ASSERT_STR_EQm(message, from_tar.rendered, from_gz.rendered);
+    ASSERT_STR_EQm(message, from_tar.rendered, from_zip.rendered);
     PASS();
 }
 
@@ -198,41 +215,65 @@ TEST a_tar_a_targz_and_a_zip_iterate_identically(void) {
     char zip[8192];
     size_t zip_length = fr_test_zip_build(zip, sizeof zip, names, contents, executable, 3, 1);
 
-    char from_tar[512];
-    char from_gz[512];
-    char from_zip[512];
-    int tar_ok = render_members(tar, sizeof tar, ".tar", NULL, from_tar, sizeof from_tar) == FR_OK;
-    int gz_ok = render_members(gz, gz_length, ".tar.gz", NULL, from_gz, sizeof from_gz) == FR_OK;
-    int zip_ok = render_members(zip, zip_length, ".zip", NULL, from_zip, sizeof from_zip) == FR_OK;
+    iteration from_tar;
+    iteration from_gz;
+    iteration from_zip;
+    int tar_ok = iterate_archive(tar, sizeof tar, ".tar", &from_tar) == FR_OK;
+    int gz_ok = iterate_archive(gz, gz_length, ".tar.gz", &from_gz) == FR_OK;
+    int zip_ok = iterate_archive(zip, zip_length, ".zip", &from_zip) == FR_OK;
 
-    snprintf(message, sizeof message, "tar \"%s\" gz \"%s\" zip \"%s\"", from_tar, from_gz,
-             from_zip);
+    snprintf(message, sizeof message, "tar \"%s\" gz \"%s\" zip \"%s\"", from_tar.rendered,
+             from_gz.rendered, from_zip.rendered);
     ASSERTm(message, tar_ok && gz_ok && zip_ok);
-    ASSERT_STR_EQm(message, "bin/:dir:|bin/tool:file:payload|lib/data.txt:file:hello|", from_tar);
-    ASSERT_STR_EQm(message, from_tar, from_gz);
-    ASSERT_STR_EQm(message, from_tar, from_zip);
+    ASSERT_STR_EQm(message, "bin/:dir:|bin/tool:file:payload|lib/data.txt:file:hello|",
+                   from_tar.rendered);
+    ASSERT_STR_EQm(message, from_tar.rendered, from_gz.rendered);
+    ASSERT_STR_EQm(message, from_tar.rendered, from_zip.rendered);
     PASS();
 }
 
 TEST a_zip_whose_local_header_contradicts_its_directory_is_refused(void) {
-    static char message[512];
-    const char *names[] = { "a.txt" };
-    const char *contents[] = { "hello" };
-    const int executable[] = { 0 };
+    static char message[1024];
+    /* The first local header starts at offset 0. Disagreeing with the central
+       directory has no innocent cause: it is the parsing differential, and
+       only the two readers' disagreement makes it exploitable. */
+    char wrong_size[4096];
+    size_t wrong_size_length = build_one_member_zip(wrong_size, sizeof wrong_size);
+    wrong_size[ZIP_LOCAL_SIZE_OFFSET] = (char) 0x40;
+
+    char wrong_name[4096];
+    size_t wrong_name_length = build_one_member_zip(wrong_name, sizeof wrong_name);
+    memcpy(wrong_name + ZIP_LOCAL_NAME_OFFSET, "b.txt", 5);
+
+    iteration from_wrong_size;
+    iteration from_wrong_name;
+    int size_result = iterate_archive(wrong_size, wrong_size_length, ".zip", &from_wrong_size);
+    int name_result = iterate_archive(wrong_name, wrong_name_length, ".zip", &from_wrong_name);
+
+    snprintf(message, sizeof message, "size %d \"%s\", name %d \"%s\"", size_result,
+             from_wrong_size.error, name_result, from_wrong_name.error);
+    ASSERT_EQm(message, FR_ERR, size_result);
+    ASSERTm(message, strstr(from_wrong_size.error, "directory") != NULL);
+    ASSERT_EQm(message, FR_ERR, name_result);
+    ASSERTm(message, strstr(from_wrong_name.error, "b.txt") != NULL);
+    PASS();
+}
+
+TEST a_zip64_sized_member_is_refused(void) {
+    static char message[1024];
     char zip[4096];
-    size_t zip_length = fr_test_zip_build(zip, sizeof zip, names, contents, executable, 1, 1);
+    size_t zip_length = build_one_member_zip(zip, sizeof zip);
+    /* The sentinel would otherwise skip the size comparison, which is the one
+       way to disagree with the directory without being caught. */
+    memset(zip + ZIP_LOCAL_SIZE_OFFSET, 0xff, 4);
 
-    /* The first local header starts at offset 0 and carries the uncompressed
-       size at 22. Disagreeing with the central directory has no innocent
-       cause: it is the parsing differential, and only the two readers'
-       disagreement makes it exploitable. */
-    zip[22] = (char) 0x40;
+    iteration result;
+    int refused = iterate_archive(zip, zip_length, ".zip", &result);
 
-    char rendered[512];
-    int result = render_members(zip, zip_length, ".zip", NULL, rendered, sizeof rendered);
-
-    snprintf(message, sizeof message, "result %d, rendered \"%s\"", result, rendered);
-    ASSERT_EQm(message, FR_ERR, result);
+    snprintf(message, sizeof message, "result %d, err \"%s\"", refused, result.error);
+    ASSERT_EQm(message, FR_ERR, refused);
+    ASSERTm(message, strstr(result.error, "zip64") != NULL);
+    ASSERTm(message, strstr(result.error, "a.txt") != NULL);
     PASS();
 }
 
@@ -241,18 +282,74 @@ TEST a_real_gzip_and_a_real_zip_are_read(void) {
     static char expected[256];
     snprintf(expected, sizeof expected, "note.txt:file:%s|", real_tool_line);
 
-    char from_gz[512];
-    char from_zip[512];
-    int gz_ok = render_members((const char *) real_gzip_bytes, sizeof real_gzip_bytes, ".tar.gz",
-                               NULL, from_gz, sizeof from_gz) == FR_OK;
-    int zip_ok = render_members((const char *) real_zip_bytes, sizeof real_zip_bytes, ".zip",
-                                NULL, from_zip, sizeof from_zip) == FR_OK;
+    iteration from_gz;
+    iteration from_zip;
+    int gz_ok = iterate_archive((const char *) real_gzip_bytes, sizeof real_gzip_bytes, ".tar.gz",
+                                &from_gz) == FR_OK;
+    int zip_ok = iterate_archive((const char *) real_zip_bytes, sizeof real_zip_bytes, ".zip",
+                                 &from_zip) == FR_OK;
 
-    snprintf(message, sizeof message, "gz %d \"%s\" zip %d \"%s\"", gz_ok, from_gz, zip_ok,
-             from_zip);
+    snprintf(message, sizeof message, "gz %d \"%s\" zip %d \"%s\"", gz_ok, from_gz.rendered, zip_ok,
+             from_zip.rendered);
     ASSERTm(message, gz_ok && zip_ok);
-    ASSERT_STR_EQm(message, expected, from_gz);
-    ASSERT_STR_EQm(message, expected, from_zip);
+    ASSERT_STR_EQm(message, expected, from_gz.rendered);
+    ASSERT_STR_EQm(message, expected, from_zip.rendered);
+    PASS();
+}
+
+TEST a_zips_execute_bit_is_believed_only_when_it_was_made_on_unix(void) {
+    static char message[512];
+    const char *names[] = { "bin/tool" };
+    const char *contents[] = { "payload" };
+    const int executable[] = { 1 };
+
+    char made_on_unix[4096];
+    size_t unix_length = fr_test_zip_build(made_on_unix, sizeof made_on_unix, names, contents,
+                                           executable, 1, 1);
+    char made_elsewhere[4096];
+    size_t other_length = fr_test_zip_build(made_elsewhere, sizeof made_elsewhere, names, contents,
+                                            executable, 1, 0);
+
+    iteration from_unix;
+    iteration from_elsewhere;
+    int unix_ok = iterate_archive(made_on_unix, unix_length, ".zip", &from_unix) == FR_OK;
+    int other_ok = iterate_archive(made_elsewhere, other_length, ".zip", &from_elsewhere) == FR_OK;
+
+    snprintf(message, sizeof message, "unix %d exec %d, elsewhere %d exec %d", unix_ok,
+             from_unix.first_executable, other_ok, from_elsewhere.first_executable);
+    ASSERTm(message, unix_ok && other_ok);
+    /* Both halves, because one positive assertion passes against a reader that
+       always says yes. The two archives carry identical external attributes. */
+    ASSERT_EQm(message, 1, from_unix.first_executable);
+    ASSERT_EQm(message, 0, from_elsewhere.first_executable);
+    PASS();
+}
+
+TEST a_tar_members_execute_bit_comes_from_its_mode(void) {
+    static char message[512];
+    char executable_tar[FR_TAR_BLOCK * 4];
+    memset(executable_tar, 0, sizeof executable_tar);
+    size_t used = fr_test_tar_append(executable_tar, 0, "bin/tool", '0', "payload", 7);
+    memcpy(executable_tar + 100, "0000755", 8);
+    fr_test_tar_fix_checksum(executable_tar, 0);
+    fr_test_tar_end(executable_tar, used);
+
+    char plain_tar[FR_TAR_BLOCK * 4];
+    memset(plain_tar, 0, sizeof plain_tar);
+    used = fr_test_tar_append(plain_tar, 0, "bin/tool", '0', "payload", 7);
+    fr_test_tar_end(plain_tar, used);
+
+    iteration from_755;
+    iteration from_644;
+    int executable_ok = iterate_archive(executable_tar, sizeof executable_tar, ".tar", &from_755)
+                        == FR_OK;
+    int plain_ok = iterate_archive(plain_tar, sizeof plain_tar, ".tar", &from_644) == FR_OK;
+
+    snprintf(message, sizeof message, "0755 %d exec %d, 0644 %d exec %d", executable_ok,
+             from_755.first_executable, plain_ok, from_644.first_executable);
+    ASSERTm(message, executable_ok && plain_ok);
+    ASSERT_EQm(message, 1, from_755.first_executable);
+    ASSERT_EQm(message, 0, from_644.first_executable);
     PASS();
 }
 
@@ -297,11 +394,11 @@ TEST a_tar_member_that_is_not_a_file_a_directory_or_a_symlink_is_refused(void) {
     size_t used = fr_test_tar_append(tar, 0, "dev/null", '3', "", 0);
     fr_test_tar_end(tar, used);
 
-    char rendered[512];
-    int result = render_members(tar, sizeof tar, ".tar", NULL, rendered, sizeof rendered);
+    iteration result;
+    int refused = iterate_archive(tar, sizeof tar, ".tar", &result);
 
-    snprintf(message, sizeof message, "result %d, rendered \"%s\"", result, rendered);
-    ASSERT_EQm(message, FR_ERR, result);
+    snprintf(message, sizeof message, "result %d, rendered \"%s\"", refused, result.rendered);
+    ASSERT_EQm(message, FR_ERR, refused);
     PASS();
 }
 
@@ -314,12 +411,12 @@ TEST a_tar_symlink_member_carries_its_target(void) {
     fr_test_tar_fix_checksum(tar, 0);
     fr_test_tar_end(tar, used);
 
-    char rendered[512];
-    int result = render_members(tar, sizeof tar, ".tar", NULL, rendered, sizeof rendered);
+    iteration result;
+    int read = iterate_archive(tar, sizeof tar, ".tar", &result);
 
-    snprintf(message, sizeof message, "result %d, rendered \"%s\"", result, rendered);
-    ASSERT_EQm(message, FR_OK, result);
-    ASSERT_STR_EQm(message, "bin/tool:link:real/tool|", rendered);
+    snprintf(message, sizeof message, "result %d, rendered \"%s\"", read, result.rendered);
+    ASSERT_EQm(message, FR_OK, read);
+    ASSERT_STR_EQm(message, "bin/tool:link:real/tool|", result.rendered);
     PASS();
 }
 
@@ -329,7 +426,10 @@ int main(int argc, char **argv) {
     RUN_TEST(bytes_that_are_none_of_the_three_are_refused);
     RUN_TEST(a_tar_a_targz_and_a_zip_iterate_identically);
     RUN_TEST(a_zip_whose_local_header_contradicts_its_directory_is_refused);
+    RUN_TEST(a_zip64_sized_member_is_refused);
     RUN_TEST(a_real_gzip_and_a_real_zip_are_read);
+    RUN_TEST(a_zips_execute_bit_is_believed_only_when_it_was_made_on_unix);
+    RUN_TEST(a_tar_members_execute_bit_comes_from_its_mode);
     RUN_TEST(a_member_larger_than_the_cap_is_refused_by_name);
     RUN_TEST(a_tar_member_that_is_not_a_file_a_directory_or_a_symlink_is_refused);
     RUN_TEST(a_tar_symlink_member_carries_its_target);

@@ -356,7 +356,14 @@ static int local_header_agrees(fr_archive *archive, const mz_zip_archive_file_st
 
     unsigned long flags = read_little_endian(header + 6, 2);
     unsigned long local_size = read_little_endian(header + 22, 4);
-    if (local_size == ZIP_SIZE_IN_ZIP64_EXTRA) return 1;
+    /* The sentinel puts the real size in a zip64 extra field. Reading that
+       field is the only way to keep comparing sizes, and a member at or above
+       4 GiB is not a toolchain, so the subset is refused instead. */
+    if (local_size == ZIP_SIZE_IN_ZIP64_EXTRA) {
+        fr_error_set(err, "the archive member \"%s\" is a zip64 entry, which daukle does not read",
+                     archive->name);
+        return 0;
+    }
     /* Bit 3 moves the sizes to a trailing descriptor and zeroes them here. */
     if ((flags & ZIP_FLAG_DATA_DESCRIPTOR) != 0 && local_size == 0) return 1;
 

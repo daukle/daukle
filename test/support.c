@@ -269,9 +269,11 @@ static unsigned long unix_mode_of(const char *name, int executable) {
 }
 
 /* miniz's writer has no say over "version made by" or the external attributes,
-   so the fixture patches the central directory it produced. */
-static void claim_unix_attributes(unsigned char *zip, size_t length, const char *const *names,
-                                  const int *executable) {
+   so the fixture patches the central directory it produced. The attributes are
+   written either way and only unix_made_by decides whether a reader may believe
+   them, which is what lets one test pin both halves of that rule. */
+static void write_unix_attributes(unsigned char *zip, size_t length, const char *const *names,
+                                  const int *executable, int unix_made_by) {
     if (length < ZIP_END_OF_CENTRAL_DIRECTORY_SIZE) return;
     size_t end = length - ZIP_END_OF_CENTRAL_DIRECTORY_SIZE;
     while (read_little_endian(zip + end, 4) != ZIP_END_OF_CENTRAL_DIRECTORY) {
@@ -285,7 +287,7 @@ static void claim_unix_attributes(unsigned char *zip, size_t length, const char 
         if (entry + ZIP_CENTRAL_HEADER_SIZE > length) return;
         if (read_little_endian(zip + entry, 4) != ZIP_CENTRAL_HEADER) return;
 
-        zip[entry + 5] = 3;
+        if (unix_made_by) zip[entry + 5] = 3;
         write_little_endian(zip + entry + 38, 4, unix_mode_of(names[index], executable[index]) << 16);
 
         entry += ZIP_CENTRAL_HEADER_SIZE + (size_t) read_little_endian(zip + entry + 28, 2)
@@ -320,8 +322,8 @@ size_t fr_test_zip_build(char *buffer, size_t size, const char *const *names,
     if (length > 0) memcpy(buffer, built, length);
     mz_zip_writer_end(&zip);
 
-    if (length > 0 && unix_made_by) {
-        claim_unix_attributes((unsigned char *) buffer, length, names, executable);
+    if (length > 0) {
+        write_unix_attributes((unsigned char *) buffer, length, names, executable, unix_made_by);
     }
     return length;
 }
