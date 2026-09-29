@@ -276,12 +276,12 @@ static int protected_toolchain_generate(lua_State *state) {
         const cJSON *member = block->child;
         while (member != NULL) {
             /* dependencies already reach the plugin as their own argument, so
-               config must not also carry the raw copy. version is dropped too:
-               its raw constraint has no plugin use in this version (spec
-               section 7), and the "version" argument now carries the
-               project's own version instead. */
-            if (strcmp(member->string, "version") != 0 &&
-                strcmp(member->string, "dependencies") != 0) {
+               config must not also carry the raw copy. version stays: a
+               generated file may legitimately depend on the requested
+               version, e.g. "engines": { "node": ">=20" }, and core does not
+               parse the string to know whether it is a version, a range or a
+               codename. */
+            if (strcmp(member->string, "dependencies") != 0) {
                 fr_error push_err;
                 if (fr_lua_push_json(state, member, &push_err) != FR_OK) {
                     return luaL_error(state, "%s", push_err.message);

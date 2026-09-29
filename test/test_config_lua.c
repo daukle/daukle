@@ -14,6 +14,7 @@
 #include "sha256.h"
 #include "sync.h"
 #include "support.h"
+#include "toolreport.h"
 
 #include "cJSON.h"
 
@@ -565,16 +566,15 @@ TEST a_toolchain_generate_bridges_project_config_root_and_host(void) {
     PASS();
 }
 
-/* config is built member by member skipping "version" and "dependencies"
-   specifically, not by duplicating the block and deleting keys: dependencies
-   already reaches the plugin as its own resolved argument, so a raw copy in
-   config would let a plugin see it twice, once raw and once resolved.
-   version's raw constraint has no plugin use in this version (spec section
-   7) and is dropped for the same reason. A plugin that reads
-   toolchain.config.version or toolchain.config.dependencies must see nil
-   either way, and this only shows up in the set of keys the table actually
-   holds. Same cleanup-before-ASSERT shape as above. */
-TEST a_toolchain_config_excludes_the_reserved_version_and_dependencies_keys(void) {
+/* config is built member by member skipping "dependencies" specifically, not
+   by duplicating the block and deleting keys: dependencies already reaches
+   the plugin as its own resolved argument, so a raw copy in config would let
+   a plugin see it twice, once raw and once resolved. version carries no such
+   duplication (the tests below cover it) and is no longer skipped. A plugin
+   that reads toolchain.config.dependencies must see nil, and this only shows
+   up in the set of keys the table actually holds. Same cleanup-before-ASSERT
+   shape as above. */
+TEST a_toolchain_config_excludes_the_reserved_dependencies_key(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest = {0};
     fr_error err;
@@ -605,7 +605,113 @@ TEST a_toolchain_config_excludes_the_reserved_version_and_dependencies_keys(void
     ASSERT(plugin != NULL);
     ASSERT_EQ(FR_OK, status);
     ASSERT_EQ(1, (int) file_count);
-    ASSERT_STR_EQ("flag,target", text);
+    ASSERT_STR_EQ("flag,target,version", text);
+    PASS();
+}
+
+/* The task context already carries the toolchain's declared version as its
+   own field (config_lua.c's protected_task_run); generate had no equivalent,
+   leaving one fact readable from one plugin kind and not the other, before
+   provisioning gave a generate-time plugin a use for it. */
+TEST the_generate_context_carries_the_toolchain_version(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest = {0};
+    fr_error err;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-config/daukle.toml",
+                                              registry, &manifest, &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int status = FR_ERR;
+    if (plugin != NULL) {
+        fr_error gen_err;
+        status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
+                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+    }
+
+    char text[256] = "";
+    if (status == FR_OK && file_count == 1) snprintf(text, sizeof text, "%s", files[0].text);
+
+    fr_derived_free_files(files, file_count);
+    if (loaded) fr_manifest_free(&manifest);
+    if (built) fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT(plugin != NULL);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_EQ(1, (int) file_count);
+    ASSERT(strstr(text, "version") != NULL);
+    PASS();
+}
+
+/* The strip is narrowing, not disappearing: dependencies still reach the
+   plugin as their own resolved argument and must not also appear in config,
+   even once version is let through. */
+TEST the_generate_context_still_hides_dependencies_from_config(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest = {0};
+    fr_error err;
+    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-config/daukle.toml",
+                                              registry, &manifest, &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int status = FR_ERR;
+    if (plugin != NULL) {
+        fr_error gen_err;
+        status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
+                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+    }
+
+    char text[256] = "";
+    if (status == FR_OK && file_count == 1) snprintf(text, sizeof text, "%s", files[0].text);
+
+    fr_derived_free_files(files, file_count);
+    if (loaded) fr_manifest_free(&manifest);
+    if (built) fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT(plugin != NULL);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_EQ(1, (int) file_count);
+    ASSERT(strstr(text, "dependencies") == NULL);
+    PASS();
+}
+
+/* main.c has no test binary (see its own print_plugin_report comment), so
+   this exercises the row table print_toolreport() reads from
+   (fr_toolreport_row_count/fr_toolreport_row_at) rather than main.c's
+   printed output, which nothing here can capture. */
+TEST a_provisioned_root_is_readable_as_a_toolreport_row(void) {
+    static char label[128];
+    static char url[1024];
+    static char digest[65];
+    snprintf(label, sizeof label, "temurin 21.0.5");
+    snprintf(url, sizeof url, "https://example.test/jdk.tar.gz");
+    snprintf(digest, sizeof digest,
+             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+
+    fr_toolreport_reset();
+    fr_toolreport_provisioned(label, url, digest, 0);
+
+    size_t count = fr_toolreport_row_count();
+    const fr_toolreport_row *row = count == 1 ? fr_toolreport_row_at(0) : NULL;
+
+    fr_toolreport_reset();
+
+    ASSERT_EQ(1u, (unsigned) count);
+    ASSERT(row != NULL);
+    ASSERT_STR_EQ(label, row->label);
+    ASSERT_STR_EQ(url, row->url);
+    ASSERT_STR_EQ(digest, row->digest);
     PASS();
 }
 
@@ -2070,7 +2176,10 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_declares_a_toolchain_and_it_reaches_the_registry);
     RUN_TEST(a_toolchain_needs_a_generate_function);
     RUN_TEST(a_toolchain_generate_bridges_project_config_root_and_host);
-    RUN_TEST(a_toolchain_config_excludes_the_reserved_version_and_dependencies_keys);
+    RUN_TEST(a_toolchain_config_excludes_the_reserved_dependencies_key);
+    RUN_TEST(the_generate_context_carries_the_toolchain_version);
+    RUN_TEST(the_generate_context_still_hides_dependencies_from_config);
+    RUN_TEST(a_provisioned_root_is_readable_as_a_toolreport_row);
     RUN_TEST(a_toolchain_generate_must_return_a_table);
     RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_path);
     RUN_TEST(a_toolchain_generate_refuses_a_non_string_file_contents);
