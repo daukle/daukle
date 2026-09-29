@@ -1083,6 +1083,97 @@ TEST a_refused_resolver_chunk_reports_none_declared(void) {
     PASS();
 }
 
+/* Builds a chunk that declares "provision" in uses and then makes one further
+   declaration, and loads it. is_resolver mirrors load_resolver_chunk above:
+   a resolver may only ever be declared by a chunk acquired as one, so this
+   routes through it for that one kind and through fr_lua_plugin_load
+   directly for every other kind. */
+static int load_declaring_provision(const char *declaration, int is_resolver, fr_error *err) {
+    char source[1024];
+    snprintf(source, sizeof source,
+             "daukle.plugin{ api = 1, uses = { \"provision\" } }\n%s\n", declaration);
+    const char *verbs[] = { "provision" };
+    return is_resolver
+        ? load_resolver_chunk(source, "provision-refusal.lua", verbs, 1, err)
+        : fr_lua_plugin_load(source, strlen(source), "provision-refusal.lua", verbs, 1, NULL, NULL, err);
+}
+
+/* Three separate tests, not a loop over the three kinds: child spec 8 found
+   that the exec refusal lives in daukle.language and daukle.source
+   individually, so daukle.resolver refused nothing until it carried the same
+   check on its own. A loop would keep passing the day a fourth kind is added
+   without one; deleting one kind's check here must turn exactly one test red. */
+TEST a_language_plugin_declaring_provision_is_refused(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = load_declaring_provision(
+        "daukle.language{ name = 'x', apply = function() return {} end }", 0, &err);
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_ERR, status);
+    ASSERTm(message, strstr(message, "provision") != NULL);
+    ASSERTm(message, strstr(message, "toolchain") != NULL);
+    PASS();
+}
+
+TEST a_source_plugin_declaring_provision_is_refused(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = load_declaring_provision(
+        "daukle.source{ name = 'x', load = function() return {} end }", 0, &err);
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_ERR, status);
+    ASSERTm(message, strstr(message, "provision") != NULL);
+    PASS();
+}
+
+TEST a_resolver_plugin_declaring_provision_is_refused(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = load_declaring_provision(
+        "daukle.resolver{ resolve = function(c) return { url = c } end }", 1, &err);
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_ERR, status);
+    ASSERTm(message, strstr(message, "provision") != NULL);
+    PASS();
+}
+
+/* The positive case, and it is not optional: without it, all three refusals
+   above would pass against an implementation that refuses "provision" to
+   every kind, which would make the capability unreachable. */
+TEST a_toolchain_plugin_declaring_provision_loads(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int status = load_declaring_provision(
+        "daukle.toolchain{ name = 'x', generate = function() return {} end }", 0, &err);
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_OK, status);
+    PASS();
+}
+
 /* Loads a fixture that declares a directory-form plugin and reports both the
    status and the message, so each test below asserts on one clause rather than
    on whichever failure happened to come first. */
@@ -2000,6 +2091,10 @@ int main(int argc, char **argv) {
     RUN_TEST(a_hostile_metatable_returning_a_function_is_never_used_as_resolve);
     RUN_TEST(a_chunk_declaring_no_resolver_reports_none_declared);
     RUN_TEST(a_refused_resolver_chunk_reports_none_declared);
+    RUN_TEST(a_language_plugin_declaring_provision_is_refused);
+    RUN_TEST(a_source_plugin_declaring_provision_is_refused);
+    RUN_TEST(a_resolver_plugin_declaring_provision_is_refused);
+    RUN_TEST(a_toolchain_plugin_declaring_provision_loads);
     RUN_TEST(a_module_supplies_what_the_entry_chunk_requires);
     RUN_TEST(a_module_may_declare_a_language);
     RUN_TEST(a_module_may_not_use_a_verb_the_plugin_did_not_declare);

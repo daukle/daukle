@@ -10,6 +10,7 @@
 #include "registry.h"
 #include "support.h"
 #include "sync.h"
+#include "toolreport.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -330,8 +331,12 @@ TEST tool_refuses_a_drive_letter_prefix(void) {
 }
 
 /* The spec's own example is daukle.tool("gcc", ">=13"). Ignoring it would hand
-   back an unversioned handle to an author who believes a constraint holds. */
-TEST tool_refuses_a_version_constraint_it_cannot_honour(void) {
+   back an unversioned handle to an author who believes a constraint holds.
+   The refusal is permanent (spec section 5.2): core will never match a
+   version constraint, so the message must not promise a future it does not
+   have. */
+TEST tool_refuses_a_bare_string_second_argument_permanently(void) {
+    static char message[512];
     fr_error err;
     fr_registry *registry = fr_registry_create();
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
@@ -341,13 +346,49 @@ TEST tool_refuses_a_version_constraint_it_cannot_honour(void) {
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
     int env = lua_gettop(state);
 
-    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
-        "daukle.tool('test_lua_verbs', '>=13')", "=t", env, &err));
-    ASSERT(strstr(err.message, "version constraints are not implemented") != NULL);
+    int refused = fr_lua_run_in_env(state,
+        "daukle.tool('test_lua_verbs', '>=13')", "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
 
     lua_settop(state, 0);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "not implemented yet") == NULL);
+    ASSERTm(message, strstr(message, "does not match version constraints") != NULL);
+    PASS();
+}
+
+/* daukle.tool's second argument is otherwise an options table: "as" is read
+   raw (never lua_getfield, for the reason config_lua.c's raw_getfield
+   documents), validated the same way daukle.provision's own "as" field is,
+   and handed to the tool report so an installed tool's line can carry a
+   plugin-chosen label instead of only its bare name. */
+TEST tool_takes_an_options_table_with_a_label(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    fr_toolreport_reset();
+    int loaded = fr_lua_run_in_env(state,
+        "daukle.tool('test_lua_verbs', { as = 'system child 1.0' })", "=t", env, &err) == FR_OK;
+    size_t rows = fr_toolreport_row_count();
+    char label[128];
+    snprintf(label, sizeof label, "%s", rows > 0 ? fr_toolreport_row_at(0)->label : "");
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT_EQ(1u, rows);
+    ASSERT_STR_EQ("system child 1.0", label);
     PASS();
 }
 
@@ -1516,7 +1557,8 @@ int main(int argc, char **argv) {
     RUN_TEST(tool_refuses_a_name_with_an_interior_separator);
     RUN_TEST(tool_refuses_a_bare_climb);
     RUN_TEST(tool_refuses_a_drive_letter_prefix);
-    RUN_TEST(tool_refuses_a_version_constraint_it_cannot_honour);
+    RUN_TEST(tool_refuses_a_bare_string_second_argument_permanently);
+    RUN_TEST(tool_takes_an_options_table_with_a_label);
     RUN_TEST(tool_refuses_a_name_too_long_for_a_handle);
     RUN_TEST(the_tool_handle_metatable_cannot_be_reached_from_a_plugin);
     RUN_TEST(exec_runs_in_a_cwd_inside_the_project_directory);

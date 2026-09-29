@@ -328,14 +328,36 @@ static int tool_name_is_valid(const char *name) {
     return strpbrk(name, "/\\") == NULL;
 }
 
+/* Reads the "as" field of the options table at table_index without honoring
+   a metatable, for the same reason raw_getfield in config_lua.c does:
+   __index is a base global reachable in this sandbox. The value stays on the
+   stack, since the returned pointer points into it. */
+static const char *tool_option_label(lua_State *state, int table_index) {
+    lua_pushstring(state, "as");
+    lua_rawget(state, table_index);
+    return lua_type(state, -1) == LUA_TSTRING ? lua_tostring(state, -1) : NULL;
+}
+
 static int verb_tool(lua_State *state) {
     if (fr_lua_generation_is_running()) {
         return luaL_error(state, "daukle.tool is not available while generating; "
                                  "generation is a pure function of the manifest");
     }
     const char *name = luaL_checkstring(state, 1);
+    const char *label = NULL;
     if (!lua_isnoneornil(state, 2)) {
-        return luaL_error(state, "daukle.tool: version constraints are not implemented yet");
+        if (lua_type(state, 2) == LUA_TSTRING) {
+            return luaL_error(state, "daukle.tool does not match version constraints: resolving"
+                                     " one is the plugin's own business, not core's");
+        }
+        luaL_checktype(state, 2, LUA_TTABLE);
+        label = tool_option_label(state, 2);
+        if (label == NULL && !lua_isnil(state, -1)) {
+            return luaL_error(state, "daukle.tool option \"as\" must be a string");
+        }
+        if (label != NULL && !fr_toolreport_label_is_safe(label)) {
+            return luaL_error(state, "daukle.tool option \"as\" may not hold a control character");
+        }
     }
     if (!tool_name_is_valid(name)) {
         return luaL_error(state, "\"%s\" is not a tool name: a tool is named, not pathed", name);
@@ -349,6 +371,7 @@ static int verb_tool(lua_State *state) {
     char *path = NULL;
     fr_error err;
     if (fr_tool_resolve(name, &path, &err) != FR_OK) return luaL_error(state, "%s", err.message);
+    fr_toolreport_used_installed(name, label, path);
 
     fr_lua_tool *handle = lua_newuserdatauv(state, sizeof *handle, 0);
     int path_written = snprintf(handle->path, sizeof handle->path, "%s", path);
