@@ -24,19 +24,39 @@ void fr_toolreport_reset(void) {
     g_row_count = 0;
 }
 
-/* An unsafe label is treated the same as an absent one. Neither producer
-   function below has a way to refuse a caller's argument, so silently
-   keeping an unsafe label would hand the terminal to whatever supplied it,
-   which is the exact outcome fr_toolreport_label_is_safe exists to prevent. */
+/* An unsafe or empty label is treated the same as an absent one. Neither
+   producer function below has a way to refuse a caller's argument, and an
+   empty string passes fr_toolreport_label_is_safe vacuously, so both would
+   otherwise print a blank where the rule "a missing label falls back to a
+   fact" requires one. */
 static const char *effective_label(const char *label, const char *fallback) {
-    if (label != NULL && fr_toolreport_label_is_safe(label)) return label;
+    if (label != NULL && label[0] != '\0' && fr_toolreport_label_is_safe(label)) return label;
     return fallback;
 }
 
-static const char *url_last_component(const char *url) {
-    if (url == NULL) return "";
-    const char *slash = strrchr(url, '/');
-    return slash != NULL ? slash + 1 : url;
+/* Trailing separators are stripped before searching, so a url ending in "/"
+   names its directory rather than nothing. If the url is nothing but
+   separators, out is the whole url: still a fact, never blank. */
+static void url_last_component(const char *url, char *out, size_t out_size) {
+    if (url == NULL) {
+        out[0] = '\0';
+        return;
+    }
+
+    size_t end = strlen(url);
+    while (end > 0 && url[end - 1] == '/') end--;
+
+    size_t start = end;
+    while (start > 0 && url[start - 1] != '/') start--;
+
+    if (start == end) {
+        snprintf(out, out_size, "%s", url);
+        return;
+    }
+    size_t length = end - start;
+    if (length >= out_size) length = out_size - 1;
+    memcpy(out, url + start, length);
+    out[length] = '\0';
 }
 
 static int already_reported(row_kind kind, const char *key) {
@@ -73,7 +93,10 @@ void fr_toolreport_provisioned(const char *label, const char *url, const char *d
                                int cached) {
     if (already_reported(ROW_PROVISIONED, digest)) return;
 
-    const char *shown_label = effective_label(label, url_last_component(url));
+    /* Sized like fr_toolreport_row.url, since a whole-url fallback becomes it. */
+    char last_component[1024];
+    url_last_component(url, last_component, sizeof last_component);
+    const char *shown_label = effective_label(label, last_component);
     fprintf(stderr, "provisioning %s (%s)\n  %s\n  sha256 %s\n", shown_label,
             cached ? "cached" : "downloaded", url, digest);
     record(ROW_PROVISIONED, shown_label, url, digest, cached);

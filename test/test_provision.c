@@ -440,6 +440,38 @@ TEST the_row_keeps_the_url_and_digest_whatever_the_label_says(void) {
     PASS();
 }
 
+TEST an_empty_label_falls_back_to_a_fact_rather_than_to_nothing(void) {
+    static char message[512];
+    fr_toolreport_reset();
+
+    fr_toolreport_used_installed("gcc", "", "/usr/bin/gcc");
+
+    const fr_toolreport_row *installed = fr_toolreport_row_at(0);
+    snprintf(message, sizeof message, "installed label \"%s\"",
+             installed == NULL ? "" : installed->label);
+
+    ASSERTm(message, installed != NULL);
+    ASSERTm(message, strcmp(installed->label, "gcc") == 0);
+    PASS();
+}
+
+TEST a_url_ending_in_a_slash_still_falls_back_to_a_fact(void) {
+    static char message[512];
+    fr_toolreport_reset();
+
+    const char *url = "https://example.invalid/toolchains/temurin-21/";
+    const char *digest = "fedcba0987654321fedcba0987654321fedcba0987654321fedcba09876543";
+    fr_toolreport_provisioned(NULL, url, digest, 0);
+
+    const fr_toolreport_row *row = fr_toolreport_row_at(0);
+    snprintf(message, sizeof message, "provisioned label \"%s\"", row == NULL ? "" : row->label);
+
+    ASSERTm(message, row != NULL);
+    ASSERTm(message, row->label[0] != '\0');
+    ASSERTm(message, strcmp(row->label, "temurin-21") == 0);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_pinned_archive_is_fetched_verified_and_unpacked);
@@ -452,5 +484,7 @@ int main(int argc, char **argv) {
     RUN_TEST(one_line_per_distinct_tool_per_run);
     RUN_TEST(a_missing_label_falls_back_to_a_fact_rather_than_to_nothing);
     RUN_TEST(the_row_keeps_the_url_and_digest_whatever_the_label_says);
+    RUN_TEST(an_empty_label_falls_back_to_a_fact_rather_than_to_nothing);
+    RUN_TEST(a_url_ending_in_a_slash_still_falls_back_to_a_fact);
     GREATEST_MAIN_END();
 }
