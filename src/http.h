@@ -1,11 +1,13 @@
 #ifndef DAUKLE_HTTP_H
 #define DAUKLE_HTTP_H
 
+#include "sha256.h"
 #include "types.h"
 
 #include <stddef.h>
 
 #define FR_HTTP_MAX_BODY (8u * 1024u * 1024u)
+#define FR_HTTP_MAX_FILE (1024u * 1024u * 1024u)
 #define FR_HTTP_MAX_REDIRECTS 5
 
 typedef struct { const char *name; const char *value; } fr_http_header;
@@ -15,6 +17,14 @@ typedef int (*fr_http_fn)(const char *url, const fr_http_header *headers, size_t
 
 int fr_http_get(const char *url, const fr_http_header *headers, size_t header_count,
                 char **out_body, size_t *out_length, fr_error *err);
+
+/* Streams the response to path, never holding more than one buffer of it.
+   digest may be NULL; when it is not, it is updated with every byte written,
+   so the caller needs no second read of the file to verify it. On any
+   failure the partial file is removed before returning. */
+int fr_http_get_to_file(const char *url, const fr_http_header *headers, size_t header_count,
+                        const char *path, size_t max_bytes, fr_sha256 *digest,
+                        size_t *out_length, fr_error *err);
 
 /* The most headers a resolver may return. Bounded rather than grown because
    the only producer is a plugin, and how much core allocates is not a
