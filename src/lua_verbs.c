@@ -471,6 +471,8 @@ static int verb_provision(lua_State *state) {
         return luaL_error(state, "%s", err.message);
     }
     fr_toolreport_provisioned(label, url, digest, result.was_cached);
+    fr_toolreport_symlinks_skipped(digest, result.unpack.symlinks_skipped,
+                                   result.unpack.first_symlink_skipped);
 
     fr_lua_root *handle = lua_newuserdatauv(state, sizeof *handle, 0);
     snprintf(handle->root, sizeof handle->root, "%s", result.root);

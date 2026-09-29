@@ -16,6 +16,8 @@ typedef struct {
     char digest[65];
     int cached;
     int provisioned;
+    size_t symlinks_skipped;
+    char first_symlink_skipped[256];
 } fr_toolreport_row;
 
 /* Refuses any control character, including every ANSI escape: a label is
@@ -37,6 +39,13 @@ void fr_toolreport_used_installed(const char *name, const char *label, const cha
    line can never be mistaken for something the label supplied. */
 void fr_toolreport_provisioned(const char *label, const char *url, const char *digest,
                                int cached);
+
+/* Adds the links an unpack left out to the row digest already named, and
+   writes them to stderr under it. Nothing is printed when count is zero, and a
+   count that IS non-zero is never silent: a toolchain missing the links it
+   shipped with is a degradation, and an unreported one is the failure mode
+   this whole module exists to prevent. */
+void fr_toolreport_symlinks_skipped(const char *digest, size_t count, const char *first_name);
 
 size_t fr_toolreport_row_count(void);
 const fr_toolreport_row *fr_toolreport_row_at(size_t index);

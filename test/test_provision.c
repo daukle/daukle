@@ -374,21 +374,69 @@ TEST a_label_holding_a_control_character_is_refused(void) {
     PASS();
 }
 
+/* Three distinct tools and one of them reported twice: the repeat is what
+   "one line" bounds and the three distinct digests are what "per distinct tool"
+   means, so a stub that ignored the key would fail the second assertion. */
 TEST one_line_per_distinct_tool_per_run(void) {
     static char message[256];
     fr_toolreport_reset();
 
-    const char *url = "https://example.invalid/toolchains/temurin-21.tar.gz";
-    const char *digest = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
+    const char *first_url = "https://example.invalid/toolchains/temurin-21.tar.gz";
+    const char *second_url = "https://example.invalid/toolchains/cmake-3.29.tar.gz";
+    const char *third_url = "https://example.invalid/toolchains/ninja-1.12.zip";
+    const char *first = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
+    const char *second = "2234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
+    const char *third = "3234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
 
-    fr_toolreport_provisioned(NULL, url, digest, 1);
-    fr_toolreport_provisioned(NULL, url, digest, 1);
-    fr_toolreport_provisioned(NULL, url, digest, 1);
+    fr_toolreport_provisioned(NULL, first_url, first, 1);
+    fr_toolreport_provisioned(NULL, second_url, second, 0);
+    fr_toolreport_provisioned(NULL, third_url, third, 1);
+    fr_toolreport_provisioned(NULL, first_url, first, 1);
 
     size_t count = fr_toolreport_row_count();
+    const fr_toolreport_row *row_one = fr_toolreport_row_at(0);
+    const fr_toolreport_row *row_two = fr_toolreport_row_at(1);
+    const fr_toolreport_row *row_three = fr_toolreport_row_at(2);
     snprintf(message, sizeof message, "row_count %zu", count);
 
-    ASSERT_EQm(message, 1u, count);
+    ASSERT_EQm(message, 3u, count);
+    ASSERTm(message, row_one != NULL && strcmp(row_one->digest, first) == 0);
+    ASSERTm(message, row_two != NULL && strcmp(row_two->digest, second) == 0);
+    ASSERTm(message, row_three != NULL && strcmp(row_three->digest, third) == 0);
+    PASS();
+}
+
+/* Spec 7.4 requires a skipped link to be named, and D-6 forbids a silent
+   degradation: the count fr_unpack fills has to reach the row, or a toolchain
+   arrives missing links it shipped with and nothing says so. */
+TEST a_skipped_symlink_reaches_the_report_by_name(void) {
+    static char message[512];
+    fr_toolreport_reset();
+
+    const char *url = "https://example.invalid/toolchains/temurin-21.tar.gz";
+    const char *digest = "4234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
+    const char *quiet = "5234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
+
+    fr_toolreport_provisioned(NULL, url, digest, 0);
+    fr_toolreport_symlinks_skipped(digest, 3, "bin/java");
+
+    fr_toolreport_provisioned(NULL, url, quiet, 0);
+    fr_toolreport_symlinks_skipped(quiet, 0, "");
+
+    const fr_toolreport_row *skipped = fr_toolreport_row_at(0);
+    const fr_toolreport_row *clean = fr_toolreport_row_at(1);
+    snprintf(message, sizeof message, "skipped %zu \"%s\", clean %zu \"%s\"",
+             skipped == NULL ? 0u : skipped->symlinks_skipped,
+             skipped == NULL ? "" : skipped->first_symlink_skipped,
+             clean == NULL ? 0u : clean->symlinks_skipped,
+             clean == NULL ? "" : clean->first_symlink_skipped);
+
+    ASSERTm(message, skipped != NULL);
+    ASSERTm(message, clean != NULL);
+    ASSERT_EQm(message, 3u, skipped->symlinks_skipped);
+    ASSERTm(message, strcmp(skipped->first_symlink_skipped, "bin/java") == 0);
+    ASSERT_EQm(message, 0u, clean->symlinks_skipped);
+    ASSERTm(message, clean->first_symlink_skipped[0] == '\0');
     PASS();
 }
 
@@ -636,6 +684,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_digest_that_is_not_64_hex_characters_is_refused);
     RUN_TEST(a_label_holding_a_control_character_is_refused);
     RUN_TEST(one_line_per_distinct_tool_per_run);
+    RUN_TEST(a_skipped_symlink_reaches_the_report_by_name);
     RUN_TEST(a_missing_label_falls_back_to_a_fact_rather_than_to_nothing);
     RUN_TEST(the_row_keeps_the_url_and_digest_whatever_the_label_says);
     RUN_TEST(an_empty_label_falls_back_to_a_fact_rather_than_to_nothing);

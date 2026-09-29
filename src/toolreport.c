@@ -103,6 +103,28 @@ void fr_toolreport_provisioned(const char *label, const char *url, const char *d
     record(ROW_PROVISIONED, shown_label, url, digest, cached);
 }
 
+static fr_toolreport_row *provisioned_row_for(const char *digest) {
+    for (size_t index = 0; index < g_row_count; index++) {
+        if (g_kinds[index] == ROW_PROVISIONED && strcmp(g_rows[index].digest, digest) == 0) {
+            return &g_rows[index];
+        }
+    }
+    return NULL;
+}
+
+void fr_toolreport_symlinks_skipped(const char *digest, size_t count, const char *first_name) {
+    if (count == 0 || digest == NULL) return;
+
+    fr_toolreport_row *row = provisioned_row_for(digest);
+    if (row == NULL || row->symlinks_skipped != 0) return;
+
+    row->symlinks_skipped = count;
+    snprintf(row->first_symlink_skipped, sizeof row->first_symlink_skipped, "%s",
+             first_name == NULL ? "" : first_name);
+    fprintf(stderr, "  %zu symlink%s not created, first %s\n", count, count == 1 ? "" : "s",
+            row->first_symlink_skipped);
+}
+
 size_t fr_toolreport_row_count(void) {
     return g_row_count;
 }
