@@ -32,6 +32,10 @@ int fr_archive_kind_of(const char *bytes, size_t length, fr_archive_kind *out, f
    is agreed before a member can be extracted rather than measured after. */
 int fr_archive_open(const char *path, size_t max_member_bytes, fr_archive **out, fr_error *err);
 
+/* What fr_archive_open decided the bytes were, which is the only record of that
+   decision: the name it was opened under is not kept. */
+fr_archive_kind fr_archive_opened_kind(const fr_archive *archive);
+
 /* FR_OK with *out_member set, or FR_OK with *out_member NULL at the end. */
 int fr_archive_next(fr_archive *archive, const fr_archive_member **out_member, fr_error *err);
 

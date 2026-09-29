@@ -435,7 +435,9 @@ static int measure(fr_archive *archive, fr_error *err) {
     return FR_OK;
 }
 
-static int decide_kind(fr_archive *archive, fr_error *err) {
+/* name reaches here only to be quoted in a refusal: what the file is called is
+   never what decides the kind. */
+static int decide_kind(fr_archive *archive, const char *name, fr_error *err) {
     unsigned char head[FR_TAR_BLOCK];
     size_t got = fread(head, 1, sizeof head, archive->file);
     rewind(archive->file);
@@ -444,7 +446,7 @@ static int decide_kind(fr_archive *archive, fr_error *err) {
     else if (fr_tar_looks_like_archive((const char *) head, got)) archive->kind = FR_ARCHIVE_TAR;
     else if (looks_like_zip_start(head, got)) archive->kind = FR_ARCHIVE_ZIP;
     else {
-        fr_error_set(err, "the archive is not a tar, a tar.gz or a zip");
+        fr_error_set(err, "the archive %s is not a tar, a tar.gz or a zip", name);
         return FR_ERR;
     }
     return FR_OK;
@@ -499,7 +501,7 @@ int fr_archive_open(const char *path, size_t max_member_bytes, fr_archive **out,
         return FR_ERR;
     }
 
-    if (measure(archive, err) != FR_OK || decide_kind(archive, err) != FR_OK
+    if (measure(archive, err) != FR_OK || decide_kind(archive, path, err) != FR_OK
         || start_reading(archive, err) != FR_OK) {
         fr_archive_close(archive);
         return FR_ERR;
@@ -507,6 +509,10 @@ int fr_archive_open(const char *path, size_t max_member_bytes, fr_archive **out,
 
     *out = archive;
     return FR_OK;
+}
+
+fr_archive_kind fr_archive_opened_kind(const fr_archive *archive) {
+    return archive->kind;
 }
 
 int fr_archive_next(fr_archive *archive, const fr_archive_member **out_member, fr_error *err) {

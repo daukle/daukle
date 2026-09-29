@@ -59,11 +59,12 @@ static const char *kind_name(fr_member_kind kind) {
     return "file";
 }
 
-/* Writes archive to a temp file, iterates it, and renders what came back as
-   "name:kind:contents|", a symlink's target standing in for its contents, so
-   three formats can be compared against one string. */
-static int render_members(const char *bytes, size_t length, const char *suffix, char *out,
-                          size_t out_size) {
+/* Writes archive to a temp file whose suffix the caller chooses, iterates it,
+   and renders what came back as "name:kind:contents|", a symlink's target
+   standing in for its contents, so three formats can be compared against one
+   string. out_kind is optional and reports what the bytes were taken for. */
+static int render_members(const char *bytes, size_t length, const char *suffix,
+                          fr_archive_kind *out_kind, char *out, size_t out_size) {
     char archive_file[1024];
     snprintf(archive_file, sizeof archive_file, "%s/archive-render-%d%s", fr_test_temp_base(),
              fr_test_process_id(), suffix);
@@ -74,6 +75,7 @@ static int render_members(const char *bytes, size_t length, const char *suffix, 
     fr_error err;
     err.message[0] = '\0';
     int result = fr_archive_open(archive_file, 64 * 1024, &archive, &err);
+    if (result == FR_OK && out_kind != NULL) *out_kind = fr_archive_opened_kind(archive);
 
     size_t used = 0;
     while (result == FR_OK) {
@@ -101,7 +103,7 @@ static int render_members(const char *bytes, size_t length, const char *suffix, 
 }
 
 TEST the_kind_is_decided_by_content_not_by_the_url(void) {
-    static char message[256];
+    static char message[1024];
     char tar[FR_TAR_BLOCK * 4];
     memset(tar, 0, sizeof tar);
     size_t used = fr_test_tar_append(tar, 0, "a.txt", '0', "hello", 5);
@@ -125,10 +127,38 @@ TEST the_kind_is_decided_by_content_not_by_the_url(void) {
     int zip_ok = fr_archive_kind_of(zip, zip_length, &kind, &err) == FR_OK
               && kind == FR_ARCHIVE_ZIP;
 
-    snprintf(message, sizeof message, "tar %d gz %d zip %d", tar_ok, gz_ok, zip_ok);
+    /* Each file is named after a format it is not, so a reader that believed
+       the suffix would have to be wrong about all three. */
+    fr_archive_kind opened_tar = FR_ARCHIVE_ZIP;
+    fr_archive_kind opened_gz = FR_ARCHIVE_TAR;
+    fr_archive_kind opened_zip = FR_ARCHIVE_TAR_GZ;
+    char from_tar[256];
+    char from_gz[256];
+    char from_zip[256];
+    int tar_named_zip = render_members(tar, sizeof tar, ".zip", &opened_tar, from_tar,
+                                       sizeof from_tar) == FR_OK
+                     && opened_tar == FR_ARCHIVE_TAR;
+    int gz_named_tar = render_members(gz, gz_length, ".tar", &opened_gz, from_gz, sizeof from_gz)
+                           == FR_OK
+                    && opened_gz == FR_ARCHIVE_TAR_GZ;
+    int zip_named_gz = render_members(zip, zip_length, ".tar.gz", &opened_zip, from_zip,
+                                      sizeof from_zip) == FR_OK
+                    && opened_zip == FR_ARCHIVE_ZIP;
+
+    snprintf(message, sizeof message,
+             "bytes tar %d gz %d zip %d, named tar %d \"%s\" gz %d \"%s\" zip %d \"%s\"", tar_ok,
+             gz_ok, zip_ok, tar_named_zip, from_tar, gz_named_tar, from_gz, zip_named_gz, from_zip);
     ASSERTm(message, tar_ok);
     ASSERTm(message, gz_ok);
     ASSERTm(message, zip_ok);
+    ASSERTm(message, tar_named_zip);
+    ASSERTm(message, gz_named_tar);
+    ASSERTm(message, zip_named_gz);
+    /* The sniff picks the reader, so a mis-sniff shows up here as a parse
+       failure or missing members, not only as a wrong enum. */
+    ASSERT_STR_EQm(message, "a.txt:file:hello|", from_tar);
+    ASSERT_STR_EQm(message, from_tar, from_gz);
+    ASSERT_STR_EQm(message, from_tar, from_zip);
     PASS();
 }
 
@@ -171,9 +201,9 @@ TEST a_tar_a_targz_and_a_zip_iterate_identically(void) {
     char from_tar[512];
     char from_gz[512];
     char from_zip[512];
-    int tar_ok = render_members(tar, sizeof tar, ".tar", from_tar, sizeof from_tar) == FR_OK;
-    int gz_ok = render_members(gz, gz_length, ".tar.gz", from_gz, sizeof from_gz) == FR_OK;
-    int zip_ok = render_members(zip, zip_length, ".zip", from_zip, sizeof from_zip) == FR_OK;
+    int tar_ok = render_members(tar, sizeof tar, ".tar", NULL, from_tar, sizeof from_tar) == FR_OK;
+    int gz_ok = render_members(gz, gz_length, ".tar.gz", NULL, from_gz, sizeof from_gz) == FR_OK;
+    int zip_ok = render_members(zip, zip_length, ".zip", NULL, from_zip, sizeof from_zip) == FR_OK;
 
     snprintf(message, sizeof message, "tar \"%s\" gz \"%s\" zip \"%s\"", from_tar, from_gz,
              from_zip);
@@ -199,7 +229,7 @@ TEST a_zip_whose_local_header_contradicts_its_directory_is_refused(void) {
     zip[22] = (char) 0x40;
 
     char rendered[512];
-    int result = render_members(zip, zip_length, ".zip", rendered, sizeof rendered);
+    int result = render_members(zip, zip_length, ".zip", NULL, rendered, sizeof rendered);
 
     snprintf(message, sizeof message, "result %d, rendered \"%s\"", result, rendered);
     ASSERT_EQm(message, FR_ERR, result);
@@ -214,9 +244,9 @@ TEST a_real_gzip_and_a_real_zip_are_read(void) {
     char from_gz[512];
     char from_zip[512];
     int gz_ok = render_members((const char *) real_gzip_bytes, sizeof real_gzip_bytes, ".tar.gz",
-                               from_gz, sizeof from_gz) == FR_OK;
+                               NULL, from_gz, sizeof from_gz) == FR_OK;
     int zip_ok = render_members((const char *) real_zip_bytes, sizeof real_zip_bytes, ".zip",
-                                from_zip, sizeof from_zip) == FR_OK;
+                                NULL, from_zip, sizeof from_zip) == FR_OK;
 
     snprintf(message, sizeof message, "gz %d \"%s\" zip %d \"%s\"", gz_ok, from_gz, zip_ok,
              from_zip);
@@ -268,7 +298,7 @@ TEST a_tar_member_that_is_not_a_file_a_directory_or_a_symlink_is_refused(void) {
     fr_test_tar_end(tar, used);
 
     char rendered[512];
-    int result = render_members(tar, sizeof tar, ".tar", rendered, sizeof rendered);
+    int result = render_members(tar, sizeof tar, ".tar", NULL, rendered, sizeof rendered);
 
     snprintf(message, sizeof message, "result %d, rendered \"%s\"", result, rendered);
     ASSERT_EQm(message, FR_ERR, result);
@@ -285,7 +315,7 @@ TEST a_tar_symlink_member_carries_its_target(void) {
     fr_test_tar_end(tar, used);
 
     char rendered[512];
-    int result = render_members(tar, sizeof tar, ".tar", rendered, sizeof rendered);
+    int result = render_members(tar, sizeof tar, ".tar", NULL, rendered, sizeof rendered);
 
     snprintf(message, sizeof message, "result %d, rendered \"%s\"", result, rendered);
     ASSERT_EQm(message, FR_OK, result);
