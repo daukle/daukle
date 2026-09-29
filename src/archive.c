@@ -253,13 +253,14 @@ static void end_iteration(fr_archive *archive, const fr_archive_member **out_mem
 }
 
 static void publish(fr_archive *archive, fr_member_kind kind, size_t length, int executable,
-                    const fr_archive_member **out_member) {
+                    int setuid, const fr_archive_member **out_member) {
     archive->member.name = archive->name;
     archive->member.kind = kind;
     archive->member.bytes = kind == FR_MEMBER_FILE ? archive->member_bytes : NULL;
     archive->member.length = kind == FR_MEMBER_FILE ? length : 0;
     archive->member.link_target = kind == FR_MEMBER_SYMLINK ? archive->link_target : NULL;
     archive->member.executable = executable;
+    archive->member.setuid = setuid;
     *out_member = &archive->member;
 }
 
@@ -323,7 +324,8 @@ static int tar_next(fr_archive *archive, const fr_archive_member **out_member, f
     }
     archive->offset += length + padding;
 
-    publish(archive, kind, length, (header.mode & 0111u) != 0, out_member);
+    publish(archive, kind, length, (header.mode & 0111u) != 0, (header.mode & 06000u) != 0,
+            out_member);
     return FR_OK;
 }
 
@@ -382,6 +384,11 @@ static int zip_executable(const mz_zip_archive_file_stat *entry) {
     return ((entry->m_external_attr >> 16) & 0111u) != 0;
 }
 
+static int zip_setuid(const mz_zip_archive_file_stat *entry) {
+    if ((entry->m_version_made_by >> 8) != ZIP_MADE_ON_UNIX) return 0;
+    return ((entry->m_external_attr >> 16) & 06000u) != 0;
+}
+
 static int zip_next(fr_archive *archive, const fr_archive_member **out_member, fr_error *err) {
     if (archive->zip_index >= mz_zip_reader_get_num_files(&archive->zip)) {
         end_iteration(archive, out_member);
@@ -407,7 +414,8 @@ static int zip_next(fr_archive *archive, const fr_archive_member **out_member, f
 
     archive->zip_index++;
     if (name_length > 0 && archive->name[name_length - 1] == '/') {
-        publish(archive, FR_MEMBER_DIRECTORY, 0, zip_executable(&entry), out_member);
+        publish(archive, FR_MEMBER_DIRECTORY, 0, zip_executable(&entry), zip_setuid(&entry),
+                out_member);
         return FR_OK;
     }
 
@@ -424,7 +432,8 @@ static int zip_next(fr_archive *archive, const fr_archive_member **out_member, f
     }
     archive->member_bytes[length] = '\0';
 
-    publish(archive, FR_MEMBER_FILE, length, zip_executable(&entry), out_member);
+    publish(archive, FR_MEMBER_FILE, length, zip_executable(&entry), zip_setuid(&entry),
+            out_member);
     return FR_OK;
 }
 

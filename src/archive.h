@@ -20,6 +20,11 @@ typedef struct {
     size_t length;
     const char *link_target;
     int executable;
+    /* Set-user-ID or set-group-ID, reported rather than masked so a caller can
+       refuse the archive instead of silently unpacking a weaker member than
+       the one it was handed. Like executable, a zip only claims it when the
+       zip says it was made on Unix. */
+    int setuid;
 } fr_archive_member;
 
 typedef struct fr_archive fr_archive;

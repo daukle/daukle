@@ -11,6 +11,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <sys/types.h>
+#endif
+
 GREATEST_MAIN_DEFS();
 
 static char input_path[1024];
@@ -35,6 +40,54 @@ static int open_archive_from_bytes(const char *bytes, size_t length, fr_archive 
     }
 
     return fr_archive_open(input_path, FR_UNPACK_DEFAULTS.max_member_bytes, out, err);
+}
+
+/* The first member's executable flag, or -1 when the bytes do not open. */
+static int first_member_is_executable(const char *bytes, size_t length) {
+    fr_archive *archive = NULL;
+    fr_error err;
+    err.message[0] = '\0';
+    if (open_archive_from_bytes(bytes, length, &archive, &err) != FR_OK) return -1;
+
+    const fr_archive_member *member = NULL;
+    int executable = fr_archive_next(archive, &member, &err) == FR_OK && member != NULL
+                   ? member->executable
+                   : -1;
+    fr_archive_close(archive);
+    return executable;
+}
+
+/* Unpacks an archive holding "lib/real" and a symlink "bin/link" pointing at
+   target. Returns fr_unpack's result, fills report, and copies the error. */
+static int unpack_one_symlink(const char *target, fr_unpack_report *report, char *out_message,
+                              size_t size) {
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-link-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_remove_tree(destination);
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = fr_test_tar_append(buffer, 0, "lib/real", '0', "payload", 7);
+    size_t link_offset = used;
+    used = fr_test_tar_append(buffer, used, "bin/link", '2', "", 0);
+    memcpy(buffer + link_offset + 157, target, strlen(target));
+    fr_test_tar_fix_checksum(buffer, link_offset);
+    fr_test_tar_end(buffer, used);
+
+    fr_archive *archive = NULL;
+    fr_error err;
+    err.message[0] = '\0';
+    int opened = open_archive_from_bytes(buffer, sizeof buffer, &archive, &err);
+    memset(report, 0, sizeof *report);
+    int result = opened == FR_OK
+               ? fr_unpack(archive, destination, &FR_UNPACK_DEFAULTS, report, &err)
+               : FR_ERR;
+    if (archive != NULL) fr_archive_close(archive);
+    snprintf(out_message, size, "%s", err.message);
+    fr_test_remove_tree(destination);
+    return result;
 }
 
 /* The prefix the module under test applies, spelled out a second time here so
@@ -389,6 +442,164 @@ TEST a_deeply_nested_member_past_the_legacy_path_limit_is_written(void) {
     PASS();
 }
 
+TEST a_symlink_with_an_absolute_target_is_refused(void) {
+    static char message[512];
+    /* Refused outright on every platform, not skipped: this is the
+       escape-through-a-link case, and it is the one member kind that can turn
+       a later innocent-looking member into a write outside the cache. */
+    fr_unpack_report report;
+    int posix_form = unpack_one_symlink("/etc/passwd", &report, message, sizeof message);
+    ASSERT_EQm(message, FR_ERR, posix_form);
+    ASSERTm(message, strstr(message, "absolute") != NULL);
+
+    int drive_form = unpack_one_symlink("c:/windows/system32/cmd.exe", &report, message,
+                                        sizeof message);
+    ASSERT_EQm(message, FR_ERR, drive_form);
+    PASS();
+}
+
+TEST a_symlink_whose_relative_target_climbs_out_is_refused(void) {
+    static char message[512];
+    /* "bin/link" -> "../../outside" resolves lexically against "bin/", so it
+       leaves the root. The companion assertion below is what makes this a
+       containment test rather than a ".." test: "../lib/real" also contains
+       "..", stays inside, and MUST be accepted. */
+    fr_unpack_report report;
+    int climbing = unpack_one_symlink("../../outside", &report, message, sizeof message);
+    ASSERT_EQm(message, FR_ERR, climbing);
+    ASSERTm(message, strstr(message, "outside") != NULL || strstr(message, "escape") != NULL);
+
+    int contained = unpack_one_symlink("../lib/real", &report, message, sizeof message);
+    ASSERT_EQm(message, FR_OK, contained);
+    PASS();
+}
+
+TEST a_contained_symlink_is_created_on_posix_and_named_on_windows(void) {
+    static char message[512];
+    /* One test with two platform arms, because the behaviour is deliberately
+       different and a test per platform would let the unrun one rot. */
+    fr_unpack_report report;
+    int result = unpack_one_symlink("../lib/real", &report, message, sizeof message);
+    ASSERT_EQm(message, FR_OK, result);
+#ifdef _WIN32
+    ASSERT_EQm(message, 0u, report.symlinks_created);
+    ASSERT_EQm(message, 1u, report.symlinks_skipped);
+    ASSERT_STR_EQm(message, "bin/link", report.first_symlink_skipped);
+#else
+    ASSERT_EQm(message, 1u, report.symlinks_created);
+    ASSERT_EQm(message, 0u, report.symlinks_skipped);
+#endif
+    PASS();
+}
+
+TEST a_tar_members_execute_bit_reaches_the_file(void) {
+#ifndef _WIN32
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-mode-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = fr_test_tar_append(buffer, 0, "bin/runnable", '0', "x", 1);
+    memcpy(buffer + 100, "0000755", 7);
+    fr_test_tar_fix_checksum(buffer, 0);
+    size_t plain_offset = used;
+    used = fr_test_tar_append(buffer, used, "lib/plain.txt", '0', "x", 1);
+    memcpy(buffer + plain_offset + 100, "0000644", 7);
+    fr_test_tar_fix_checksum(buffer, plain_offset);
+    fr_test_tar_end(buffer, used);
+
+    fr_archive *archive = NULL;
+    fr_error err;
+    err.message[0] = '\0';
+    int opened = open_archive_from_bytes(buffer, sizeof buffer, &archive, &err);
+    fr_unpack_report report;
+    int result = opened == FR_OK
+               ? fr_unpack(archive, destination, &FR_UNPACK_DEFAULTS, &report, &err)
+               : FR_ERR;
+    if (archive != NULL) fr_archive_close(archive);
+
+    char runnable[1024];
+    char plain[1024];
+    snprintf(runnable, sizeof runnable, "%s/bin/runnable", destination);
+    snprintf(plain, sizeof plain, "%s/lib/plain.txt", destination);
+    struct stat runnable_stat;
+    struct stat plain_stat;
+    int stat_ok = stat(runnable, &runnable_stat) == 0 && stat(plain, &plain_stat) == 0;
+    int runnable_executable = stat_ok && (runnable_stat.st_mode & S_IXUSR) != 0;
+    /* The second assertion is the one that matters: "chmod 0755 everything"
+       passes the first on its own. */
+    int plain_not_executable = stat_ok && (plain_stat.st_mode & S_IXUSR) == 0;
+    snprintf(message, sizeof message, "result %d, stat %d", result, stat_ok);
+    fr_test_remove_tree(destination);
+
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERTm(message, runnable_executable);
+    ASSERTm(message, plain_not_executable);
+#endif
+    PASS();
+}
+
+TEST a_unix_produced_zip_carries_its_execute_bit_and_a_windows_one_does_not(void) {
+    static char message[512];
+    /* Ninja ships ninja-linux.zip and Gradle ships only a zip for every
+       platform, so "ignore the mode in a zip" would leave those binaries
+       non-executable exactly where the bit is load bearing. The pair is the
+       test: one archive claiming Unix and one not, same entry, different
+       answer. */
+    const char *names[] = { "bin/tool" };
+    const char *contents[] = { "x" };
+    const int executable[] = { 1 };
+
+    char unix_zip[4096];
+    size_t unix_length = fr_test_zip_build(unix_zip, sizeof unix_zip, names, contents, executable,
+                                           1, 1);
+    char dos_zip[4096];
+    size_t dos_length = fr_test_zip_build(dos_zip, sizeof dos_zip, names, contents, executable, 1,
+                                          0);
+
+    int unix_executable = first_member_is_executable(unix_zip, unix_length);
+    int dos_executable = first_member_is_executable(dos_zip, dos_length);
+
+    snprintf(message, sizeof message, "unix %d, dos %d", unix_executable, dos_executable);
+    ASSERT_EQm(message, 1, unix_executable);
+    ASSERT_EQm(message, 0, dos_executable);
+    PASS();
+}
+
+TEST a_setuid_member_is_refused_by_name(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-setuid-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 8];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = fr_test_tar_append(buffer, 0, "bin/suid", '0', "x", 1);
+    memcpy(buffer + 100, "0004755", 7);
+    fr_test_tar_fix_checksum(buffer, 0);
+    fr_test_tar_end(buffer, used);
+
+    fr_archive *archive = NULL;
+    fr_error err;
+    err.message[0] = '\0';
+    int opened = open_archive_from_bytes(buffer, sizeof buffer, &archive, &err);
+    fr_unpack_report report;
+    int result = opened == FR_OK
+               ? fr_unpack(archive, destination, &FR_UNPACK_DEFAULTS, &report, &err)
+               : FR_ERR;
+    if (archive != NULL) fr_archive_close(archive);
+    snprintf(message, sizeof message, "%s", err.message);
+    fr_test_remove_tree(destination);
+
+    ASSERT_EQm(message, FR_ERR, result);
+    ASSERTm(message, strstr(message, "setuid") != NULL || strstr(message, "set-user") != NULL);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(every_escaping_member_name_is_refused);
@@ -399,6 +610,12 @@ int main(int argc, char **argv) {
     RUN_TEST(a_path_longer_than_the_limit_is_refused_rather_than_truncated);
     RUN_TEST(a_duplicate_member_name_is_refused);
     RUN_TEST(a_deeply_nested_member_past_the_legacy_path_limit_is_written);
+    RUN_TEST(a_symlink_with_an_absolute_target_is_refused);
+    RUN_TEST(a_symlink_whose_relative_target_climbs_out_is_refused);
+    RUN_TEST(a_contained_symlink_is_created_on_posix_and_named_on_windows);
+    RUN_TEST(a_tar_members_execute_bit_reaches_the_file);
+    RUN_TEST(a_unix_produced_zip_carries_its_execute_bit_and_a_windows_one_does_not);
+    RUN_TEST(a_setuid_member_is_refused_by_name);
     remove(input_path);
     GREATEST_MAIN_END();
 }

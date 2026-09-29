@@ -13,6 +13,7 @@
 #else
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 #endif
 
 #define UNPACK_MAX_NATIVE 4096
@@ -54,6 +55,68 @@ int fr_unpack_name_is_safe(const char *name) {
         component = name + index + 1;
     }
     return 1;
+}
+
+/* The same two forms fr_lua_sandbox_climbs_out refuses first, repeated rather
+   than borrowed: that helper also refuses every "..", and a link target may
+   legitimately carry one. */
+static int target_is_absolute(const char *target) {
+    if (target[0] == '/' || target[0] == '\\') return 1;
+    return target[1] == ':';
+}
+
+static size_t directory_depth_of(const char *name) {
+    size_t length = strlen(name);
+    if (length > 0 && name[length - 1] == '/') length--;
+
+    size_t depth = 0;
+    for (size_t index = 0; index < length; index++) {
+        if (name[index] == '/') depth++;
+    }
+    return depth;
+}
+
+/* A target is relative to the directory the LINK sits in, not to the
+   destination root, so "bin/x" -> "../lib/real" stays inside while
+   "bin/x" -> "../../outside" does not. Resolving against the root instead gets
+   both of those backwards. */
+static int target_stays_inside(const char *name, const char *target) {
+    size_t depth = directory_depth_of(name);
+    const char *component = target;
+    for (const char *cursor = target;; cursor++) {
+        if (*cursor != '\0' && *cursor != '/') continue;
+
+        size_t length = (size_t) (cursor - component);
+        if (length == 2 && component[0] == '.' && component[1] == '.') {
+            if (depth == 0) return 0;
+            depth--;
+        } else if (length > 0 && !(length == 1 && component[0] == '.')) {
+            depth++;
+        }
+
+        if (*cursor == '\0') return 1;
+        component = cursor + 1;
+    }
+}
+
+/* Decided from the target's own bytes and before anything is created, so no
+   link ever exists whose target has not been judged. */
+static int refuse_unsafe_link_target(const fr_archive_member *member, fr_error *err) {
+    const char *target = member->link_target;
+    if (target == NULL || target[0] == '\0') {
+        fr_error_set(err, "the symlink member \"%s\" has an empty target", member->name);
+        return FR_ERR;
+    }
+    if (target_is_absolute(target)) {
+        fr_error_set(err, "the symlink member \"%s\" points at an absolute target", member->name);
+        return FR_ERR;
+    }
+    if (!target_stays_inside(member->name, target)) {
+        fr_error_set(err, "the symlink member \"%s\" points outside the destination",
+                     member->name);
+        return FR_ERR;
+    }
+    return FR_OK;
 }
 
 typedef struct {
@@ -139,6 +202,33 @@ static int make_directory_tree(char *native, size_t root_length, const char *rel
         if (made > 0) report->directories_created++;
         if (saved == '\0') return FR_OK;
     }
+}
+
+static int make_parent_directories(char *native, size_t root_length, const char *relative,
+                                   fr_unpack_report *report, fr_error *err) {
+    char *last = strrchr(native + root_length + 1, NATIVE_SEPARATOR);
+    if (last == NULL) return FR_OK;
+
+    *last = '\0';
+    int made = make_directory_tree(native, root_length, relative, report, err);
+    *last = NATIVE_SEPARATOR;
+    return made;
+}
+
+/* Windows carries no mode to apply: an extension decides what runs there. */
+static int apply_permissions(const char *native, const fr_archive_member *member, fr_error *err) {
+#ifdef _WIN32
+    (void) native;
+    (void) member;
+    (void) err;
+    return FR_OK;
+#else
+    if (chmod(native, member->executable ? 0755 : 0644) != 0) {
+        fr_error_set(err, "cannot set the mode of the member \"%s\"", member->name);
+        return FR_ERR;
+    }
+    return FR_OK;
+#endif
 }
 
 static int write_file_bytes(const char *native, const char *bytes, size_t length,
@@ -283,19 +373,48 @@ static int write_file_member(const fr_archive_member *member, const native_root 
     char native[UNPACK_MAX_NATIVE];
     if (join_under_root(root, member->name, native, sizeof native, err) != FR_OK) return FR_ERR;
 
-    char *last = strrchr(native + root->length + 1, NATIVE_SEPARATOR);
-    if (last != NULL) {
-        *last = '\0';
-        int made = make_directory_tree(native, root->length, member->name, report, err);
-        *last = NATIVE_SEPARATOR;
-        if (made != FR_OK) return FR_ERR;
+    if (make_parent_directories(native, root->length, member->name, report, err) != FR_OK) {
+        return FR_ERR;
     }
-
     if (write_file_bytes(native, member->bytes, member->length, member->name, err) != FR_OK) {
         return FR_ERR;
     }
+    if (apply_permissions(native, member, err) != FR_OK) return FR_ERR;
+
     report->files_written++;
     return FR_OK;
+}
+
+/* @implNote Windows creates no link at all: SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE
+   needs developer mode, and a toolchain that silently half-unpacks is worse
+   than one that says which links it left out. The target is validated on both
+   platforms anyway, so the refusal does not depend on the creation. */
+static int write_symlink_member(const fr_archive_member *member, const native_root *root,
+                                fr_unpack_report *report, fr_error *err) {
+    if (refuse_unsafe_link_target(member, err) != FR_OK) return FR_ERR;
+
+#ifdef _WIN32
+    (void) root;
+    if (report->symlinks_skipped == 0) {
+        snprintf(report->first_symlink_skipped, sizeof report->first_symlink_skipped, "%s",
+                 member->name);
+    }
+    report->symlinks_skipped++;
+    return FR_OK;
+#else
+    char native[UNPACK_MAX_NATIVE];
+    if (join_under_root(root, member->name, native, sizeof native, err) != FR_OK) return FR_ERR;
+    if (make_parent_directories(native, root->length, member->name, report, err) != FR_OK) {
+        return FR_ERR;
+    }
+    if (symlink(member->link_target, native) != 0) {
+        fr_error_set(err, "cannot create the symlink member \"%s\"", member->name);
+        return FR_ERR;
+    }
+
+    report->symlinks_created++;
+    return FR_OK;
+#endif
 }
 
 static int write_member(const fr_archive_member *member, const native_root *root,
@@ -303,9 +422,13 @@ static int write_member(const fr_archive_member *member, const native_root *root
                         fr_unpack_report *report, fr_error *err) {
     if (refuse_unwritable_name(member, limits, seen, err) != FR_OK) return FR_ERR;
 
-    if (member->kind == FR_MEMBER_SYMLINK) {
-        fr_error_set(err, "the symlink member \"%s\" is not yet handled", member->name);
+    if (member->setuid) {
+        fr_error_set(err, "the member \"%s\" carries a setuid or setgid bit", member->name);
         return FR_ERR;
+    }
+
+    if (member->kind == FR_MEMBER_SYMLINK) {
+        return write_symlink_member(member, root, report, err);
     }
     if (member->kind == FR_MEMBER_DIRECTORY) {
         return write_directory_member(member, root, report, err);
