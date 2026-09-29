@@ -359,7 +359,7 @@ TEST the_header_parser_joins_a_prefix_to_a_name(void) {
     int end = 0;
     fr_error err;
     err.message[0] = '\0';
-    int result = fr_tar_read_header(block, &header, &end, &err);
+    int result = fr_tar_read_header(block, 0, &header, &end, &err);
 
     snprintf(message, sizeof message, "result %d, name \"%s\", err \"%s\"", result, header.name,
              err.message);
@@ -397,7 +397,7 @@ TEST the_header_parser_reports_the_zero_block_as_the_end(void) {
     fr_tar_header header;
     int end = 0;
     fr_error err;
-    int result = fr_tar_read_header(block, &header, &end, &err);
+    int result = fr_tar_read_header(block, 0, &header, &end, &err);
 
     ASSERT_EQ(FR_OK, result);
     ASSERT_EQ(1, end);
@@ -416,7 +416,7 @@ TEST the_header_parser_reads_the_mode_and_the_link_target(void) {
     fr_tar_header header;
     int end = 0;
     fr_error err;
-    int result = fr_tar_read_header((const unsigned char *) local_bytes, &header, &end, &err);
+    int result = fr_tar_read_header((const unsigned char *) local_bytes, 0, &header, &end, &err);
 
     snprintf(message, sizeof message, "result %d, mode %lo, link \"%s\"", result, header.mode,
              header.link_target);
@@ -424,6 +424,28 @@ TEST the_header_parser_reads_the_mode_and_the_link_target(void) {
     ASSERT_EQm(message, '2', header.typeflag);
     ASSERTm(message, (header.mode & 0111u) != 0);
     ASSERT_STR_EQm(message, "../real/tool", header.link_target);
+    PASS();
+}
+
+TEST the_header_parser_names_the_offset_of_a_bad_checksum(void) {
+    static char message[512];
+    char local_bytes[FR_TAR_BLOCK * 3];
+    memset(local_bytes, 0, sizeof local_bytes);
+    size_t offset = fr_test_tar_append(local_bytes, 0, "first.txt", '0', "", 0);
+    fr_test_tar_append(local_bytes, offset, "second.txt", '0', "y", 1);
+    local_bytes[offset + 10] = 'z';
+
+    fr_tar_header header;
+    int end = 0;
+    fr_error err;
+    err.message[0] = '\0';
+    int result = fr_tar_read_header((const unsigned char *) local_bytes + offset, offset, &header,
+                                    &end, &err);
+
+    snprintf(message, sizeof message, "result %d, offset %zu, err \"%s\"", result, offset,
+             err.message);
+    ASSERT_EQm(message, FR_ERR, result);
+    ASSERTm(message, strstr(err.message, "at offset 512") != NULL);
     PASS();
 }
 
@@ -455,5 +477,6 @@ int main(int argc, char **argv) {
     RUN_TEST(the_plugin_reader_still_refuses_a_prefix);
     RUN_TEST(the_header_parser_reports_the_zero_block_as_the_end);
     RUN_TEST(the_header_parser_reads_the_mode_and_the_link_target);
+    RUN_TEST(the_header_parser_names_the_offset_of_a_bad_checksum);
     GREATEST_MAIN_END();
 }

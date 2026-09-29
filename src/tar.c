@@ -108,8 +108,8 @@ static int assemble_name(const unsigned char *block, fr_tar_header *out, fr_erro
     return FR_OK;
 }
 
-int fr_tar_read_header(const unsigned char *block, fr_tar_header *out, int *out_end_of_archive,
-                       fr_error *err) {
+int fr_tar_read_header(const unsigned char *block, size_t offset, fr_tar_header *out,
+                       int *out_end_of_archive, fr_error *err) {
     *out_end_of_archive = 0;
     if (is_zero_block(block)) {
         *out_end_of_archive = 1;
@@ -117,7 +117,7 @@ int fr_tar_read_header(const unsigned char *block, fr_tar_header *out, int *out_
     }
 
     if (!checksum_matches(block)) {
-        fr_error_set(err, "the archive has a bad header checksum");
+        fr_error_set(err, "the archive has a bad header checksum at offset %zu", offset);
         return FR_ERR;
     }
 
@@ -158,7 +158,7 @@ int fr_tar_read(const char *bytes, size_t length, fr_tar *out, fr_error *err) {
 
         fr_tar_header header;
         int end_of_archive = 0;
-        if (fr_tar_read_header(block, &header, &end_of_archive, err) != FR_OK) return FR_ERR;
+        if (fr_tar_read_header(block, offset, &header, &end_of_archive, err) != FR_OK) return FR_ERR;
         if (end_of_archive) return FR_OK;
 
         /* The plugin reader's own policy, not the parser's limitation: a

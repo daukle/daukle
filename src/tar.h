@@ -44,9 +44,11 @@ int fr_tar_looks_like_archive(const char *bytes, size_t length);
 
 /* Reads one 512-byte header. Returns FR_OK with *out_end_of_archive set when
    the block is the zero block that ends an archive; in that case none of
-   *out's fields are touched. */
-int fr_tar_read_header(const unsigned char *block, fr_tar_header *out, int *out_end_of_archive,
-                       fr_error *err);
+   *out's fields are touched. offset is carried only for error messages, such
+   as naming which block had a bad checksum in an archive of thousands; it
+   never affects what the parser decides. */
+int fr_tar_read_header(const unsigned char *block, size_t offset, fr_tar_header *out,
+                       int *out_end_of_archive, fr_error *err);
 
 /* Reads the accepted subset: regular files only, octal sizes, no prefix field,
    no extension record. A directory entry is skipped rather than refused, since
