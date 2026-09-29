@@ -11,4 +11,16 @@
    because starting one needs cmd.exe and that is the shell section 4.1 bans. */
 int fr_tool_resolve(const char *name, char **out_path, fr_error *err);
 
+/* The refusal a batch file gets, taking the name asked for and the path it
+   came to. Shared with a provisioned root's member, which is refused for the
+   identical reason, so the two can never drift into saying different things
+   about the same prohibition. */
+#define FR_TOOL_BATCH_REFUSAL "daukle cannot run a batch file, and \"%s\" resolved to %s"
+
+/* Whether path names something daukle could start: a regular file with execute
+   permission where that is what decides, and any openable file on Windows,
+   where it is not. Exposed so a member named inside a provisioned root is held
+   to the same test as a name found on the search path. */
+int fr_tool_is_executable_file(const char *path);
+
 #endif

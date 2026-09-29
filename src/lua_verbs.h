@@ -48,6 +48,10 @@ int fr_lua_verbs_env_declared_exec(void);
    a url, and daukle.tool's version probe starts a process to answer. */
 int fr_lua_verbs_env_declared_tool(void);
 
+/* Whether the environment just pushed installed daukle.provision, for the
+   caller that decides which plugin kinds may fetch a toolchain at all. */
+int fr_lua_verbs_env_declared_provision(void);
+
 /* A known name that this version does not implement, such as publish. */
 int fr_lua_verbs_is_reserved(const char *name);
 

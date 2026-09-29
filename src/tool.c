@@ -17,7 +17,7 @@ static const char *const BATCH_EXTENSIONS[] = { ".bat", ".cmd" };
 static const char *const EXTENSIONS[] = { "" };
 #endif
 
-static int is_executable_file(const char *path) {
+int fr_tool_is_executable_file(const char *path) {
 #ifdef _WIN32
     FILE *probe = fopen(path, "rb");
     if (probe == NULL) return 0;
@@ -49,7 +49,7 @@ static char *first_existing(const char *dir, size_t dir_length, const char *name
             *out_of_memory = 1;
             return NULL;
         }
-        if (is_executable_file(candidate)) return candidate;
+        if (fr_tool_is_executable_file(candidate)) return candidate;
         free(candidate);
     }
     return NULL;
@@ -104,8 +104,7 @@ int fr_tool_resolve(const char *name, char **out_path, fr_error *err) {
                 return FR_ERR;
             }
             if (batch != NULL) {
-                fr_error_set(err, "daukle cannot run a batch file, and \"%s\" resolved to %s",
-                            name, batch);
+                fr_error_set(err, FR_TOOL_BATCH_REFUSAL, name, batch);
                 free(batch);
                 return FR_ERR;
             }

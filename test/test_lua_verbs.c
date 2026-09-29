@@ -2,9 +2,11 @@
 
 #include "cache.h"
 #include "config_lua.h"
+#include "derived.h"
 #include "http.h"
 #include "lua_verbs.h"
 #include "luax.h"
+#include "provision.h"
 #include "registry.h"
 #include "support.h"
 #include "sync.h"
@@ -16,6 +18,8 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#else
+#include <sys/stat.h>
 #endif
 
 static char *test_verb_dup(const char *text) {
@@ -1086,6 +1090,293 @@ TEST an_older_library_environments_raiser_survives_a_newer_one_being_built(void)
     PASS();
 }
 
+#define PROVISION_PIN "1111111111111111111111111111111111111111111111111111111111111111"
+#define PROVISION_URL "http://127.0.0.1:1/toolchain.tar"
+
+static void use_private_provision_cache(const char *name, char *out, size_t size) {
+    snprintf(out, size, "%s/verbs-provision-%s-%d", fr_test_temp_base(), name,
+             fr_test_process_id());
+    fr_test_remove_tree(out);
+    fr_test_make_directory(out);
+    fr_test_set_env("DAUKLE_CACHE_DIR", out);
+}
+
+static int write_stub_program(const char *path) {
+    FILE *file = fopen(path, "wb");
+    if (file == NULL) return 0;
+    fputs("stub", file);
+    fclose(file);
+#ifndef _WIN32
+    chmod(path, 0755);
+#endif
+    return 1;
+}
+
+/* Lays the tree PROVISION_PIN names down by hand, so daukle.provision finds it
+   already cached and no test of the root handle's own rules needs a server. */
+static int prepare_provisioned_root(char *root, size_t size) {
+    fr_error err;
+    if (fr_provision_root_path(PROVISION_PIN, root, size, &err) != FR_OK) return 0;
+    fr_cache_make_directories(root);
+
+    char directory[1024];
+    snprintf(directory, sizeof directory, "%s/bin", root);
+    fr_test_make_directory(directory);
+
+    char member[1024];
+    snprintf(member, sizeof member, "%s/bin/java.exe", root);
+    if (!write_stub_program(member)) return 0;
+    snprintf(member, sizeof member, "%s/bin/thing.bat", root);
+    return write_stub_program(member);
+}
+
+static lua_State *begin_provision_env(fr_registry *registry, int *out_env) {
+    fr_error err;
+    if (fr_lua_runtime_begin(".", registry, &err) != FR_OK) return NULL;
+    lua_State *state = fr_lua_runtime_state();
+    const char *verbs[] = { "provision" };
+    if (fr_lua_verbs_push_env(state, verbs, 1, &err) != FR_OK) return NULL;
+    *out_env = lua_gettop(state);
+    return state;
+}
+
+TEST provision_refuses_an_unknown_key_by_name(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int refused = state != NULL
+        && fr_lua_run_in_env(state,
+               "daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "',"
+               " version = '21' }", "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "\"version\"") != NULL);
+    PASS();
+}
+
+TEST provision_refuses_a_missing_sha256(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int refused = state != NULL
+        && fr_lua_run_in_env(state, "daukle.provision{ url = '" PROVISION_URL "' }", "=t", env,
+                             &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "no unpinned form") != NULL);
+    PASS();
+}
+
+TEST provision_reads_its_fields_raw(void) {
+    static char message[512];
+    static const char *const chunk =
+        "consulted = 0\n"
+        "local hidden = setmetatable({ url = '" PROVISION_URL "' }, {\n"
+        "  __index = function(_, key) consulted = consulted + 1; return '" PROVISION_PIN "' end\n"
+        "})\n"
+        "daukle.provision(hidden)\n";
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int refused = state != NULL
+        && fr_lua_run_in_env(state, chunk, "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    int consulted = -1;
+    if (state != NULL) {
+        lua_getfield(state, env, "consulted");
+        consulted = (int) lua_tointeger(state, -1);
+        lua_settop(state, 0);
+    }
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERT_EQm("a field was read through __index", 0, consulted);
+    ASSERTm(message, strstr(message, "sha256") != NULL);
+    PASS();
+}
+
+TEST a_root_handle_refuses_a_member_that_climbs_out(void) {
+    static char climb_message[512];
+    static char drive_message[512];
+    char cache[1024];
+    char root[1024];
+    use_private_provision_cache("climb", cache, sizeof cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int climb_refused = rooted
+        && fr_lua_run_in_env(state, "root:tool('../../../windows/system32/cmd')", "=t", env,
+                             &err) == FR_ERR;
+    snprintf(climb_message, sizeof climb_message, "%s", err.message);
+
+    int drive_refused = rooted
+        && fr_lua_run_in_env(state, "root:tool('c:/x')", "=t", env, &err) == FR_ERR;
+    snprintf(drive_message, sizeof drive_message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERT(climb_refused);
+    ASSERTm(climb_message, strstr(climb_message, "climbs out") != NULL);
+    ASSERT(drive_refused);
+    ASSERTm(drive_message, strstr(drive_message, "climbs out") != NULL);
+    PASS();
+}
+
+TEST a_root_handle_refuses_a_batch_file(void) {
+    static char message[512];
+    char cache[1024];
+    char root[1024];
+    use_private_provision_cache("batch", cache, sizeof cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int refused = rooted
+        && fr_lua_run_in_env(state, "root:tool('bin/thing.bat')", "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "cannot run a batch file") != NULL);
+    PASS();
+}
+
+TEST a_root_handle_does_not_guess_an_extension(void) {
+    static char message[512];
+    char cache[1024];
+    char root[1024];
+    use_private_provision_cache("extension", cache, sizeof cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int named_exactly = rooted
+        && fr_lua_run_in_env(state, "exact = root:tool('bin/java.exe')", "=t", env, &err) == FR_OK;
+    int guessed = named_exactly
+        && fr_lua_run_in_env(state, "root:tool('bin/java')", "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERT(named_exactly);
+    ASSERT(guessed);
+    ASSERTm(message, strstr(message, "bin/java") != NULL);
+    PASS();
+}
+
+TEST provision_is_refused_while_generating(void) {
+    static char message[512];
+    static const char *const chunk =
+        "daukle.toolchain{ name = 'stub', generate = function()\n"
+        "  daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }\n"
+        "  return {}\n"
+        "end }\n";
+
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    err.message[0] = '\0';
+    const char *verbs[] = { "provision" };
+    int loaded = fr_lua_runtime_begin(".", registry, &err) == FR_OK
+              && fr_lua_plugin_load(chunk, strlen(chunk), "stub.lua", verbs, 1, NULL, NULL,
+                                    &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+
+    fr_toolchain toolchain;
+    memset(&toolchain, 0, sizeof toolchain);
+    toolchain.name = (char *) "stub";
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int generated = FR_OK;
+    message[0] = '\0';
+    if (plugin != NULL) {
+        fr_error generate_err;
+        generate_err.message[0] = '\0';
+        generated = plugin->generate(plugin->state, &toolchain, "acme/app", "1.0.0",
+                                     "derived/stub", NULL, 0, &files, &file_count, &generate_err);
+        snprintf(message, sizeof message, "%s", generate_err.message);
+    }
+
+    fr_derived_free_files(files, file_count);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT(plugin != NULL);
+    ASSERT_EQm(message, FR_ERR, generated);
+    ASSERTm(message, strstr(message, "is not available while generating") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -1142,5 +1433,12 @@ int main(int argc, char **argv) {
     RUN_TEST(the_library_environment_has_no_verbs);
     RUN_TEST(the_library_environment_keeps_the_base_globals);
     RUN_TEST(an_older_library_environments_raiser_survives_a_newer_one_being_built);
+    RUN_TEST(provision_refuses_an_unknown_key_by_name);
+    RUN_TEST(provision_refuses_a_missing_sha256);
+    RUN_TEST(provision_reads_its_fields_raw);
+    RUN_TEST(a_root_handle_refuses_a_member_that_climbs_out);
+    RUN_TEST(a_root_handle_refuses_a_batch_file);
+    RUN_TEST(a_root_handle_does_not_guess_an_extension);
+    RUN_TEST(provision_is_refused_while_generating);
     GREATEST_MAIN_END();
 }
