@@ -6,7 +6,9 @@
 #include "region.h"
 #include "sha256.h"
 #include "support.h"
+#include "sync.h"
 #include "tar.h"
+#include "tasks.h"
 #include "toolreport.h"
 
 #include <stdio.h>
@@ -472,7 +474,159 @@ TEST a_url_ending_in_a_slash_still_falls_back_to_a_fact(void) {
     PASS();
 }
 
+/* argv[0] as ctest invokes it: this test binary's own bytes are what get
+   tarred up and provisioned below, so the "tool" the fixture plugin execs is
+   this same process, re-launched with a flag that makes it write a sentinel
+   instead of running the suite. */
+static const char *self_path;
+
+static int file_exists(const char *path) {
+    FILE *handle = fopen(path, "r");
+    if (handle == NULL) return 0;
+    fclose(handle);
+    return 1;
+}
+
+#define PROVISIONED_SENTINEL "provisioned-ran-here.txt"
+
+static int run_as_task_child(void) {
+    FILE *marker = fopen(PROVISIONED_SENTINEL, "w");
+    if (marker == NULL) return 1;
+    fputs("ok", marker);
+    fclose(marker);
+    return 0;
+}
+
+/* Saves whatever DAUKLE_CACHE_DIR held before, so the test can put it back:
+   an empty saved value means there was none, and unsetting is what restores
+   that. */
+static void use_isolated_cache_dir(const char *directory, char *saved, size_t saved_size) {
+    const char *previous = getenv("DAUKLE_CACHE_DIR");
+    snprintf(saved, saved_size, "%s", previous != NULL ? previous : "");
+    fr_test_remove_tree(directory);
+    fr_test_make_directory(directory);
+    fr_test_set_env("DAUKLE_CACHE_DIR", directory);
+}
+
+static void restore_cache_dir(const char *saved) {
+    fr_test_set_env("DAUKLE_CACHE_DIR", saved[0] != '\0' ? saved : NULL);
+}
+
+/* The headline case of the whole branch: a repository holding daukle.toml, a
+   plugin and nothing daukle itself needs, which provisions a program from a
+   pinned archive and runs it. The tar member is this test binary's own bytes,
+   read back and hashed at runtime, so nothing here hardcodes a digest of
+   anything on disk. The only assertion that proves the provisioned binary
+   actually ran, rather than that daukle.provision merely returned FR_OK, is
+   that the sentinel file the child writes appeared. */
+TEST a_project_provisions_a_tool_and_runs_it(void) {
+    static char message[1024];
+
+    char cache[1024];
+    char saved_cache[1024];
+    snprintf(cache, sizeof cache, "%s/provision-e2e-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    use_isolated_cache_dir(cache, saved_cache, sizeof saved_cache);
+
+    fr_error read_err;
+    read_err.message[0] = '\0';
+    char *self_bytes = NULL;
+    size_t self_length = 0;
+    int self_read = fr_file_read_bytes(self_path, &self_bytes, &self_length, &read_err) == FR_OK;
+
+    size_t archive_capacity = self_read
+        ? FR_TAR_BLOCK + ((self_length + FR_TAR_BLOCK - 1) / FR_TAR_BLOCK) * FR_TAR_BLOCK
+              + 2 * FR_TAR_BLOCK
+        : 0;
+    char *archive = self_read ? malloc(archive_capacity) : NULL;
+    size_t archive_length = 0;
+    if (archive != NULL) {
+        memset(archive, 0, archive_capacity);
+        size_t used = fr_test_tar_append(archive, 0, "bin/tool.exe", '0', self_bytes, self_length);
+        archive_length = fr_test_tar_end(archive, used);
+    }
+
+    char digest[65];
+    digest[0] = '\0';
+    if (archive != NULL) fr_sha256_hex(archive, archive_length, digest);
+
+    fr_test_server *server = archive != NULL ? fr_test_server_create() : NULL;
+    if (server != NULL) {
+        fr_test_server_add_body_bytes(server, "/toolchain.tar", archive, archive_length);
+        fr_test_server_start(server);
+    }
+
+    char url[256];
+    url[0] = '\0';
+    if (server != NULL) {
+        snprintf(url, sizeof url, "http://127.0.0.1:%d/toolchain.tar", fr_test_server_port(server));
+    }
+
+    fr_test_set_env("DAUKLE_TEST_ARCHIVE_URL", url);
+    fr_test_set_env("DAUKLE_TEST_ARCHIVE_SHA256", digest);
+    fr_test_set_env("DAUKLE_TEST_MEMBER", "bin/tool.exe");
+
+    const char *marker =
+        "test/fixtures/provisioned-tool/build/daukle/provisioner/" PROVISIONED_SENTINEL;
+    remove(marker);
+
+    fr_error err;
+    err.message[0] = '\0';
+    fr_session session;
+    int opened = fr_session_open("test/fixtures/provisioned-tool/daukle.toml", 1, &session, &err);
+
+    fr_sync_report sync_report;
+    int synced = FR_ERR;
+    if (opened == FR_OK) {
+        synced = fr_sync_session(&session, 1, &sync_report, &err);
+        if (synced == FR_OK) fr_sync_report_free(&sync_report);
+    }
+
+    fr_task_set set;
+    int collected = FR_ERR;
+    if (synced == FR_OK) {
+        collected = fr_tasks_collect(session.registry, &session.manifest, &set, &err);
+    }
+
+    fr_task_plan plan;
+    int planned = FR_ERR;
+    if (collected == FR_OK) planned = fr_tasks_plan(&set, "provisioner:run", &plan, &err);
+
+    int run_status = FR_ERR;
+    if (planned == FR_OK) run_status = fr_tasks_run(&plan, &session, &err);
+
+    int ran_here = file_exists(marker);
+
+    if (planned == FR_OK) fr_tasks_plan_free(&plan);
+    if (collected == FR_OK) fr_tasks_set_free(&set);
+    if (opened == FR_OK) fr_session_close(&session);
+
+    if (server != NULL) {
+        fr_test_server_stop(server);
+        fr_test_server_free(server);
+    }
+    free(archive);
+    free(self_bytes);
+    remove(marker);
+    restore_cache_dir(saved_cache);
+
+    snprintf(message, sizeof message,
+             "self_read %d, opened %d, synced %d, collected %d, planned %d, run %d, err \"%s\"",
+             self_read, opened, synced, collected, planned, run_status, err.message);
+
+    ASSERT_EQm(message, 1, self_read);
+    ASSERT_EQm(message, FR_OK, opened);
+    ASSERT_EQm(message, FR_OK, synced);
+    ASSERT_EQm(message, FR_OK, collected);
+    ASSERT_EQm(message, FR_OK, planned);
+    ASSERT_EQm(message, FR_OK, run_status);
+    ASSERTm(message, ran_here);
+    PASS();
+}
+
 int main(int argc, char **argv) {
+    self_path = argv[0];
+    if (argc == 2 && strcmp(argv[1], "--task-child") == 0) return run_as_task_child();
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_pinned_archive_is_fetched_verified_and_unpacked);
     RUN_TEST(the_second_provision_makes_no_request_at_all);
@@ -486,5 +640,6 @@ int main(int argc, char **argv) {
     RUN_TEST(the_row_keeps_the_url_and_digest_whatever_the_label_says);
     RUN_TEST(an_empty_label_falls_back_to_a_fact_rather_than_to_nothing);
     RUN_TEST(a_url_ending_in_a_slash_still_falls_back_to_a_fact);
+    RUN_TEST(a_project_provisions_a_tool_and_runs_it);
     GREATEST_MAIN_END();
 }

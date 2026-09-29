@@ -1,0 +1,11 @@
+schema = 1
+project = "forebay/provisioned-tool"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+provisioner = "./plugins/provisioner.lua"
+
+[toolchains.provisioner]
+version = "1"
