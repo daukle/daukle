@@ -685,7 +685,13 @@ static int run_publish(const char *only, int use_cache, int verbose) {
         if (only != NULL && strcmp(only, target->name) != 0) continue;
 
         char goal[160];
-        fr_tasks_publish_goal(target->name, goal, sizeof goal);
+        if (!fr_tasks_publish_goal(target->name, goal, sizeof goal)) {
+            fr_error_set(&err, "the publish destination \"%s\" is too long", target->name);
+            fr_tasks_set_free(&set);
+            fr_session_close(&session);
+            report_error(&err, verbose);
+            return 1;
+        }
         fprintf(stderr, "daukle publish: %s (from %s)\n", target->name, target->from);
 
         fr_task_plan plan;
