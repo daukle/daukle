@@ -741,6 +741,51 @@ TEST a_manifest_orders_a_publish_step_after_a_build(void) {
     PASS();
 }
 
+TEST a_destination_with_no_publisher_is_named(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"},"
+        "\"publish\":{\"github\":{\"from\":\"gradle\"}}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+
+    int status = fr_tasks_check_publish(&set, &manifest, NULL, &err);
+    char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "no plugin declares a publisher named \"github\"") != NULL);
+    PASS();
+}
+
+TEST a_destination_with_a_publisher_passes_the_check(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin plugin = { "daukle.task/publish:github", NULL, NULL, 0, never_runs, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &plugin, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"},"
+        "\"publish\":{\"github\":{\"from\":\"gradle\"}}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+    int status = fr_tasks_check_publish(&set, &manifest, NULL, &err);
+
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_OK, status);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -774,5 +819,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_task_named_publish_is_refused);
     RUN_TEST(a_publish_task_run_receives_its_destination);
     RUN_TEST(a_manifest_orders_a_publish_step_after_a_build);
+    RUN_TEST(a_destination_with_no_publisher_is_named);
+    RUN_TEST(a_destination_with_a_publisher_passes_the_check);
     GREATEST_MAIN_END();
 }

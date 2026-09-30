@@ -501,3 +501,27 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
     }
     return FR_OK;
 }
+
+int fr_tasks_publish_goal(const char *destination, char *out, size_t out_size) {
+    int written = snprintf(out, out_size, "%s:%s", PUBLISH_PREFIX, destination);
+    return written > 0 && (size_t) written < out_size;
+}
+
+int fr_tasks_check_publish(const fr_task_set *set, const fr_manifest *manifest,
+                           const char *only, fr_error *err) {
+    for (size_t index = 0; index < manifest->publish_count; index++) {
+        const fr_publish_target *target = &manifest->publishes[index];
+        if (only != NULL && strcmp(only, target->name) != 0) continue;
+        char goal[160];
+        if (!fr_tasks_publish_goal(target->name, goal, sizeof goal)) {
+            fr_error_set(err, "the publish destination \"%s\" is too long", target->name);
+            return FR_ERR;
+        }
+        if (fr_tasks_find(set, goal) == NULL) {
+            fr_error_set(err, "no plugin declares a publisher named \"%s\", which [publish.%s]"
+                              " needs", target->name, target->name);
+            return FR_ERR;
+        }
+    }
+    return FR_OK;
+}
