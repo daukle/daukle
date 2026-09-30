@@ -2300,6 +2300,103 @@ TEST a_drive_letter_is_an_escape_rather_than_an_alias(void) {
     PASS();
 }
 
+TEST a_publisher_reaches_the_registry_under_the_publish_prefix(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *chunk =
+        "daukle.publisher{ name = 'github', publish = function(context) end }\n";
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "github.lua", NULL, 0, NULL, NULL, &err);
+    const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/publish:github");
+    int found = task != NULL && task->run != NULL;
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(found);
+    PASS();
+}
+
+TEST a_publisher_may_declare_exec(void) {
+    /* The grant itself: the same chunk declaring a source or a language is refused
+       outright for having declared exec. */
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *uses[] = { "exec" };
+    const char *chunk =
+        "daukle.publisher{ name = 'github', publish = function(context) end }\n";
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "github.lua", uses, 1, NULL, NULL, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_STR_EQ("", status == FR_OK ? "" : message);
+    PASS();
+}
+
+TEST a_publisher_needs_a_publish_function(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *chunk = "daukle.publisher{ name = 'github' }\n";
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "github.lua", NULL, 0, NULL, NULL, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "needs a publish function") != NULL);
+    PASS();
+}
+
+TEST a_resolver_chunk_may_not_declare_a_publisher(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "daukle.resolver{ resolve = function(c) return { url = c } end }\n"
+        "daukle.publisher{ name = 'github', publish = function(context) end }\n";
+    int status = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(began);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "a resolver chunk declares only a resolver") != NULL);
+    PASS();
+}
+
+TEST a_publisher_chunk_declaring_a_task_is_told_why(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *uses[] = { "exec" };
+    const char *chunk =
+        "daukle.publisher{ name = 'github', publish = function(context) end }\n"
+        "daukle.task{ name = 'extra', run = function(context) end }\n";
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "github.lua", uses, 1, NULL, NULL, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "a publisher declares publishers, not tasks") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -2389,5 +2486,10 @@ int main(int argc, char **argv) {
     RUN_TEST(the_module_limit_is_shared_across_a_load);
     RUN_TEST(a_member_name_carrying_a_second_colon_is_refused);
     RUN_TEST(a_drive_letter_is_an_escape_rather_than_an_alias);
+    RUN_TEST(a_publisher_reaches_the_registry_under_the_publish_prefix);
+    RUN_TEST(a_publisher_may_declare_exec);
+    RUN_TEST(a_publisher_needs_a_publish_function);
+    RUN_TEST(a_resolver_chunk_may_not_declare_a_publisher);
+    RUN_TEST(a_publisher_chunk_declaring_a_task_is_told_why);
     GREATEST_MAIN_END();
 }
