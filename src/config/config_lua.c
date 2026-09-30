@@ -903,6 +903,28 @@ static int protected_task_run(lua_State *state) {
     lua_setfield(state, -2, "dependencies");
     lua_setfield(state, -2, "toolchain");
 
+    if (context->publish != NULL) {
+        lua_newtable(state);
+        lua_pushstring(state, context->publish->name);
+        lua_setfield(state, -2, "name");
+
+        lua_newtable(state);
+        const cJSON *member = context->publish->block != NULL
+            ? context->publish->block->child : NULL;
+        while (member != NULL) {
+            if (strcmp(member->string, "from") != 0) {
+                fr_error push_err;
+                if (fr_lua_push_json(state, member, &push_err) != FR_OK) {
+                    return luaL_error(state, "%s", push_err.message);
+                }
+                lua_setfield(state, -2, member->string);
+            }
+            member = member->next;
+        }
+        lua_setfield(state, -2, "config");
+        lua_setfield(state, -2, "publish");
+    }
+
     /* lua_call, not lua_pcall: see protected_language_apply above. */
     lua_call(state, 1, 0);
     return 0;

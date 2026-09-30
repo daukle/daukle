@@ -2397,6 +2397,55 @@ TEST a_publisher_chunk_declaring_a_task_is_told_why(void) {
     PASS();
 }
 
+TEST a_publish_callback_reads_its_destination(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *chunk =
+        "daukle.publisher{ name = 'github', publish = function(context)\n"
+        "  error(context.publish.name .. '|' .. tostring(context.publish.config.tokenEnv)"
+        " .. '|' .. tostring(context.publish.config.from), 0)\n"
+        "end }\n";
+    ASSERT_EQ(FR_OK,
+              fr_lua_plugin_load(chunk, strlen(chunk), "github.lua", NULL, 0, NULL, NULL, &err));
+    const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/publish:github");
+
+    cJSON *root = cJSON_Parse(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"},"
+        "\"publish\":{\"github\":{\"from\":\"gradle\",\"tokenEnv\":\"GITHUB_TOKEN\"}}}");
+    fr_manifest manifest;
+    int parsed = fr_manifest_from_document(root, "daukle.toml", &manifest, &err) == FR_OK;
+
+    char message[512];
+    message[0] = '\0';
+    int status = FR_OK;
+    if (task != NULL && parsed) {
+        fr_task_run_context context;
+        memset(&context, 0, sizeof context);
+        context.name = "publish:github";
+        context.toolchain = &manifest.toolchains[0];
+        context.publish = &manifest.publishes[0];
+        context.project = manifest.self.project;
+        context.version = "1.0.0";
+        context.root = "build/daukle";
+        context.derived_dir_relative = "build/daukle/gradle";
+        status = task->run(task->state, &context, &err);
+        snprintf(message, sizeof message, "%s", err.message);
+    }
+    int found = task != NULL;
+
+    if (parsed) fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERT(found);
+    ASSERT(parsed);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "github|GITHUB_TOKEN|nil") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -2491,5 +2540,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_publisher_needs_a_publish_function);
     RUN_TEST(a_resolver_chunk_may_not_declare_a_publisher);
     RUN_TEST(a_publisher_chunk_declaring_a_task_is_told_why);
+    RUN_TEST(a_publish_callback_reads_its_destination);
     GREATEST_MAIN_END();
 }
