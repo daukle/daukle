@@ -11,7 +11,7 @@
 #define FR_TASK_CAPABILITY_PREFIX "daukle.task/"
 
 static const char *RESERVED_COMMANDS[] = {
-    "sync", "check", "add", "config", "plugin", "clean", "tasks"
+    "sync", "check", "add", "config", "plugin", "clean", "tasks", "publish"
 };
 
 int fr_tasks_name_is_reserved(const char *name) {
@@ -60,6 +60,23 @@ static const fr_toolchain *toolchain_for(const fr_manifest *manifest, const char
         const char *declared = manifest->toolchains[index].name;
         if (strlen(declared) == prefix && strncmp(declared, name, prefix) == 0) {
             return &manifest->toolchains[index];
+        }
+    }
+    return NULL;
+}
+
+static const char PUBLISH_PREFIX[] = "publish";
+
+static int prefix_is_publish(const char *name, size_t prefix) {
+    return strlen(PUBLISH_PREFIX) == prefix && strncmp(PUBLISH_PREFIX, name, prefix) == 0;
+}
+
+static const fr_publish_target *publish_target_for(const fr_manifest *manifest, const char *name,
+                                                   size_t prefix) {
+    const char *destination = name + prefix + 1;
+    for (size_t index = 0; index < manifest->publish_count; index++) {
+        if (strcmp(manifest->publishes[index].name, destination) == 0) {
+            return &manifest->publishes[index];
         }
     }
     return NULL;
@@ -136,9 +153,20 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
         }
 
         const fr_toolchain *toolchain = NULL;
+        const fr_publish_target *publish = NULL;
         if (prefix > 0) {
-            toolchain = toolchain_for(manifest, name, prefix);
-            if (toolchain == NULL) continue;
+            if (prefix_is_publish(name, prefix)) {
+                publish = publish_target_for(manifest, name, prefix);
+                if (publish == NULL) continue;
+                toolchain = toolchain_for(manifest, publish->from, strlen(publish->from));
+                /* fr_manifest_from_document refuses a "from" naming no declared toolchain, so
+                   this cannot fire; it is here so a future reader of a manifest built another
+                   way does not get a NULL toolchain through a path that promises one. */
+                if (toolchain == NULL) continue;
+            } else {
+                toolchain = toolchain_for(manifest, name, prefix);
+                if (toolchain == NULL) continue;
+            }
         }
 
         fr_task_node node;
@@ -149,6 +177,7 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
         node.depends_on_count = plugin->depends_on_count;
         node.plugin = plugin;
         node.toolchain = toolchain;
+        node.publish = publish;
         if (append(out, &node, err) != FR_OK) {
             fr_tasks_set_free(out);
             return FR_ERR;

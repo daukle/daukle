@@ -21,6 +21,7 @@ typedef struct {
     const char *extra_part_of;
     const fr_task_plugin *plugin;
     const fr_toolchain *toolchain;
+    const fr_publish_target *publish;  /* NULL unless the name carries the "publish:" prefix */
 } fr_task_node;
 
 typedef struct {

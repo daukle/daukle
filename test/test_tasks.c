@@ -568,6 +568,88 @@ TEST joiners_past_capacity_are_still_counted(void) {
     PASS();
 }
 
+TEST a_publish_task_takes_its_toolchain_from_its_destination(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin plugin = { "daukle.task/publish:github", NULL, NULL, 0, never_runs, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &plugin, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"},"
+        "\"publish\":{\"github\":{\"from\":\"gradle\"}}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+    ASSERT_EQ(1u, set.count);
+    ASSERT_STR_EQ("publish:github", set.nodes[0].name);
+    ASSERT(set.nodes[0].toolchain != NULL);
+    ASSERT_STR_EQ("gradle", set.nodes[0].toolchain->name);
+    ASSERT(set.nodes[0].publish != NULL);
+    ASSERT_STR_EQ("github", set.nodes[0].publish->name);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST a_publish_task_with_no_destination_declared_is_skipped(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin plugin = { "daukle.task/publish:github", NULL, NULL, 0, never_runs, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &plugin, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+    ASSERT_EQ(0u, set.count);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST an_ordinary_task_carries_no_publish_target(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin plugin = { "daukle.task/gradle:build", NULL, NULL, 0, never_runs, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &plugin, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+    ASSERT_EQ(1u, set.count);
+    ASSERT(set.nodes[0].publish == NULL);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST a_task_named_publish_is_refused(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin plugin = { "daukle.task/publish", NULL, NULL, 0, NULL, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &plugin, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{}}");
+    fr_task_set set;
+    int status = fr_tasks_collect(registry, &manifest, &set, &err);
+    char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+    if (status == FR_OK) fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "that is also a daukle command") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -595,5 +677,9 @@ int main(int argc, char **argv) {
     RUN_TEST(the_zero_plugin_unknown_message_says_the_project_has_none);
     RUN_TEST(the_nonzero_plugin_unknown_message_names_the_count);
     RUN_TEST(joiners_past_capacity_are_still_counted);
+    RUN_TEST(a_publish_task_takes_its_toolchain_from_its_destination);
+    RUN_TEST(a_publish_task_with_no_destination_declared_is_skipped);
+    RUN_TEST(an_ordinary_task_carries_no_publish_target);
+    RUN_TEST(a_task_named_publish_is_refused);
     GREATEST_MAIN_END();
 }
