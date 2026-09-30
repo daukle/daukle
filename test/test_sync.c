@@ -1,7 +1,7 @@
 #include "greatest.h"
-#include "region.h"
+#include "project/region.h"
 #include "support.h"
-#include "sync.h"
+#include "project/sync.h"
 
 #include <stdio.h>
 #include <stdlib.h>

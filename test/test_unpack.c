@@ -1,11 +1,11 @@
 #include "greatest.h"
-#include "unpack.h"
+#include "archive/unpack.h"
 
-#include "archive.h"
-#include "error.h"
-#include "region.h"
+#include "archive/archive.h"
+#include "project/region.h"
+#include "util/error.h"
 #include "support.h"
-#include "tar.h"
+#include "archive/tar.h"
 
 #include <stdio.h>
 #include <stdlib.h>

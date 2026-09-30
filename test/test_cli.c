@@ -1,6 +1,6 @@
 #include "greatest.h"
-#include "cli.h"
-#include "tasks.h"
+#include "cli/cli.h"
+#include "project/tasks.h"
 
 static fr_cli_options parse(int argc, const char **argv) {
     fr_cli_options options;

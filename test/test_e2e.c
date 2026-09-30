@@ -1,12 +1,12 @@
 #include "greatest.h"
-#include "error.h"
-#include "http.h"
-#include "plugins.h"
-#include "region.h"
-#include "registry.h"
+#include "net/http.h"
+#include "plugin/plugins.h"
+#include "plugin/registry.h"
+#include "project/region.h"
+#include "util/error.h"
 #include "support.h"
-#include "sync.h"
-#include "tasks.h"
+#include "project/sync.h"
+#include "project/tasks.h"
 
 #include <stdio.h>
 #include <stdlib.h>

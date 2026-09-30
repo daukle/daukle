@@ -1,6 +1,6 @@
 #include "greatest.h"
 
-#include "exec.h"
+#include "exec/exec.h"
 #include "support.h"
 
 #include <stdio.h>

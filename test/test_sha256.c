@@ -1,5 +1,5 @@
 #include "greatest.h"
-#include "sha256.h"
+#include "util/sha256.h"
 
 #include <string.h>
 

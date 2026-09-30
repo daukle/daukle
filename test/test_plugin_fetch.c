@@ -1,9 +1,9 @@
-#include "plugin_fetch.h"
+#include "plugin/plugin_fetch.h"
 
-#include "cache.h"
-#include "error.h"
+#include "cache/cache.h"
+#include "util/error.h"
 #include "greatest.h"
-#include "http.h"
+#include "net/http.h"
 #include "support.h"
 
 #include <stdlib.h>

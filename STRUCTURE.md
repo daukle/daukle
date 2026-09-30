@@ -32,6 +32,17 @@ anything naming the first three means this repo.
 daukle/daukle
   CMakeLists.txt        C11, warnings are errors (/W4 /WX, -Wall -Wextra -Werror)
   src/                  the whole program, one concern per pair of .c/.h files
+    cli/                the entry point and command dispatch
+    config/             the authoring surface: toml, lua and json manifests, and the editors for each
+    lua/                the lua state, the configuration sandbox, and the per-plugin verb environment
+    plugin/             acquiring, resolving and registering plugins, and the dependencies between them
+    net/                http and urls, one backend per platform
+    archive/            recognising, reading and unpacking tar, tar.gz and zip
+    exec/               starting a program, resolving a tool, and reporting which one was used
+    provision/          fetching a pinned toolchain into the content-addressed store
+    project/            what daukle does to a repository: generation, the derived tree, tasks and sync
+    cache/              where everything above puts bytes on disk, and the atomic-replace guarantee
+    util/               the primitives with no subsystem of their own
   plugins/*.lua         the five plugins that were built in, staged until spec section 6's repos exist
   test/                 one test file per src module, plus a real HTTP server fixture
   vendor/cJSON          JSON parsing
@@ -56,54 +67,54 @@ the client tier's rules.
 
 | concern | owned by | it is NOT |
 | --- | --- | --- |
-| reading a project or manifest file into structs | `manifest.c` | parsing JSON, which is `jsonx` over vendored cJSON |
-| choosing which module of which project answers a coordinate | `resolve.c` | fetching anything. It resolves, the source fetches |
-| the three plugin tables, source, language and config | `registry.c` | a plugin. It holds `fr_source_plugin`, `fr_language_plugin` and `fr_config_plugin` |
+| reading a project or manifest file into structs | `src/config/manifest.c` | parsing JSON, which is `jsonx` over vendored cJSON |
+| choosing which module of which project answers a coordinate | `src/plugin/resolve.c` | fetching anything. It resolves, the source fetches |
+| the three plugin tables, source, language and config | `src/plugin/registry.c` | a plugin. It holds `fr_source_plugin`, `fr_language_plugin` and `fr_config_plugin` |
 | the five plugins that were built in | `plugins/*.lua` | staged here until the repositories in spec section 6 exist. Not fixtures: they are the content those repositories will carry, and `cmake/check_agnostic.cmake` holds every fixture copy byte identical to them |
-| finding the manifest and choosing its format | `config.c` | a parser. It dispatches to a registered `fr_config_plugin` |
-| reading json text into the document model | `config_json.c` | a manifest format, nor a registered `fr_config_plugin`. It is reachable only through the `daukle.json_parse` verb |
-| reading a toml manifest | `config_toml.c` | the whole config table. `config_lua.c` is the overlay beside it, registered the same way |
-| rewriting a marked region of a file in place | `region.c` | a JSON editor. `jsonedit.c` is, for files that are JSON |
-| rewriting a toml manifest in place | `tomledit.c` | a toml parser. It splices spans, as `jsonedit.c` does for json |
-| the whole write pass over a manifest | `sync.c` | per-language. It drives the language plugins |
-| the derived directory: its path, the ledger of what daukle generated, write-if-changed, the sweep, and clean | `derived.c`, tested by `test/test_derived.c` | the generation pass, which is `generate.c`. It is handed a file set and decides only what happens on disk |
-| the generation pass: resolving each declared toolchain, building what its `generate` receives, and validating what it returns | `generate.c`, tested by `test/test_generate.c` | what happens on disk, which is `derived.c` |
-| the task graph: collecting a plugin-declared task together with the manifest task blocks that add edges to it, planning a goal's transitive closure in dependency order, and running that plan | `tasks.c`, `tasks.h`, tested by `test/test_tasks.c` and, end to end, `test/test_e2e.c` | starting a process itself. `fr_tasks_run` ensures a run-bearing task's derived directory exists and calls its plugin's `run`; that callback is what calls `daukle.exec`, not `tasks.c` |
-| HTTP, per platform | `http.c` over `http_curl.c` and `http_winhttp.c` | two implementations to keep in step. One interface, one backend per platform |
-| where the cache lives on disk, and the atomic-replace guarantee everything under it is written through | `cache.c` | any particular key shape. `fr_plugin_fetch` keys on a url hash and `provision.c` keys on a content digest, each laying out its own directory shape beneath the root `cache.c` hands back |
-| version ranges and ordering | `semver.c` | date or tag ordering |
-| URL building and escaping | `url.c` | HTTP |
-| growable strings | `strbuf.c` | a general container library |
-| the command surface | `cli.c`, `main.c` | logic. Everything it calls lives in a module beside it |
-| errors | `error.c`, `fr_error` | logging. The caller decides what to print |
-| the lua state, its memory cap and its errors | `luax.c` | the sandbox, which is `lua_sandbox.c`, nor the config format, which is `config_lua.c` |
-| what a configuration script may touch | `lua_sandbox.c` | a permission system. It curates one globals table and bounds daukle.include |
-| verifying a spliced manifest still parses | `tomledit.c`, through `FR_CONFIG_TOML` | a second parser. It reads its own output back so no caller is handed text it would be wrong to write |
-| running a configuration script, reading it back, and registering any source or language plugin the script declares | `config_lua.c` | the sandbox or the lua state, which are `lua_sandbox.c` and `luax.c` |
-| what a plugin may touch, and building one environment per plugin | `lua_verbs.c` | the configuration sandbox, which is `lua_sandbox.c`. One is per plugin, the other is the state's globals |
-| reading `[plugins]`, the declaration pass, and acquiring a plugin by path, url or resolver | `plugins.c` | fetching bytes, which is `plugin_fetch.c`, or turning a coordinate into a url, which is a resolver plugin through `resolvers.c` |
-| fetching and caching the bytes at a plugin URL; knows no coordinate, version or host | `src/plugin_fetch.c` | resolving a coordinate to a URL, or interpreting the bytes it fetches, which are the plugin loader's question |
-| the `[resolvers]` table, and acquiring, running and invoking a resolver plugin | `src/resolvers.c` | fetching bytes, which is `plugin_fetch.c`, or loading a plugin, which is `plugins.c` |
-| the ustar header format itself: `fr_tar_read_header` parses one 512-byte block once, and is consumed by two readers, its own bounded in-memory one (`fr_tar_read`, bytes in, an ordered member list out, nothing unpacked and no filesystem call at all) and `archive.c`'s streaming one, called from `archive.c:292` | `src/tar.c`, tested by `test/test_tar.c` | the 64-member and 1 MiB-per-member caps, or the no-prefix-field refusal; those are `fr_tar_read`'s own policy as the plugin-module loader's reader, not a limit the header parser imposes on `archive.c`'s caller. Nor does it know anything about lua, plugins or daukle: whether a member must be `.lua`, and whether its name may climb out, are daukle's rules and live in `plugin_modules.c` |
-| where a plugin's code comes from, with one interface over a single chunk, an archive held in memory and a local directory; also the `daukle.require` module-name rule | `src/plugin_modules.c`, tested by `test/test_plugin_modules.c` | running a module, which is `config_lua.c`, and parsing an archive, which is `tar.c` |
-| a sha-256 digest | `sha256.c` | a general crypto library |
-| the shared exec logic, joining a program and its argument vector into the one command line `CreateProcess` requires, and freeing an `fr_exec_result` | `exec.c`, `exec.h`, tested by `test/test_exec_quote.c` | spawning a process. That is `exec_posix.c` and `exec_win32.c`. Reachable from Lua through `daukle.exec`, which takes a `daukle.tool` handle, never a path string |
-| spawning a process on POSIX with `fork`/`execv`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `exec_posix.c`, tested by `test/test_exec.c` | building the command line, which stays in `exec.c` because Windows needs it too |
-| spawning a process on Windows with `CreateProcessA`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `exec_win32.c`, tested by `test/test_exec.c` | building the command line, which it calls into `exec.c` for |
-| resolving an executable name to an absolute path by searching the host's `PATH` | `tool.c`, tested by `test/test_tool.c` | provisioning a missing tool. Discovery only, per spec section 3.1; child spec 4 extends the same `fr_tool_resolve` with that later. Reachable from Lua through `daukle.tool`, which returns an unforgeable full-userdata handle, never the path itself. A name that resolves to a `.bat` or `.cmd`, whether by extension search or literally, is refused naming the file, since starting one needs `cmd.exe`; `fr_tool_is_batch_file` is that test and a provisioned root's member is held to the same one by `:tool`. `:path` is not, because naming a file starts nothing; it is held to `fr_tool_is_regular_file` instead |
-| enumerating and decompressing a tar, a tar.gz or a zip: bytes sniffed for their kind in, an ordered stream of members out | `src/archive.c`, tested by `test/test_archive.c` | deciding where a member lands or writing it anywhere. It never opens a destination file; that decision and every write belong to `unpack.c` |
-| every path decision and every write when an archive is expanded onto disk: containment across members as well as within one, so a member reachable only through a symlink an earlier member created is refused; what a symlink, a directory and a plain file each become; and the byte and member-count limits in `FR_UNPACK_DEFAULTS`, counted for every member kind because the reader has already expanded each one | `src/unpack.c`, tested by `test/test_unpack.c` | telling a tar header from a zip central directory record, or any other format detail. It reads an already-opened `fr_archive` and knows nothing of what is inside it beyond a member's name, kind and bytes |
-| composing a fetch, a digest verification and an unpack behind one pinned call, and the content-addressed cache of provisioned toolchains that keys on the digest alone so two urls serving the same bytes share one tree | `src/provision.c`, tested by `test/test_provision.c` | any Lua surface. `daukle.provision` and the root handle's `:tool` and `:path` methods are `lua_verbs.c`'s, which is `provision.c`'s only caller. The two methods share one containment check, `root_member_path`, and differ only after it: `:tool` demands an executable and returns an opaque handle, `:path` demands a file and returns its absolute path as a string, so a plugin can pass a provisioned script to a provisioned interpreter |
-| what a provisioned or installed tool's report line says, the links an unpack left out under it, and deduping it to one line per distinct tool per run | `src/toolreport.c`, tested by `test/test_provision.c` | deciding what tool to use or whether to provision one at all. That decision is made before anything reaches `toolreport.c`; it only renders the fact of it |
-| decompressing and enumerating a zip's central directory | `vendor/miniz`, compiled with `MINIZ_NO_STDIO` | opening or creating a file. Without stdio it cannot, even by a caller's own mistake, which is what keeps every path decision and every write inside `unpack.c` |
+| finding the manifest and choosing its format | `src/config/config.c` | a parser. It dispatches to a registered `fr_config_plugin` |
+| reading json text into the document model | `src/config/config_json.c` | a manifest format, nor a registered `fr_config_plugin`. It is reachable only through the `daukle.json_parse` verb |
+| reading a toml manifest | `src/config/config_toml.c` | the whole config table. `src/config/config_lua.c` is the overlay beside it, registered the same way |
+| rewriting a marked region of a file in place | `src/project/region.c` | a JSON editor. `src/config/jsonedit.c` is, for files that are JSON |
+| rewriting a toml manifest in place | `src/config/tomledit.c` | a toml parser. It splices spans, as `src/config/jsonedit.c` does for json |
+| the whole write pass over a manifest | `src/project/sync.c` | per-language. It drives the language plugins |
+| the derived directory: its path, the ledger of what daukle generated, write-if-changed, the sweep, and clean | `src/project/derived.c`, tested by `test/test_derived.c` | the generation pass, which is `src/project/generate.c`. It is handed a file set and decides only what happens on disk |
+| the generation pass: resolving each declared toolchain, building what its `generate` receives, and validating what it returns | `src/project/generate.c`, tested by `test/test_generate.c` | what happens on disk, which is `src/project/derived.c` |
+| the task graph: collecting a plugin-declared task together with the manifest task blocks that add edges to it, planning a goal's transitive closure in dependency order, and running that plan | `src/project/tasks.c`, `src/project/tasks.h`, tested by `test/test_tasks.c` and, end to end, `test/test_e2e.c` | starting a process itself. `fr_tasks_run` ensures a run-bearing task's derived directory exists and calls its plugin's `run`; that callback is what calls `daukle.exec`, not `src/project/tasks.c` |
+| HTTP, per platform | `src/net/http.c` over `src/net/http_curl.c` and `src/net/http_winhttp.c` | two implementations to keep in step. One interface, one backend per platform |
+| where the cache lives on disk, and the atomic-replace guarantee everything under it is written through | `src/cache/cache.c` | any particular key shape. `fr_plugin_fetch` keys on a url hash and `src/provision/provision.c` keys on a content digest, each laying out its own directory shape beneath the root `src/cache/cache.c` hands back |
+| version ranges and ordering | `src/util/semver.c` | date or tag ordering |
+| URL building and escaping | `src/net/url.c` | HTTP |
+| growable strings | `src/util/strbuf.c` | a general container library |
+| the command surface | `src/cli/cli.c`, `src/cli/main.c` | logic. Everything it calls lives in a module beside it |
+| errors | `src/util/error.c`, `fr_error` | logging. The caller decides what to print |
+| the lua state, its memory cap and its errors | `src/lua/luax.c` | the sandbox, which is `src/lua/lua_sandbox.c`, nor the config format, which is `src/config/config_lua.c` |
+| what a configuration script may touch | `src/lua/lua_sandbox.c` | a permission system. It curates one globals table and bounds daukle.include |
+| verifying a spliced manifest still parses | `src/config/tomledit.c`, through `FR_CONFIG_TOML` | a second parser. It reads its own output back so no caller is handed text it would be wrong to write |
+| running a configuration script, reading it back, and registering any source or language plugin the script declares | `src/config/config_lua.c` | the sandbox or the lua state, which are `src/lua/lua_sandbox.c` and `src/lua/luax.c` |
+| what a plugin may touch, and building one environment per plugin | `src/lua/lua_verbs.c` | the configuration sandbox, which is `src/lua/lua_sandbox.c`. One is per plugin, the other is the state's globals |
+| reading `[plugins]`, the declaration pass, and acquiring a plugin by path, url or resolver | `src/plugin/plugins.c` | fetching bytes, which is `src/plugin/plugin_fetch.c`, or turning a coordinate into a url, which is a resolver plugin through `src/plugin/resolvers.c` |
+| fetching and caching the bytes at a plugin URL; knows no coordinate, version or host | `src/plugin/plugin_fetch.c` | resolving a coordinate to a URL, or interpreting the bytes it fetches, which are the plugin loader's question |
+| the `[resolvers]` table, and acquiring, running and invoking a resolver plugin | `src/plugin/resolvers.c` | fetching bytes, which is `src/plugin/plugin_fetch.c`, or loading a plugin, which is `src/plugin/plugins.c` |
+| the ustar header format itself: `fr_tar_read_header` parses one 512-byte block once, and is consumed by two readers, its own bounded in-memory one (`fr_tar_read`, bytes in, an ordered member list out, nothing unpacked and no filesystem call at all) and `src/archive/archive.c`'s streaming one, called from `archive.c:292` | `src/archive/tar.c`, tested by `test/test_tar.c` | the 64-member and 1 MiB-per-member caps, or the no-prefix-field refusal; those are `fr_tar_read`'s own policy as the plugin-module loader's reader, not a limit the header parser imposes on `src/archive/archive.c`'s caller. Nor does it know anything about lua, plugins or daukle: whether a member must be `.lua`, and whether its name may climb out, are daukle's rules and live in `src/plugin/plugin_modules.c` |
+| where a plugin's code comes from, with one interface over a single chunk, an archive held in memory and a local directory; also the `daukle.require` module-name rule | `src/plugin/plugin_modules.c`, tested by `test/test_plugin_modules.c` | running a module, which is `src/config/config_lua.c`, and parsing an archive, which is `src/archive/tar.c` |
+| a sha-256 digest | `src/util/sha256.c` | a general crypto library |
+| the shared exec logic, joining a program and its argument vector into the one command line `CreateProcess` requires, and freeing an `fr_exec_result` | `src/exec/exec.c`, `src/exec/exec.h`, tested by `test/test_exec_quote.c` | spawning a process. That is `src/exec/exec_posix.c` and `src/exec/exec_win32.c`. Reachable from Lua through `daukle.exec`, which takes a `daukle.tool` handle, never a path string |
+| spawning a process on POSIX with `fork`/`execv`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `src/exec/exec_posix.c`, tested by `test/test_exec.c` | building the command line, which stays in `src/exec/exec.c` because Windows needs it too |
+| spawning a process on Windows with `CreateProcessA`, capturing its streams up to `FR_EXEC_CAPTURE_LIMIT` and reporting its exit code | `src/exec/exec_win32.c`, tested by `test/test_exec.c` | building the command line, which it calls into `src/exec/exec.c` for |
+| resolving an executable name to an absolute path by searching the host's `PATH` | `src/exec/tool.c`, tested by `test/test_tool.c` | provisioning a missing tool. Discovery only, per spec section 3.1; child spec 4 extends the same `fr_tool_resolve` with that later. Reachable from Lua through `daukle.tool`, which returns an unforgeable full-userdata handle, never the path itself. A name that resolves to a `.bat` or `.cmd`, whether by extension search or literally, is refused naming the file, since starting one needs `cmd.exe`; `fr_tool_is_batch_file` is that test and a provisioned root's member is held to the same one by `:tool`. `:path` is not, because naming a file starts nothing; it is held to `fr_tool_is_regular_file` instead |
+| enumerating and decompressing a tar, a tar.gz or a zip: bytes sniffed for their kind in, an ordered stream of members out | `src/archive/archive.c`, tested by `test/test_archive.c` | deciding where a member lands or writing it anywhere. It never opens a destination file; that decision and every write belong to `src/archive/unpack.c` |
+| every path decision and every write when an archive is expanded onto disk: containment across members as well as within one, so a member reachable only through a symlink an earlier member created is refused; what a symlink, a directory and a plain file each become; and the byte and member-count limits in `FR_UNPACK_DEFAULTS`, counted for every member kind because the reader has already expanded each one | `src/archive/unpack.c`, tested by `test/test_unpack.c` | telling a tar header from a zip central directory record, or any other format detail. It reads an already-opened `fr_archive` and knows nothing of what is inside it beyond a member's name, kind and bytes |
+| composing a fetch, a digest verification and an unpack behind one pinned call, and the content-addressed cache of provisioned toolchains that keys on the digest alone so two urls serving the same bytes share one tree | `src/provision/provision.c`, tested by `test/test_provision.c` | any Lua surface. `daukle.provision` and the root handle's `:tool` and `:path` methods are `src/lua/lua_verbs.c`'s, which is `src/provision/provision.c`'s only caller. The two methods share one containment check, `root_member_path`, and differ only after it: `:tool` demands an executable and returns an opaque handle, `:path` demands a file and returns its absolute path as a string, so a plugin can pass a provisioned script to a provisioned interpreter |
+| what a provisioned or installed tool's report line says, the links an unpack left out under it, and deduping it to one line per distinct tool per run | `src/exec/toolreport.c`, tested by `test/test_provision.c` | deciding what tool to use or whether to provision one at all. That decision is made before anything reaches `src/exec/toolreport.c`; it only renders the fact of it |
+| decompressing and enumerating a zip's central directory | `vendor/miniz`, compiled with `MINIZ_NO_STDIO` | opening or creating a file. Without stdio it cannot, even by a caller's own mistake, which is what keeps every path decision and every write inside `src/archive/unpack.c` |
 
 **A `daukle.lua` runs against a curated globals table, not Lua's own.** The two lists that define it
-are `KEPT` and `REMOVED` at the top of `src/lua_sandbox.c`, and reading a removed name raises an
+are `KEPT` and `REMOVED` at the top of `src/lua/lua_sandbox.c`, and reading a removed name raises an
 error naming it rather than returning nil. Section 3.4 of the design spec explains each removal;
 the source lists are the authority and the spec follows them.
 
 **The registry is destroyed before the lua runtime is shut down, always.** A `daukle.lua` may
-register plugins, and `config_lua.c` owns their capability strings while the registry stores the
+register plugins, and `src/config/config_lua.c` owns their capability strings while the registry stores the
 plugin structs by value. So the order is: build the registry, load the configuration, destroy the
 registry, then `fr_lua_runtime_shutdown()`. `fr_lua_runtime_begin`, which `config_lua_load`
 delegates to, returns `FR_OK` for a load into the registry the open phase already belongs to, an
@@ -122,12 +133,12 @@ or an `fr_source_plugin` and register it, turning a `daukle.language{}` or `dauk
 declaration into a registry entry; no other file in `src/` calls `fr_registry_add_source` or
 `fr_registry_add_language`, whose only direct callers in `test/` are `test_registry.c`'s unit tests of
 the registry and the one stub source `test_resolve.c:75` injects to watch a plugin get its own state.
-Neither touches `resolve.c`, and a change that does touch it for a new source or language is the
+Neither touches `src/plugin/resolve.c`, and a change that does touch it for a new source or language is the
 signal that the seam was bypassed.
 
 **A source or a language plugin may not declare `exec`.** `lua_declare_language` and
-`lua_declare_source` in `config_lua.c` both refuse with "daukle.exec is available only to a
-toolchain plugin" when `fr_lua_verbs_env_declared_exec` (`lua_verbs.c`) reports that the environment
+`lua_declare_source` in `src/config/config_lua.c` both refuse with "daukle.exec is available only to a
+toolchain plugin" when `fr_lua_verbs_env_declared_exec` (`src/lua/lua_verbs.c`) reports that the environment
 the plugin's chunk is running in included `exec`. The flag is reset at the top of every
 `fr_lua_verbs_push_env` call, so it can never carry a stale answer from a previously loaded plugin.
 Only a toolchain plugin, not yet built, may declare `exec`.
@@ -135,7 +146,7 @@ Only a toolchain plugin, not yet built, may declare `exec`.
 That check fires when a plugin says what kind it is, which is too late on its own: a plugin that
 calls `daukle.exec` at the top of its chunk and declares afterwards has already run the program.
 So `verb_exec` refuses again at the call itself, for the whole of any plugin chunk
-(`fr_lua_plugin_exec_is_refused` in `config_lua.c`), since no plugin kind that may exec exists yet.
+(`fr_lua_plugin_exec_is_refused` in `src/config/config_lua.c`), since no plugin kind that may exec exists yet.
 The two together are what make the refusal fail closed.
 
 **The cache key includes the artifact, and that is load bearing.** Two manifests can name one project
@@ -153,7 +164,7 @@ than a mock, so redirect and transport behaviour is exercised as it will be in u
 tests themselves.
 
 Most modules have a dedicated test file; the rest are covered through the tests of the module that
-drives them, such as `config_json.c` through `test_lua_verbs.c`'s `json_parse` tests.
+drives them, such as `src/config/config_json.c` through `test_lua_verbs.c`'s `json_parse` tests.
 
 **daukle no longer tests what npm, Gradle or C output looks like.** `test_lang_npm.c`,
 `test_lang_gradle.c`, `test_lang_c.c` and `test_source_github.c` were deleted with the modules they
@@ -186,7 +197,7 @@ minimal fixtures rather than delete the test. No test loads a staged plugin dire
 invisible for as long as the staging directory exists.
 
 **`fr_registry_add_source`'s and `fr_registry_add_language`'s duplicate-capability refusal is now
-unreachable from every production path.** Both callers sit behind `take_slot` in `src/config_lua.c`,
+unreachable from every production path.** Both callers sit behind `take_slot` in `src/config/config_lua.c`,
 which refuses a duplicate first, and every production path destroys the registry and the Lua runtime
 together, so reaching the registry's own refusal needs a registry that outlives a runtime shutdown.
 It is asserted only by direct unit tests in `test/test_registry.c`. That refusal is the reason each
@@ -196,14 +207,14 @@ shaped it reachable only from tests.
 ## 4. State
 
 The resolver, the cache, the sync pass and the CLI are all implemented and tested. Every source and
-every language now arrives through a plugin: `fr_build_registry` in `sync.c` registers only the
+every language now arrives through a plugin: `fr_build_registry` in `src/project/sync.c` registers only the
 config formats, and the registry's source and language tables start empty. The configuration surface
-is TOML with an optional Lua overlay: `config.c` finds the manifest and dispatches to a registered
-`fr_config_plugin` by a capability string built from the file's extension, and `config_toml.c` and
-`config_lua.c` are the only two registered formats, chosen the same way, with neither named in
-`config.c` itself. TOML is the format a manifest is authored in going forward, and it is also the
+is TOML with an optional Lua overlay: `src/config/config.c` finds the manifest and dispatches to a registered
+`fr_config_plugin` by a capability string built from the file's extension, and `src/config/config_toml.c` and
+`src/config/config_lua.c` are the only two registered formats, chosen the same way, with neither named in
+`src/config/config.c` itself. TOML is the format a manifest is authored in going forward, and it is also the
 asset name the `daukle/github` plugin fetches by default from a release. JSON is no longer a manifest
-format at all: `config_json.c` registers nothing and survives only so a plugin can read its own data
+format at all: `src/config/config_json.c` registers nothing and survives only so a plugin can read its own data
 file through `daukle.json_parse`, such as npm recovering its ledger from a `package.json`.
 
 Task **F-7** in `spisor/docs/TASKS.md` is unaffected by this work: it says both of the phase-2
@@ -211,10 +222,10 @@ manifest writers are proven against fixtures only, because nothing in the ecosys
 manifest release asset yet. basekit's 5.0.0 release carries eight jars and no manifest. Until
 something publishes one, the writers have never met real input.
 
-`daukle add` edits TOML only, and `main.c` names that format on purpose: it checks the manifest path
+`daukle add` edits TOML only, and `src/cli/main.c` names that format on purpose: it checks the manifest path
 ends in `.toml` and calls `fr_toml_edit_set_dependency` directly, which is a deliberate, accepted
 exception to the agnostic-core rule (ruling R29). The general form would be an edit hook on
-`fr_config_plugin`, so every format supplies its own editor and `main.c` names none of them, but that
+`fr_config_plugin`, so every format supplies its own editor and `src/cli/main.c` names none of them, but that
 would touch a plugin struct four completed tasks already depend on and would buy nothing until a JSON
 or Lua manifest needs editing in place too, so it is deferred rather than built now.
 
@@ -224,15 +235,15 @@ error rather than a silent discard, and whatever it produces is read back throug
 before anything is written.
 
 A manifest's `[plugins]` table registers a source or a language by running each declared plugin in a
-`lua_verbs.c` environment scoped to exactly the verbs it declared, through `plugins.c`. It is now
+`src/lua/lua_verbs.c` environment scoped to exactly the verbs it declared, through `src/plugin/plugins.c`. It is now
 the only route into the registry's source and language tables:
 `fr_build_registry` registers only the config formats, and the five files that used to compile a
 source or a language directly into the binary, `source_path.c`, `source_github.c`, `lang_npm.c`,
 `lang_gradle.c` and `lang_c.c`, are gone. `FR_SOURCE_[A-Z]` and `FR_LANGUAGE_[A-Z]` are in the
-agnostic check's `FORBIDDEN` list, so `config.c` cannot silently regain one.
+agnostic check's `FORBIDDEN` list, so `src/config/config.c` cannot silently regain one.
 `check_agnostic.cmake` enforces two rules over two file sets: no plugin name in `CORE_FILES`, and no
 forge host, `api.github.com`, `github.com`, `gitlab` or `bitbucket`, anywhere in `src/*.c` or
-`src/*.h`, which is why the second rule reaches `plugins.c` and `resolvers.c` that the first excludes.
+`src/*.h`, which is why the second rule reaches `src/plugin/plugins.c` and `src/plugin/resolvers.c` that the first excludes.
 `daukle plugin update [label]` always reads the current manifest first and removes a
 remote plugin's cached copies scoped to what THAT manifest declares: one label's entry, or, with no
 label, every remote entry it declares, and nothing outside it, so the plugin cache root, which is

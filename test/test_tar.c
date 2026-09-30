@@ -1,8 +1,8 @@
 #include "greatest.h"
-#include "tar.h"
+#include "archive/tar.h"
 
-#include "error.h"
-#include "region.h"
+#include "project/region.h"
+#include "util/error.h"
 #include "support.h"
 
 #include <stdlib.h>

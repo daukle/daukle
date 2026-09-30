@@ -1,7 +1,7 @@
 #include "greatest.h"
-#include "config_toml.h"
-#include "manifest.h"
-#include "region.h"
+#include "config/config_toml.h"
+#include "config/manifest.h"
+#include "project/region.h"
 
 #include "cJSON.h"
 

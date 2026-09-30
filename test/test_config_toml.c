@@ -1,6 +1,6 @@
 #include "greatest.h"
-#include "config_toml.h"
-#include "region.h"
+#include "config/config_toml.h"
+#include "project/region.h"
 
 #include "cJSON.h"
 

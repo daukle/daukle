@@ -1,5 +1,5 @@
 #include "greatest.h"
-#include "jsonedit.h"
+#include "config/jsonedit.h"
 
 #include "cJSON.h"
 
