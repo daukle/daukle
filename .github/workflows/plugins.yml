@@ -1,0 +1,22 @@
+name: Plugins
+
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plugins:
+    uses: intisy/workflows/.github/workflows/downstream.yml@main
+    with:
+      # Every one of these builds daukle from source, so their suites are what says whether a
+      # change here still satisfies the plugins written against it. Nothing in daukle's own suite
+      # covers that: the coverage moved out to these repositories and the report never came back.
+      repositories: >-
+        ["daukle/java", "daukle/cmake", "daukle/npm", "daukle/c", "daukle/gradle",
+         "daukle/path", "daukle/github"]
+    secrets:
+      envPAT: ${{ secrets.PAT }}
