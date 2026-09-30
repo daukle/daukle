@@ -2765,6 +2765,68 @@ TEST an_archive_whose_pin_does_not_match_is_refused_and_discarded(void) {
     PASS();
 }
 
+/* The sequence "daukle plugin update" performs to answer "update which
+   plugins?": open the runtime on the manifest's directory, then read the
+   manifest's own document and parse its [plugins] table, without
+   fr_plugins_load, which would resolve and execute the very plugins whose
+   cache the command is about to discard.
+   An overlay-rooted manifest used to be refused here outright, on the stated
+   grounds that reading one means executing it. It does, but nothing that
+   execution needs comes from the cache being cleared, and every other
+   subcommand already executes it: `daukle config print` reads this same file.
+   What the refusal was really standing in for is the registry: a lua format
+   reopens the runtime through fr_lua_runtime_begin, and passing it a
+   different registry than the open one is refused. That is why the caller
+   opens the runtime first and hands both down. See D-7.
+   This pins the mechanism, not main.c's wiring of it, which has no test
+   binary. */
+TEST an_overlay_rooted_manifest_yields_its_plugins_table_without_loading_them(void) {
+    const char *directory = "test/fixtures/lua-root-plugin";
+    const char *manifest = "test/fixtures/lua-root-plugin/daukle.lua";
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(directory, registry, &err));
+
+    const fr_config_plugin *format = fr_config_plugin_for(registry, manifest, &err);
+    int is_overlay = format != NULL && format->overlay;
+
+    char *text = NULL;
+    cJSON *document = NULL;
+    fr_resolver_entry *resolvers = NULL;
+    size_t resolver_count = 0;
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    int status = fr_file_read_text(manifest, &text, &err);
+    if (status == FR_OK) {
+        status = format->load(format->state, text, manifest, directory, registry, NULL,
+                              &document, &err);
+        free(text);
+    }
+    if (status == FR_OK) status = fr_resolvers_parse(document, &resolvers, &resolver_count, &err);
+    if (status == FR_OK) {
+        status = fr_plugins_parse(document, resolvers, resolver_count, &entries, &count, &err);
+    }
+    char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+    char label[64] = "";
+    if (status == FR_OK && count == 1) snprintf(label, sizeof label, "%s", entries[0].label);
+
+    fr_plugins_free(entries, count);
+    fr_resolvers_free(resolvers, resolver_count);
+    cJSON_Delete(document);
+    fr_lua_runtime_shutdown();
+    fr_resolvers_clear();
+    fr_registry_destroy(registry);
+    fr_plugins_report_clear();
+
+    ASSERT(is_overlay);
+    ASSERT_STR_EQ("", message);
+    ASSERT_EQ(1, (int) count);
+    ASSERT_STR_EQ("greet", label);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -2854,5 +2916,6 @@ int main(int argc, char **argv) {
     RUN_TEST(fr_plugins_update_cache_with_an_unknown_label_errors_naming_it);
     RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error);
     RUN_TEST(a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_digests);
+    RUN_TEST(an_overlay_rooted_manifest_yields_its_plugins_table_without_loading_them);
     GREATEST_MAIN_END();
 }

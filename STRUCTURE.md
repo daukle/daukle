@@ -260,11 +260,17 @@ differently from "this project has no plugins at all". `daukle tasks` lists ever
 manifest ones `(from the manifest)`; for each task it also prints `pulls in` (what runs before it) and
 `needed by` (what runs after it), the two directions `fr_tasks_joiners` computes.
 
-**Known limitation: `daukle plugin update` cannot read a lua-rooted manifest.** A `[plugins]` table
-loads whatever format the root manifest is written in, so a project authored in `daukle.lua` gets its
-only source and language from one; but `read_manifest_plugins` (`src/main.c:352`) refuses an overlay
-format outright, and `fr_config_find` hands it the `daukle.lua` when there is no `daukle.toml` beside
-it, so exactly those projects meet that refusal. The refusal stays: reading a lua manifest means
-executing it, which is the opposite of what a command whose whole job is discarding a plugin's cache
-wants. A project that needs the command keeps a `daukle.toml` as its root and the `daukle.lua` as an
-overlay.
+`daukle plugin update` reads a lua-rooted manifest as readily as a toml one. It used to refuse an
+overlay format outright, on the grounds that reading a lua manifest means executing it and executing
+is the opposite of what a command discarding a plugin's cache wants. Reading one does execute it,
+but nothing that execution needs comes from the cache being cleared: the chunk runs before
+`fr_plugins_load`, which is what resolves and executes declared plugins and which
+`read_manifest_plugins` never calls at all. Every other subcommand already executed the same file,
+so the refusal was costing lua-rooted projects one command and buying nothing.
+
+What the refusal was standing in for is the **registry**, and that is a real constraint rather than
+a dissolved one. A lua format reopens the runtime through `fr_lua_runtime_begin`, which refuses a
+registry that is not the one already open; the old code passed `NULL`, so removing the refusal alone
+fails with `another registry's plugins are still registered`. `plugin_update` therefore opens the
+runtime on the manifest's own directory **before** reading it and hands both the directory and the
+registry down to `read_manifest_plugins` (`src/cli/main.c`).

@@ -419,37 +419,27 @@ static void manifest_plugins_free(manifest_plugins *plugins) {
 /* Reads only the manifest's own document, never fr_config_load_file: that also
    runs fr_plugins_load, which resolves and executes every declared plugin, the
    opposite of what "plugin update" wants when a plugin's current cache is what
-   it is trying to discard. The load call therefore passes no registry, and an
-   overlay format is refused outright, since executing one is precisely what
-   dispatching on its extension would do. */
-static int read_manifest_plugins(const char *manifest_path, manifest_plugins *out, fr_error *err) {
+   it is trying to discard. Reading the document is all this needs, and it is
+   what keeps a lua manifest readable here: a chunk declaring a plugin only
+   registers it, so nothing is fetched from the cache being cleared.
+   base_dir and registry come from the caller because the runtime is already
+   open on them by the time this runs; a lua format reopens it through
+   fr_lua_runtime_begin, which serves one base directory and one registry and
+   refuses anything else. Passing the NULL registry this used to pass fails
+   with "another registry's plugins are still registered". */
+static int read_manifest_plugins(const char *manifest_path, const char *base_dir,
+                                 fr_registry *registry, manifest_plugins *out, fr_error *err) {
     memset(out, 0, sizeof *out);
 
-    fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, err) != FR_OK) return FR_ERR;
-
     const fr_config_plugin *plugin = fr_config_plugin_for(registry, manifest_path, err);
-    if (plugin == NULL) {
-        fr_registry_destroy(registry);
-        return FR_ERR;
-    }
-    if (plugin->overlay) {
-        fr_error_set(err, "\"%s\" is an overlay format; it cannot be read on its own",
-                     manifest_path);
-        fr_registry_destroy(registry);
-        return FR_ERR;
-    }
+    if (plugin == NULL) return FR_ERR;
 
     char *text = NULL;
-    if (fr_file_read_text(manifest_path, &text, err) != FR_OK) {
-        fr_registry_destroy(registry);
-        return FR_ERR;
-    }
+    if (fr_file_read_text(manifest_path, &text, err) != FR_OK) return FR_ERR;
 
-    int status = plugin->load(plugin->state, text, manifest_path, ".", NULL, NULL,
+    int status = plugin->load(plugin->state, text, manifest_path, base_dir, registry, NULL,
                               &out->document, err);
     free(text);
-    fr_registry_destroy(registry);
     if (status != FR_OK) return FR_ERR;
 
     if (fr_resolvers_parse(out->document, &out->resolvers, &out->resolver_count, err) != FR_OK
@@ -469,10 +459,13 @@ static int read_manifest_plugins(const char *manifest_path, manifest_plugins *ou
    project's cached plugins too. The scoping rule itself lives in
    fr_plugins_update_cache, shared with, and covered directly by, test_plugins.c,
    since main.c has no test binary of its own.
-   A lua runtime is opened here, around the update_cache call, rather than
-   inside it: fr_plugins_update_cache re-resolves an FR_PLUGIN_RESOLVED entry
-   through fr_resolvers_use, which needs one open, and only this function
-   knows the manifest's own directory a path-form resolver resolves against. */
+   A lua runtime is opened here rather than inside the calls that need one:
+   fr_plugins_update_cache re-resolves an FR_PLUGIN_RESOLVED entry through
+   fr_resolvers_use, a lua-format manifest is executed to be read at all, and
+   only this function knows the manifest's own directory that both resolve
+   against. It is opened BEFORE the manifest is read because of that second
+   reason: a lua format's own reopen must be handed this same registry, and
+   the runtime refuses any other. */
 static int plugin_update(const char *label, int use_cache, int verbose) {
     fr_error err;
     fr_cache_set_enabled(use_cache);
@@ -483,29 +476,32 @@ static int plugin_update(const char *label, int use_cache, int verbose) {
         return 1;
     }
 
-    manifest_plugins plugins;
-    int status = read_manifest_plugins(resolved, &plugins, &err);
-    if (status != FR_OK) {
-        free(resolved);
-        report_error(&err, verbose);
-        return 1;
-    }
-
     char *directory = manifest_directory(resolved);
-    free(resolved);
     if (directory == NULL) {
-        manifest_plugins_free(&plugins);
+        free(resolved);
         fprintf(stderr, "daukle: out of memory finding the manifest directory\n");
         return 1;
     }
 
     fr_registry *registry = NULL;
-    status = fr_build_registry(&registry, &err);
+    int status = fr_build_registry(&registry, &err);
     if (status == FR_OK) status = fr_lua_runtime_begin(directory, registry, &err);
-    free(directory);
     if (status != FR_OK) {
         if (registry != NULL) fr_registry_destroy(registry);
-        manifest_plugins_free(&plugins);
+        free(directory);
+        free(resolved);
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    manifest_plugins plugins;
+    status = read_manifest_plugins(resolved, directory, registry, &plugins, &err);
+    free(resolved);
+    free(directory);
+    if (status != FR_OK) {
+        fr_lua_runtime_shutdown();
+        fr_resolvers_clear();
+        fr_registry_destroy(registry);
         report_error(&err, verbose);
         return 1;
     }
