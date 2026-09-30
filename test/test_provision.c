@@ -440,6 +440,47 @@ TEST a_skipped_symlink_reaches_the_report_by_name(void) {
     PASS();
 }
 
+/* fr_toolreport_reset drops the row COUNT, not the rows, so a second run in
+   one process writes over the first run's storage. record() has to clear every
+   field it does not set, or the new row inherits the old one's skipped links.
+   The second half is the part that bites: fr_toolreport_symlinks_skipped
+   refuses to write a row that already carries a count, so an inherited one
+   does not merely misreport, it SUPPRESSES the real report, which is the
+   silent degradation this module exists to prevent. */
+TEST a_recycled_row_does_not_inherit_the_previous_runs_skipped_links(void) {
+    static char message[512];
+    fr_toolreport_reset();
+
+    const char *url = "https://example.invalid/toolchains/temurin-21.tar.gz";
+    const char *first = "6234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
+    const char *second = "7234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
+
+    fr_toolreport_provisioned(NULL, url, first, 0);
+    fr_toolreport_symlinks_skipped(first, 3, "bin/java");
+
+    fr_toolreport_reset();
+    fr_toolreport_provisioned(NULL, url, second, 0);
+
+    const fr_toolreport_row *fresh = fr_toolreport_row_at(0);
+    size_t inherited = fresh == NULL ? 0u : fresh->symlinks_skipped;
+    char inherited_name[256];
+    snprintf(inherited_name, sizeof inherited_name, "%s",
+             fresh == NULL ? "" : fresh->first_symlink_skipped);
+
+    fr_toolreport_symlinks_skipped(second, 2, "bin/javac");
+    const fr_toolreport_row *after = fr_toolreport_row_at(0);
+    size_t reported = after == NULL ? 0u : after->symlinks_skipped;
+
+    snprintf(message, sizeof message, "inherited %zu \"%s\", then reported %zu",
+             inherited, inherited_name, reported);
+
+    ASSERTm(message, fresh != NULL);
+    ASSERT_EQm(message, 0u, inherited);
+    ASSERTm(message, inherited_name[0] == '\0');
+    ASSERT_EQm(message, 2u, reported);
+    PASS();
+}
+
 TEST a_missing_label_falls_back_to_a_fact_rather_than_to_nothing(void) {
     static char message[512];
     fr_toolreport_reset();
@@ -694,6 +735,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_label_holding_a_control_character_is_refused);
     RUN_TEST(one_line_per_distinct_tool_per_run);
     RUN_TEST(a_skipped_symlink_reaches_the_report_by_name);
+    RUN_TEST(a_recycled_row_does_not_inherit_the_previous_runs_skipped_links);
     RUN_TEST(a_missing_label_falls_back_to_a_fact_rather_than_to_nothing);
     RUN_TEST(the_row_keeps_the_url_and_digest_whatever_the_label_says);
     RUN_TEST(an_empty_label_falls_back_to_a_fact_rather_than_to_nothing);

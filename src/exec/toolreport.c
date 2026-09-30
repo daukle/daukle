@@ -68,11 +68,18 @@ static int already_reported(row_kind kind, const char *key) {
     return 0;
 }
 
+/* Cleared whole rather than field by field: fr_toolreport_reset drops the row
+   count and leaves the storage, so this writes over a previous run's row, and a
+   field left out here would be inherited rather than set. That is not only a
+   stale number. fr_toolreport_symlinks_skipped refuses a row that already
+   carries a count, so an inherited one SUPPRESSES the next run's real report,
+   which is the silent degradation this module exists to prevent. */
 static void record(row_kind kind, const char *label, const char *url, const char *digest,
                    int cached) {
     if (g_row_count == TOOLREPORT_CAPACITY) return;
 
     fr_toolreport_row *row = &g_rows[g_row_count];
+    memset(row, 0, sizeof *row);
     snprintf(row->label, sizeof row->label, "%s", label);
     snprintf(row->url, sizeof row->url, "%s", url);
     snprintf(row->digest, sizeof row->digest, "%s", digest);
