@@ -131,6 +131,23 @@ static int drain_both(HANDLE out_pipe, HANDLE err_pipe, fr_exec_result *out) {
     return ok;
 }
 
+/* Windows raises a hard-error box when the program is not a valid image, and a
+   session with no desktop has nobody to dismiss it, so CreateProcess never
+   returns there while it returns error 193 on a developer's machine. The scope
+   is the thread rather than the process because daukle is a plugin API as well
+   as a command, and a library may not leave a host's error mode rewritten. */
+static BOOL start_process(const fr_exec_request *request, char *line, STARTUPINFOA *startup,
+                          PROCESS_INFORMATION *process, DWORD *start_error) {
+    DWORD previous = 0;
+    BOOL scoped = SetThreadErrorMode(SEM_FAILCRITICALERRORS, &previous);
+    BOOL started = CreateProcessA(request->program, line, NULL, NULL,
+                                  request->capture ? TRUE : FALSE, 0, NULL, request->cwd, startup,
+                                  process);
+    *start_error = started ? 0 : GetLastError();
+    if (scoped) SetThreadErrorMode(previous, NULL);
+    return started;
+}
+
 int fr_exec_run(const fr_exec_request *request, fr_exec_result *out, fr_error *err) {
     out->code = 0;
     out->stdout_text = NULL;
@@ -182,9 +199,8 @@ int fr_exec_run(const fr_exec_request *request, fr_exec_result *out, fr_error *e
 
     PROCESS_INFORMATION process;
     memset(&process, 0, sizeof process);
-    BOOL started = CreateProcessA(request->program, line, NULL, NULL, request->capture ? TRUE : FALSE,
-                                  0, NULL, request->cwd, &startup, &process);
-    DWORD start_error = started ? 0 : GetLastError();
+    DWORD start_error = 0;
+    BOOL started = start_process(request, line, &startup, &process, &start_error);
     free(line);
     if (!started) {
         if (out_read != NULL) { CloseHandle(out_read); CloseHandle(out_write); }

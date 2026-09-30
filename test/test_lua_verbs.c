@@ -19,7 +19,6 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
-#include <windows.h>
 #else
 #include <sys/stat.h>
 #endif
@@ -1300,16 +1299,12 @@ TEST a_root_handle_refuses_a_member_that_climbs_out(void) {
     char cache[1024];
     char saved_cache[1024];
     char root[1024];
-    fr_test_mark("climb entered, temp base %s", fr_test_temp_base());
     use_private_provision_cache("climb", cache, sizeof cache, saved_cache, sizeof saved_cache);
-    fr_test_mark("climb cache %s", cache);
     int prepared = prepare_provisioned_root(root, sizeof root);
-    fr_test_mark("climb prepared %d, root %s", prepared, root);
 
     fr_registry *registry = fr_registry_create();
     int env = 0;
     lua_State *state = begin_provision_env(registry, &env);
-    fr_test_mark("climb env built %d", state != NULL);
 
     fr_error err;
     err.message[0] = '\0';
@@ -1317,34 +1312,21 @@ TEST a_root_handle_refuses_a_member_that_climbs_out(void) {
         && fr_lua_run_in_env(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
-    fr_test_mark("climb rooted %d", rooted);
 
     int climb_refused = rooted
         && fr_lua_run_in_env(state, "root:tool('../../../windows/system32/cmd')", "=t", env,
                              &err) == FR_ERR;
     snprintf(climb_message, sizeof climb_message, "%s", err.message);
-    fr_test_mark("climb refused %d", climb_refused);
 
     int drive_refused = rooted
         && fr_lua_run_in_env(state, "root:tool('c:/x')", "=t", env, &err) == FR_ERR;
     snprintf(drive_message, sizeof drive_message, "%s", err.message);
-    fr_test_mark("climb drive refused %d", drive_refused);
 
     if (state != NULL) lua_settop(state, 0);
     fr_registry_destroy(registry);
-    fr_test_mark("climb registry destroyed");
     fr_lua_runtime_shutdown();
-    fr_test_mark("climb runtime shut down");
     fr_test_remove_tree(cache);
-    fr_test_mark("climb tree removed");
     restore_cache_directory(saved_cache);
-    fr_test_mark("climb cache restored");
-
-    fr_test_mark("climb writing to stdout");
-    fputc('#', stdout);
-    fr_test_mark("climb wrote to stdout");
-    fflush(stdout);
-    fr_test_mark("climb flushed stdout");
 
     ASSERT(prepared);
     ASSERT(rooted);
@@ -1481,13 +1463,10 @@ TEST a_root_handle_is_absolute_from_a_relative_cache_directory(void) {
     char root[1024];
     char working_directory[1024];
     snprintf(cache, sizeof cache, "build/verbs-provision-relative-%d", fr_test_process_id());
-    fr_test_mark("relative cache %s", cache);
     use_cache_directory(cache, saved_cache, sizeof saved_cache);
     int prepared = prepare_provisioned_root(root, sizeof root);
-    fr_test_mark("relative prepared %d, root %s", prepared, root);
     int have_working_directory =
         fr_test_get_working_directory(working_directory, sizeof working_directory);
-    fr_test_mark("relative cwd %d %s", have_working_directory, working_directory);
 
     fr_registry *registry = fr_registry_create();
     fr_error err;
@@ -1497,33 +1476,24 @@ TEST a_root_handle_is_absolute_from_a_relative_cache_directory(void) {
     const char *verbs[] = { "provision", "exec" };
     int pushed = began && fr_lua_verbs_push_env(state, verbs, 2, &err) == FR_OK;
     int env = pushed ? lua_gettop(state) : 0;
-    fr_test_mark("relative env built %d", pushed);
 
     int rooted = pushed && prepared
         && fr_lua_run_in_env(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
-    fr_test_mark("relative rooted %d", rooted);
 
-    int resolved = rooted
-        && fr_lua_run_in_env(state, "t = root:tool('bin/java.exe')", "=t", env, &err) == FR_OK;
-    fr_test_mark("relative resolved %d", resolved);
-
-    /* bin/java.exe holds four bytes of text, so starting it always fails. */
-    int failed_to_start = resolved
-        && fr_lua_run_in_env(state, "daukle.exec(t, {})", "=t", env, &err) == FR_ERR;
+    /* bin/java.exe holds four bytes of text, so starting it always fails. On a
+       Windows session with no desktop it also used to hang: see start_process. */
+    int failed_to_start = rooted
+        && fr_lua_run_in_env(state, "daukle.exec(root:tool('bin/java.exe'), {})", "=t", env,
+                             &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
-    fr_test_mark("relative failed to start %d", failed_to_start);
 
     if (state != NULL) lua_settop(state, 0);
     fr_registry_destroy(registry);
-    fr_test_mark("relative registry destroyed");
     fr_lua_runtime_shutdown();
-    fr_test_mark("relative runtime shut down");
     fr_test_remove_tree(cache);
-    fr_test_mark("relative tree removed");
     restore_cache_directory(saved_cache);
-    fr_test_mark("relative cache restored");
 
     ASSERT(prepared);
     ASSERT(rooted);
@@ -1898,9 +1868,6 @@ int main(int argc, char **argv) {
         return code;
     }
     fr_test_prepend_to_path_dir_of(argv[0]);
-#ifdef _WIN32
-    if (getenv("DAUKLE_TEST_TRACE") != NULL) SetErrorMode(SEM_FAILCRITICALERRORS);
-#endif
 
     GREATEST_MAIN_BEGIN();
     GREATEST_SET_SETUP_CB(mark_test_entry, NULL);
