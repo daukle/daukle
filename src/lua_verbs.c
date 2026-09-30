@@ -488,13 +488,18 @@ static const char *member_base_name(const char *member) {
     return slash != NULL ? slash + 1 : member;
 }
 
-/* A member is pathed where a tool name never is: the tree it indexes was
+/* The containment rules root:tool and root:path share, held in one place
+   because the two differ only in what they do with a member that is there.
+   A member is pathed where a tool name never is: the tree it indexes was
    chosen and verified by the plugin's own digest, so nesting into it is the
    point. The containment rule still holds, and a backslash is refused because
    it separates on one host only, so the same member would name a file there
-   and a strangely named one everywhere else. */
-/* Shared by root:tool and root:path, which differ only in what they do with a
-   member that is there: the containment rules are one set and must stay one. */
+   and a strangely named one everywhere else.
+
+   It raises rather than returning on every refusal, so a caller never sees
+   NULL and the NULL returns below are unreachable; they are there because
+   luaL_error's int return cannot be forwarded from a function returning a
+   pointer. */
 static const char *root_member_path(lua_State *state, const char *verb, char *path, size_t size) {
     fr_lua_root *root = luaL_testudata(state, 1, FR_PROVISION_HANDLE);
     if (root == NULL) {
