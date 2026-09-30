@@ -899,7 +899,7 @@ TEST a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare(void) {
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
     ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "squatter.lua", NULL, 0, NULL, NULL, &err));
-    ASSERT(strstr(err.message, "declares no toolchain \"cmake\"") != NULL);
+    ASSERT(strstr(err.message, "no toolchain \"cmake\" is declared above this point") != NULL);
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
     PASS();
@@ -917,7 +917,8 @@ TEST a_task_without_a_toolchain_may_not_keep_provision(void) {
     const char *chunk = "daukle.task{ name = 'build', run = function() end }\n";
     ASSERT_EQ(FR_ERR,
               fr_lua_plugin_load(chunk, strlen(chunk), "squatter.lua", uses, 1, NULL, NULL, &err));
-    ASSERT(strstr(err.message, "daukle.provision is available only to a toolchain plugin") != NULL);
+    ASSERT(strstr(err.message, "daukle.provision is available only to a task whose toolchain"
+                               " is declared above it") != NULL);
 
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
@@ -971,10 +972,69 @@ TEST a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain(void) {
 
     const char *second_chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
     ASSERT_EQ(FR_ERR, fr_lua_plugin_load(second_chunk, strlen(second_chunk), "squatter.lua", NULL, 0, NULL, NULL, &err));
-    ASSERT(strstr(err.message, "declares no toolchain \"cmake\"") != NULL);
+    ASSERT(strstr(err.message, "no toolchain \"cmake\" is declared above this point") != NULL);
 
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
+    PASS();
+}
+
+/* A plugin must declare its toolchain above the tasks that name it, and both
+   refusals for getting that wrong used to describe the CHUNK ("this plugin
+   declares no toolchain", "only to a toolchain plugin") when the real condition
+   is the POSITION. A toolchain plugin that declared its toolchain two lines
+   below was told it was not a toolchain plugin, which reads as a bug in daukle
+   rather than as an ordering mistake in the plugin. */
+TEST the_same_chunk_reordered_is_the_difference_between_refused_and_accepted(void) {
+    const char *task = "daukle.task{ name = 'cmake:build', run = function() end }\n";
+    const char *toolchain =
+        "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n";
+    char below[256];
+    char above[256];
+    snprintf(below, sizeof below, "%s%s", task, toolchain);
+    snprintf(above, sizeof above, "%s%s", toolchain, task);
+
+    fr_registry *first = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", first, &err));
+    int refused = fr_lua_plugin_load(below, strlen(below), "cmake.lua", NULL, 0, NULL, NULL, &err);
+    char message[256];
+    snprintf(message, sizeof message, "%s", refused == FR_OK ? "" : err.message);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(first);
+
+    fr_registry *second = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", second, &err));
+    int accepted = fr_lua_plugin_load(above, strlen(above), "cmake.lua", NULL, 0, NULL, NULL, &err);
+    char accepted_message[256];
+    snprintf(accepted_message, sizeof accepted_message, "%s", accepted == FR_OK ? "" : err.message);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(second);
+
+    ASSERT_EQ_FMT(FR_ERR, refused, "%d");
+    ASSERTm(message, strstr(message, "no toolchain \"cmake\" is declared above this point") != NULL);
+    ASSERT_STR_EQ("", accepted_message);
+    ASSERT_EQ_FMT(FR_OK, accepted, "%d");
+    PASS();
+}
+
+TEST exec_for_a_task_above_its_toolchain_is_refused_naming_the_order(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *uses[] = { "exec" };
+    const char *chunk =
+        "daukle.task{ name = 'build', run = function() end }\n"
+        "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n";
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", uses, 1, NULL, NULL, &err);
+    char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "daukle.exec is available only") != NULL);
+    ASSERTm(message, strstr(message, "declared above it") != NULL);
     PASS();
 }
 
@@ -2286,6 +2346,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_task_beside_a_toolchain_still_keeps_provision);
     RUN_TEST(an_aggregator_needs_no_run);
     RUN_TEST(a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain);
+    RUN_TEST(the_same_chunk_reordered_is_the_difference_between_refused_and_accepted);
+    RUN_TEST(exec_for_a_task_above_its_toolchain_is_refused_naming_the_order);
     RUN_TEST(a_hostile_index_metatable_on_the_task_table_is_never_consulted);
     RUN_TEST(a_hostile_index_metatable_on_the_toolchain_table_is_never_consulted);
     RUN_TEST(a_chunk_not_acquired_as_a_resolver_may_not_declare_one);

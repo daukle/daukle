@@ -947,13 +947,20 @@ static int lua_declare_task(lua_State *state) {
     /* A task keeps exec and provision by inheriting them from the toolchain
        that owns it, which holds only where there IS one: a chunk declaring no
        toolchain has nothing to pass the capability down from, and a colon-free
-       name names no owner either. */
+       name names no owner either.
+       Both messages name the POSITION rather than the chunk. At this point a
+       toolchain declared further down the same chunk has not run yet and is
+       indistinguishable from one that never comes, so "only to a toolchain
+       plugin" would be false for a plugin that is one and simply declares it
+       below. Naming the order is true in both cases and is also the fix. */
     if (chunk_toolchain_count == 0) {
         if (fr_lua_verbs_env_declared_exec()) {
-            return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+            return luaL_error(state, "daukle.exec is available only to a task whose toolchain is"
+                                     " declared above it; this chunk declares none yet");
         }
         if (fr_lua_verbs_env_declared_provision()) {
-            return luaL_error(state, "daukle.provision is available only to a toolchain plugin");
+            return luaL_error(state, "daukle.provision is available only to a task whose toolchain"
+                                     " is declared above it; this chunk declares none yet");
         }
     }
     chunk_declared_other = 1;
@@ -967,8 +974,8 @@ static int lua_declare_task(lua_State *state) {
     if (colon != NULL && !chunk_declares_toolchain(name, (size_t) (colon - name))) {
         char toolchain_name[64];
         copy_toolchain_prefix(name, colon, toolchain_name, sizeof toolchain_name);
-        return luaL_error(state, "task \"%s\" cannot be declared here: this plugin declares no"
-                                 " toolchain \"%s\"", name, toolchain_name);
+        return luaL_error(state, "task \"%s\" cannot be declared here: no toolchain \"%s\" is"
+                                 " declared above this point in this plugin", name, toolchain_name);
     }
 
     char capability[128];
