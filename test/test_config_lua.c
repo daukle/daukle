@@ -125,6 +125,35 @@ TEST a_script_clearing_an_object_to_an_empty_table_stays_an_object(void) {
     PASS();
 }
 
+/* A lua manifest with no toml beneath it gets no restore_empty_arrays pass,
+   because there is no original document to compare against, so its empty
+   tables reach the manifest layer as empty objects. Both keys here are ones a
+   real project empties: a repository that declares no consumer yet, and a task
+   that exists to be depended on rather than to depend. See D-5. */
+TEST a_lua_only_manifest_may_empty_the_arrays_it_declares(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    fr_manifest manifest;
+    int status = fr_config_load_file("test/fixtures/lua-root-empty-arrays/daukle.lua",
+                                     registry, &manifest, &err);
+    char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+    size_t consumers = status == FR_OK ? manifest.consumer_count : 1;
+    size_t tasks = status == FR_OK ? manifest.task_count : 0;
+    size_t depends = status == FR_OK && tasks == 1 ? manifest.tasks[0].depends_on_count : 1;
+
+    if (status == FR_OK) fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_STR_EQ("", message);
+    ASSERT_EQ(0, (int) consumers);
+    ASSERT_EQ(1, (int) tasks);
+    ASSERT_EQ(0, (int) depends);
+    PASS();
+}
+
 TEST a_script_registers_a_language_plugin(void) {
     fr_error err;
     fr_registry *registry = NULL;
@@ -2221,6 +2250,7 @@ int main(int argc, char **argv) {
     RUN_TEST(an_untouched_empty_array_survives_the_round_trip);
     RUN_TEST(a_script_clearing_an_array_to_an_empty_table_still_yields_an_array);
     RUN_TEST(a_script_clearing_an_object_to_an_empty_table_stays_an_object);
+    RUN_TEST(a_lua_only_manifest_may_empty_the_arrays_it_declares);
     RUN_TEST(a_script_registers_a_language_plugin);
     RUN_TEST(a_script_may_not_declare_one_capability_twice);
     RUN_TEST(a_script_registered_source_plugin_resolves_through_sync);

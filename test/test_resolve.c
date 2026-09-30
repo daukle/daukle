@@ -10,6 +10,7 @@
 
 #include "cJSON.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -227,12 +228,42 @@ TEST resolves_no_modules_for_any_language_without_looking_up_a_block(void) {
     PASS();
 }
 
+/* A lua source plugin cannot return an empty array: an empty lua table converts
+   to a json object, and unlike a daukle.toml there is no original document to
+   repair it against. */
+TEST accepts_an_empty_requires_from_a_source_plugin(void) {
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer-empty-requires/daukle.toml", &manifest, &err));
+    fr_registry *registry = with_path_source("test/fixtures/consumer-empty-requires");
+    ASSERT(registry != NULL);
+
+    fr_resolved *items = NULL; size_t count = 0;
+    int status = fr_resolve_consumer(&manifest.consumers[0], &manifest,
+                                     "test/fixtures/consumer-empty-requires", registry,
+                                     &items, &count, &err);
+    char module[64] = "";
+    if (status == FR_OK && count > 0) snprintf(module, sizeof module, "%s", items[0].module);
+    char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+
+    fr_resolved_free(items, count);
+    without_path_source(registry);
+    fr_manifest_free(&manifest);
+
+    ASSERT_STR_EQ("", message);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_EQ(1, (int) count);
+    ASSERT_STR_EQ("ir", module);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(hands_the_source_plugin_its_own_state);
     RUN_TEST(pulls_in_transitive_requires);
+    RUN_TEST(accepts_an_empty_requires_from_a_source_plugin);
     RUN_TEST(reports_a_module_that_has_no_block_for_the_language);
     RUN_TEST(deduplicates_a_module_reached_twice);
     RUN_TEST(rejects_a_version_outside_the_range);

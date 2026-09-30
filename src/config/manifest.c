@@ -333,7 +333,7 @@ static int read_task(const cJSON *entry, const char *name, fr_task *out, fr_erro
 
     const cJSON *depends = cJSON_GetObjectItemCaseSensitive(entry, "dependsOn");
     if (depends == NULL) return FR_OK;
-    if (!cJSON_IsArray(depends)) {
+    if (!fr_json_is_array_or_empty_table(depends)) {
         fr_error_set(err, "%s.dependsOn must be an array", path);
         return FR_ERR;
     }
@@ -390,7 +390,7 @@ static int manifest_from_json(const cJSON *root, const char *file_path, fr_manif
 
     const cJSON *consumers_arr = cJSON_GetObjectItemCaseSensitive(root, "consumers");
     if (consumers_arr != NULL) {
-        if (!cJSON_IsArray(consumers_arr)) {
+        if (!fr_json_is_array_or_empty_table(consumers_arr)) {
             fr_error_set(err, "%s.consumers must be an array", file_path);
             return FR_ERR;
         }

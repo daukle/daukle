@@ -1,0 +1,9 @@
+schema = 1
+project = "forebay/basekit"
+version = "5.0.0"
+
+[modules.ir]
+requires = []
+
+  [modules.ir.gradle]
+  coordinate = "forebay:basekit:5.0.0:ir"

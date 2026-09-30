@@ -84,13 +84,18 @@ int fr_json_object(const cJSON *object, const char *key, const char *path,
     return FR_OK;
 }
 
+int fr_json_is_array_or_empty_table(const cJSON *value) {
+    if (cJSON_IsArray(value)) return 1;
+    return cJSON_IsObject(value) && value->child == NULL;
+}
+
 int fr_json_array_of_strings(const cJSON *object, const char *key, const char *path,
                              char ***out, size_t *count, fr_error *err) {
     *out = NULL;
     *count = 0;
     const cJSON *member = cJSON_GetObjectItemCaseSensitive(object, key);
     if (member == NULL) return FR_OK;
-    if (!cJSON_IsArray(member)) {
+    if (!fr_json_is_array_or_empty_table(member)) {
         fr_error_set(err, "%s.%s must be an array", path, key);
         return FR_ERR;
     }
