@@ -2,6 +2,7 @@
 
 #include "miniz.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -180,6 +181,18 @@ void fr_test_prepend_to_path_dir_of(const char *argv_zero) {
 
     fr_test_set_env("PATH", new_path);
     free(new_path);
+}
+
+void fr_test_mark(const char *format, ...) {
+    if (getenv("DAUKLE_TEST_TRACE") == NULL) return;
+
+    va_list arguments;
+    va_start(arguments, format);
+    fputs("mark ", stderr);
+    vfprintf(stderr, format, arguments);
+    fputc('\n', stderr);
+    va_end(arguments);
+    fflush(stderr);
 }
 
 long long fr_test_file_mtime(const char *path) {
