@@ -18,6 +18,6 @@ jobs:
       # Every one of these builds daukle from source, so their suites are what says whether a
       # change here still satisfies the plugins written against it. Nothing in daukle's own suite
       # covers that: the coverage moved out to these repositories and the report never came back.
-      repositories: '["daukle/path"]'
+      repositories: '["daukle/daukle"]'
     secrets:
-      envPAT: ${{ secrets.PAT }}
+      envPAT: ${{ secrets.PAT || github.token }}
