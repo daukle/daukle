@@ -650,6 +650,97 @@ TEST a_task_named_publish_is_refused(void) {
     PASS();
 }
 
+static char seen_publish_name[64];
+
+static int publish_recording_run(void *state, const fr_task_run_context *context, fr_error *err) {
+    (void) state; (void) err;
+    snprintf(seen_publish_name, sizeof seen_publish_name, "%s",
+             context->publish == NULL ? "<none>" : context->publish->name);
+    return FR_OK;
+}
+
+TEST a_publish_task_run_receives_its_destination(void) {
+    make_scratch("publish");
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin plugin = { "daukle.task/publish:github", NULL, NULL, 0,
+                              publish_recording_run, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &plugin, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"},"
+        "\"publish\":{\"github\":{\"from\":\"gradle\"}}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "publish:github", &plan, &err));
+
+    fr_session session;
+    memset(&session, 0, sizeof session);
+    session.registry = registry;
+    session.manifest = manifest;
+    session.manifest_dir = scratch;
+
+    seen_publish_name[0] = '\0';
+    int status = fr_tasks_run(&plan, &session, &err);
+    char seen[64];
+    snprintf(seen, sizeof seen, "%s", seen_publish_name);
+
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_test_remove_tree(scratch);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_STR_EQ("github", seen);
+    PASS();
+}
+
+TEST a_manifest_orders_a_publish_step_after_a_build(void) {
+    make_scratch("publish_order");
+    char log[128];
+    log[0] = '\0';
+
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin build = { "daukle.task/gradle:build", NULL, NULL, 0, counting_run, log };
+    fr_task_plugin publish = { "daukle.task/publish:github", NULL, NULL, 0, counting_run, log };
+    fr_error err;
+    fr_registry_add_task(registry, &build, &err);
+    fr_registry_add_task(registry, &publish, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"},"
+        "\"publish\":{\"github\":{\"from\":\"gradle\"}},"
+        "\"tasks\":{\"publish:github\":{\"dependsOn\":[\"gradle:build\"]}}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "publish:github", &plan, &err));
+
+    fr_session session;
+    memset(&session, 0, sizeof session);
+    session.registry = registry;
+    session.manifest = manifest;
+    session.manifest_dir = scratch;
+
+    int status = fr_tasks_run(&plan, &session, &err);
+    char order[128];
+    snprintf(order, sizeof order, "%s", log);
+
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_test_remove_tree(scratch);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_STR_EQ("gradle:build;publish:github;", order);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -681,5 +772,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_publish_task_with_no_destination_declared_is_skipped);
     RUN_TEST(an_ordinary_task_carries_no_publish_target);
     RUN_TEST(a_task_named_publish_is_refused);
+    RUN_TEST(a_publish_task_run_receives_its_destination);
+    RUN_TEST(a_manifest_orders_a_publish_step_after_a_build);
     GREATEST_MAIN_END();
 }

@@ -480,6 +480,7 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
         fr_task_run_context context;
         context.name = node->name;
         context.toolchain = node->toolchain;
+        context.publish = node->publish;
         context.project = session->manifest.self.project;
         context.version = version;
         context.root = FR_DERIVED_ROOT_RELATIVE;
