@@ -1,15 +1,15 @@
 #include "greatest.h"
-#include "provision.h"
+#include "provision/provision.h"
 
-#include "error.h"
+#include "util/error.h"
 #include "http_server.h"
-#include "region.h"
-#include "sha256.h"
+#include "project/region.h"
+#include "util/sha256.h"
 #include "support.h"
-#include "sync.h"
-#include "tar.h"
-#include "tasks.h"
-#include "toolreport.h"
+#include "project/sync.h"
+#include "archive/tar.h"
+#include "project/tasks.h"
+#include "exec/toolreport.h"
 
 #include <stdio.h>
 #include <stdlib.h>

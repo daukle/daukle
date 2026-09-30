@@ -1,7 +1,7 @@
 #include "greatest.h"
 
 #include "support.h"
-#include "tool.h"
+#include "exec/tool.h"
 
 #include <stdlib.h>
 #include <string.h>

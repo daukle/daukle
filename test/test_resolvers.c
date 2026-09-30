@@ -1,14 +1,14 @@
-#include "resolvers.h"
+#include "plugin/resolvers.h"
 
 #include "cJSON.h"
-#include "cache.h"
-#include "config_lua.h"
-#include "error.h"
+#include "cache/cache.h"
+#include "config/config_lua.h"
+#include "util/error.h"
 #include "greatest.h"
-#include "http.h"
-#include "region.h"
-#include "registry.h"
-#include "sha256.h"
+#include "net/http.h"
+#include "project/region.h"
+#include "plugin/registry.h"
+#include "util/sha256.h"
 
 #include <stdio.h>
 #include <stdlib.h>

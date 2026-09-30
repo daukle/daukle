@@ -1,8 +1,8 @@
 #include "greatest.h"
-#include "archive.h"
+#include "archive/archive.h"
 
 #include "support.h"
-#include "tar.h"
+#include "archive/tar.h"
 
 #include <stdio.h>
 #include <string.h>

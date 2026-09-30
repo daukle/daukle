@@ -1,5 +1,5 @@
 #include "greatest.h"
-#include "tomledit.h"
+#include "config/tomledit.h"
 
 #include <stdlib.h>
 #include <string.h>

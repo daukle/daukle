@@ -1,16 +1,16 @@
 #include "greatest.h"
-#include "plugin_deps.h"
+#include "plugin/plugin_deps.h"
 
 #include "cJSON.h"
-#include "cache.h"
-#include "config_lua.h"
-#include "error.h"
-#include "http.h"
-#include "plugins.h"
-#include "registry.h"
-#include "sha256.h"
+#include "cache/cache.h"
+#include "config/config_lua.h"
+#include "util/error.h"
+#include "net/http.h"
+#include "plugin/plugins.h"
+#include "plugin/registry.h"
+#include "util/sha256.h"
 #include "support.h"
-#include "sync.h"
+#include "project/sync.h"
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,16 +1,16 @@
 #include "greatest.h"
 
-#include "cache.h"
-#include "config_lua.h"
-#include "derived.h"
-#include "http.h"
-#include "lua_verbs.h"
-#include "luax.h"
-#include "provision.h"
-#include "registry.h"
+#include "cache/cache.h"
+#include "config/config_lua.h"
+#include "project/derived.h"
+#include "net/http.h"
+#include "lua/lua_verbs.h"
+#include "lua/luax.h"
+#include "provision/provision.h"
+#include "plugin/registry.h"
 #include "support.h"
-#include "sync.h"
-#include "toolreport.h"
+#include "project/sync.h"
+#include "exec/toolreport.h"
 
 #include <stdio.h>
 #include <stdlib.h>

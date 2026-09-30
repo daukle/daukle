@@ -1,5 +1,5 @@
 #include "greatest.h"
-#include "url.h"
+#include "net/url.h"
 
 TEST matches_a_url_with_itself_and_a_different_path(void) {
     ASSERT(fr_url_same_origin("https://github.com/a/b", "https://github.com/a/b"));

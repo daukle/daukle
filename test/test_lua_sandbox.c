@@ -1,7 +1,7 @@
 #include "greatest.h"
-#include "luax.h"
-#include "lua_sandbox.h"
-#include "region.h"
+#include "lua/luax.h"
+#include "lua/lua_sandbox.h"
+#include "project/region.h"
 #include "support.h"
 
 #include <stdio.h>

@@ -1,8 +1,8 @@
 #include "greatest.h"
 
-#include "derived.h"
-#include "region.h"
-#include "sha256.h"
+#include "project/derived.h"
+#include "project/region.h"
+#include "util/sha256.h"
 #include "support.h"
 
 #include <stdio.h>

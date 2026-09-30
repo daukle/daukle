@@ -1,12 +1,12 @@
 #include "greatest.h"
-#include "plugin_modules.h"
+#include "plugin/plugin_modules.h"
 
-#include "config_lua.h"
-#include "error.h"
-#include "registry.h"
+#include "config/config_lua.h"
+#include "util/error.h"
+#include "plugin/registry.h"
 #include "support.h"
-#include "sync.h"
-#include "tar.h"
+#include "project/sync.h"
+#include "archive/tar.h"
 
 #include <stdlib.h>
 #include <string.h>

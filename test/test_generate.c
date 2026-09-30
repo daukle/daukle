@@ -1,13 +1,13 @@
 #include "greatest.h"
 
-#include "config.h"
-#include "config_lua.h"
-#include "generate.h"
-#include "lua_sandbox.h"
-#include "manifest.h"
-#include "region.h"
-#include "registry.h"
-#include "sync.h"
+#include "config/config.h"
+#include "config/config_lua.h"
+#include "project/generate.h"
+#include "lua/lua_sandbox.h"
+#include "config/manifest.h"
+#include "project/region.h"
+#include "plugin/registry.h"
+#include "project/sync.h"
 
 #include <stdio.h>
 #include <stdlib.h>

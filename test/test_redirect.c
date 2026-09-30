@@ -1,5 +1,5 @@
 #include "greatest.h"
-#include "http.h"
+#include "net/http.h"
 #include "http_server.h"
 
 #include <stdio.h>

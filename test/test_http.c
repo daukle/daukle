@@ -1,8 +1,8 @@
 #include "greatest.h"
-#include "http.h"
+#include "net/http.h"
 #include "http_server.h"
-#include "region.h"
-#include "sha256.h"
+#include "project/region.h"
+#include "util/sha256.h"
 #include "support.h"
 
 #include <stdio.h>

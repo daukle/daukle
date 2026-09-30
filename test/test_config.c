@@ -1,9 +1,9 @@
 #include "greatest.h"
-#include "config.h"
-#include "config_toml.h"
-#include "manifest.h"
-#include "registry.h"
-#include "sync.h"
+#include "config/config.h"
+#include "config/config_toml.h"
+#include "config/manifest.h"
+#include "plugin/registry.h"
+#include "project/sync.h"
 
 #include <stdlib.h>
 #include <string.h>

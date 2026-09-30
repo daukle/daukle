@@ -1,5 +1,5 @@
 #include "greatest.h"
-#include "jsonx.h"
+#include "config/jsonx.h"
 
 #include <stdio.h>
 #include <string.h>

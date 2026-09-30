@@ -1,5 +1,5 @@
 #include "greatest.h"
-#include "luax.h"
+#include "lua/luax.h"
 #include "cJSON.h"
 
 #include <string.h>

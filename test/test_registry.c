@@ -1,5 +1,5 @@
 #include "greatest.h"
-#include "registry.h"
+#include "plugin/registry.h"
 
 #include "cJSON.h"
 

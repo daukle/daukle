@@ -1,6 +1,6 @@
 #include "greatest.h"
-#include "region.h"
-#include "sync.h"
+#include "project/region.h"
+#include "project/sync.h"
 
 #include <stdlib.h>
 #include <string.h>

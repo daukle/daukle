@@ -2,12 +2,12 @@
 # collides with a forbidden literal below, so they stay out of this list. The forge-host rule
 # further down reads every file in src/, so they remain covered against naming a host.
 set(CORE_FILES
-    resolve.c resolve.h manifest.c manifest.h registry.c registry.h
-    types.h sync.c sync.h main.c cli.c cli.h config.c config.h
-    derived.c derived.h generate.c generate.h tasks.c tasks.h
-    plugin_fetch.c plugin_fetch.h tar.c tar.h plugin_modules.c plugin_modules.h
-    plugin_deps.c plugin_deps.h archive.c archive.h unpack.c unpack.h
-    provision.c provision.h toolreport.c toolreport.h)
+    plugin/resolve.c plugin/resolve.h config/manifest.c config/manifest.h plugin/registry.c plugin/registry.h
+    util/types.h project/sync.c project/sync.h cli/main.c cli/cli.c cli/cli.h config/config.c config/config.h
+    project/derived.c project/derived.h project/generate.c project/generate.h project/tasks.c project/tasks.h
+    plugin/plugin_fetch.c plugin/plugin_fetch.h archive/tar.c archive/tar.h plugin/plugin_modules.c plugin/plugin_modules.h
+    plugin/plugin_deps.c plugin/plugin_deps.h archive/archive.c archive/archive.h archive/unpack.c archive/unpack.h
+    provision/provision.c provision/provision.h exec/toolreport.c exec/toolreport.h)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
@@ -34,7 +34,15 @@ endif()
 # Every file in src/, not just CORE_FILES: the files excluded above carry the
 # "path" key precisely because they decide where a plugin comes from, so the
 # list that catches a hardcoded host cannot be the list that excludes them.
-file(GLOB ALL_SOURCES "${SOURCE_DIR}/src/*.c" "${SOURCE_DIR}/src/*.h")
+file(GLOB_RECURSE ALL_SOURCES "${SOURCE_DIR}/src/*.c" "${SOURCE_DIR}/src/*.h")
+# A glob that matches nothing reports no findings, which reads exactly like a
+# clean run. Moving src/ into subdirectories turned this set empty once and the
+# check still passed, so the count is asserted rather than trusted.
+list(LENGTH ALL_SOURCES ALL_SOURCES_COUNT)
+if(ALL_SOURCES_COUNT LESS 40)
+    message(FATAL_ERROR "agnostic-core: found ${ALL_SOURCES_COUNT} sources under src/, "
+                        "which is too few to be the whole program; the glob has gone stale")
+endif()
 set(FORBIDDEN_HOSTS "api\\.github\\.com" "github\\.com" "gitlab" "bitbucket")
 
 set(HOST_FINDINGS "")

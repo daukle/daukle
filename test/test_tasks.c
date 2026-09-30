@@ -1,10 +1,10 @@
 #include "greatest.h"
-#include "tasks.h"
+#include "project/tasks.h"
 
 #include "cJSON.h"
-#include "config_lua.h"
-#include "error.h"
-#include "manifest.h"
+#include "config/config_lua.h"
+#include "util/error.h"
+#include "config/manifest.h"
 #include "support.h"
 
 #include <stdlib.h>

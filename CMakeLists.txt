@@ -5,7 +5,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 # Stated rather than inherited: OFF means -std=c11, which puts glibc into
 # __STRICT_ANSI__ and hides symlink and chmod from src/unpack.c and ftruncate
-# and fileno from src/http_curl.c.
+# and fileno from src/net/http_curl.c.
 set(CMAKE_C_EXTENSIONS ON)
 
 if(MSVC)
@@ -36,20 +36,20 @@ if(NOT WIN32)
     target_link_libraries(daukle_vendor PUBLIC m)
 endif()
 
-file(GLOB DAUKLE_CORE_SOURCES CONFIGURE_DEPENDS src/*.c)
+file(GLOB DAUKLE_CORE_SOURCES CONFIGURE_DEPENDS src/*/*.c)
 list(REMOVE_ITEM DAUKLE_CORE_SOURCES
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.c
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/http_winhttp.c
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/http_curl.c
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/exec_win32.c
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/exec_posix.c)
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/cli/main.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/net/http_winhttp.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/net/http_curl.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/exec/exec_win32.c
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/exec/exec_posix.c)
 
 if(WIN32)
-    list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/http_winhttp.c)
-    list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/exec_win32.c)
+    list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/net/http_winhttp.c)
+    list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/exec/exec_win32.c)
 else()
-    list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/http_curl.c)
-    list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/exec_posix.c)
+    list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/net/http_curl.c)
+    list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/exec/exec_posix.c)
 endif()
 
 add_library(daukle_core STATIC ${DAUKLE_CORE_SOURCES})
@@ -64,7 +64,7 @@ else()
     target_link_libraries(daukle_core PUBLIC CURL::libcurl)
 endif()
 
-add_executable(daukle src/main.c)
+add_executable(daukle src/cli/main.c)
 target_link_libraries(daukle PRIVATE daukle_core)
 target_compile_options(daukle PRIVATE ${DAUKLE_WARNING_FLAGS})
 

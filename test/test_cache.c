@@ -1,5 +1,5 @@
 #include "greatest.h"
-#include "cache.h"
+#include "cache/cache.h"
 #include "support.h"
 
 #include <stdio.h>
