@@ -1480,10 +1480,13 @@ TEST a_root_handle_is_absolute_from_a_relative_cache_directory(void) {
     char root[1024];
     char working_directory[1024];
     snprintf(cache, sizeof cache, "build/verbs-provision-relative-%d", fr_test_process_id());
+    fr_test_mark("relative cache %s", cache);
     use_cache_directory(cache, saved_cache, sizeof saved_cache);
     int prepared = prepare_provisioned_root(root, sizeof root);
+    fr_test_mark("relative prepared %d, root %s", prepared, root);
     int have_working_directory =
         fr_test_get_working_directory(working_directory, sizeof working_directory);
+    fr_test_mark("relative cwd %d %s", have_working_directory, working_directory);
 
     fr_registry *registry = fr_registry_create();
     fr_error err;
@@ -1493,23 +1496,33 @@ TEST a_root_handle_is_absolute_from_a_relative_cache_directory(void) {
     const char *verbs[] = { "provision", "exec" };
     int pushed = began && fr_lua_verbs_push_env(state, verbs, 2, &err) == FR_OK;
     int env = pushed ? lua_gettop(state) : 0;
+    fr_test_mark("relative env built %d", pushed);
 
     int rooted = pushed && prepared
         && fr_lua_run_in_env(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
+    fr_test_mark("relative rooted %d", rooted);
+
+    int resolved = rooted
+        && fr_lua_run_in_env(state, "t = root:tool('bin/java.exe')", "=t", env, &err) == FR_OK;
+    fr_test_mark("relative resolved %d", resolved);
 
     /* bin/java.exe holds four bytes of text, so starting it always fails. */
-    int failed_to_start = rooted
-        && fr_lua_run_in_env(state, "daukle.exec(root:tool('bin/java.exe'), {})", "=t", env,
-                             &err) == FR_ERR;
+    int failed_to_start = resolved
+        && fr_lua_run_in_env(state, "daukle.exec(t, {})", "=t", env, &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
+    fr_test_mark("relative failed to start %d", failed_to_start);
 
     if (state != NULL) lua_settop(state, 0);
     fr_registry_destroy(registry);
+    fr_test_mark("relative registry destroyed");
     fr_lua_runtime_shutdown();
+    fr_test_mark("relative runtime shut down");
     fr_test_remove_tree(cache);
+    fr_test_mark("relative tree removed");
     restore_cache_directory(saved_cache);
+    fr_test_mark("relative cache restored");
 
     ASSERT(prepared);
     ASSERT(rooted);
