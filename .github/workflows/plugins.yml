@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   plugins:
@@ -20,4 +21,4 @@ jobs:
       # covers that: the coverage moved out to these repositories and the report never came back.
       repositories: '["daukle/daukle"]'
     secrets:
-      envPAT: ${{ secrets.PAT || github.token }}
+      envPAT: ${{ secrets.GITHUB_TOKEN }}
