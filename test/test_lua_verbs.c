@@ -1166,6 +1166,21 @@ static int write_stub_program(const char *path) {
     return 1;
 }
 
+/* A member no plugin could ever run, which is the whole reason root:path
+   exists. It is left non-executable on POSIX deliberately; on Windows
+   fr_tool_is_executable_file admits any readable file, so the two platforms
+   disagree about root:tool here and agree about root:path. */
+static int write_data_member(const char *path) {
+    FILE *file = fopen(path, "wb");
+    if (file == NULL) return 0;
+    fputs("console.log('cli')\n", file);
+    fclose(file);
+#ifndef _WIN32
+    chmod(path, 0644);
+#endif
+    return 1;
+}
+
 /* Lays the tree PROVISION_PIN names down by hand, so daukle.provision finds it
    already cached and no test of the root handle's own rules needs a server. */
 static int prepare_provisioned_root(char *root, size_t size) {
@@ -1181,7 +1196,12 @@ static int prepare_provisioned_root(char *root, size_t size) {
     snprintf(member, sizeof member, "%s/bin/java.exe", root);
     if (!write_stub_program(member)) return 0;
     snprintf(member, sizeof member, "%s/bin/thing.bat", root);
-    return write_stub_program(member);
+    if (!write_stub_program(member)) return 0;
+
+    snprintf(directory, sizeof directory, "%s/lib", root);
+    fr_test_make_directory(directory);
+    snprintf(member, sizeof member, "%s/lib/cli.js", root);
+    return write_data_member(member);
 }
 
 static lua_State *begin_provision_env(fr_registry *registry, int *out_env) {
@@ -1483,6 +1503,302 @@ TEST a_root_handle_is_absolute_from_a_relative_cache_directory(void) {
     PASS();
 }
 
+/* The headline case for root:path. lib/cli.js is a script, not a program, and
+   naming it is the only way a plugin can run a provisioned interpreter over a
+   provisioned script: npm and the Gradle launcher are both this shape. */
+TEST a_root_path_names_a_member_no_plugin_could_run(void) {
+    static char message[1024];
+    char cache[1024];
+    char saved_cache[1024];
+    char root[1024];
+    use_private_provision_cache("path-member", cache, sizeof cache, saved_cache,
+                                sizeof saved_cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int named = rooted
+        && fr_lua_run_in_env(state,
+               "named = root:path('lib/cli.js')\n"
+               "kind = type(named)\n", "=t", env, &err) == FR_OK;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    char named_value[1024];
+    char named_kind[64];
+    named_value[0] = '\0';
+    named_kind[0] = '\0';
+    if (named) {
+        lua_getfield(state, env, "named");
+        const char *text = lua_tostring(state, -1);
+        snprintf(named_value, sizeof named_value, "%s", text != NULL ? text : "");
+        lua_pop(state, 1);
+        lua_getfield(state, env, "kind");
+        const char *kind = lua_tostring(state, -1);
+        snprintf(named_kind, sizeof named_kind, "%s", kind != NULL ? kind : "");
+        lua_pop(state, 1);
+    }
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERTm(message, named);
+    ASSERT_STR_EQm(named_kind, "string", named_kind);
+    /* The separator is the platform's, so the member is matched by its base
+       name and the root by the pin that names it. */
+    ASSERTm(named_value, strstr(named_value, "cli.js") != NULL);
+    ASSERTm(named_value, strstr(named_value, PROVISION_PIN) != NULL);
+    PASS();
+}
+
+/* root:path widens what a plugin may NAME and not what it may RUN. exec takes
+   a handle, so the string this returns is only ever an argument, and the exec
+   spec's section 3 property survives the addition. */
+TEST a_named_path_is_a_string_that_exec_still_refuses(void) {
+    static char message[512];
+    char cache[1024];
+    char saved_cache[1024];
+    char root[1024];
+    use_private_provision_cache("path-not-a-tool", cache, sizeof cache, saved_cache,
+                                sizeof saved_cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    err.message[0] = '\0';
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    lua_State *state = began ? fr_lua_runtime_state() : NULL;
+    const char *verbs[] = { "provision", "exec" };
+    int pushed = began && fr_lua_verbs_push_env(state, verbs, 2, &err) == FR_OK;
+    int env = pushed ? lua_gettop(state) : 0;
+
+    int rooted = pushed && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int refused = rooted
+        && fr_lua_run_in_env(state, "daukle.exec(root:path('lib/cli.js'), {})", "=t", env,
+                             &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERTm(message, refused);
+    /* On the clause and not merely on the refusal: before root:path existed
+       this same case passed because the method was nil, which is a refusal
+       that proves nothing about what exec accepts. */
+    ASSERTm(message, strstr(message, "must be a tool handle") != NULL);
+    PASS();
+}
+
+/* One test with two platform arms, because the platforms genuinely disagree and
+   a test per platform would let the unrun one rot. On POSIX a script is not
+   executable and root:tool refuses it, which is the case root:path exists for.
+   On Windows fr_tool_is_executable_file admits any readable file, so root:tool
+   hands back a handle that CreateProcessA could never start: the refusal moves
+   from naming time to exec time, and root:path is what both platforms need. */
+TEST a_root_tool_and_a_root_path_disagree_about_a_script(void) {
+    static char message[512];
+    char cache[1024];
+    char saved_cache[1024];
+    char root[1024];
+    use_private_provision_cache("path-vs-tool", cache, sizeof cache, saved_cache,
+                                sizeof saved_cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int tool_result = rooted
+        ? fr_lua_run_in_env(state, "tooled = root:tool('lib/cli.js')", "=t", env, &err)
+        : FR_OK;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    int path_named = rooted
+        && fr_lua_run_in_env(state, "named = root:path('lib/cli.js')", "=t", env, &err) == FR_OK;
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERTm(message, path_named);
+#ifdef _WIN32
+    ASSERT_EQm(message, FR_OK, tool_result);
+#else
+    ASSERT_EQm(message, FR_ERR, tool_result);
+    ASSERTm(message, strstr(message, "no executable") != NULL);
+#endif
+    PASS();
+}
+
+TEST a_root_path_refuses_what_a_root_tool_refuses(void) {
+    static char climb_message[512];
+    static char backslash_message[512];
+    static char empty_message[512];
+    char cache[1024];
+    char saved_cache[1024];
+    char root[1024];
+    use_private_provision_cache("path-refusals", cache, sizeof cache, saved_cache,
+                                sizeof saved_cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int climb_refused = rooted
+        && fr_lua_run_in_env(state, "root:path('../../../windows/system32/cmd')", "=t", env,
+                             &err) == FR_ERR;
+    snprintf(climb_message, sizeof climb_message, "%s", err.message);
+
+    int backslash_refused = rooted
+        && fr_lua_run_in_env(state, "root:path('lib\\\\cli.js')", "=t", env, &err) == FR_ERR;
+    snprintf(backslash_message, sizeof backslash_message, "%s", err.message);
+
+    int empty_refused = rooted
+        && fr_lua_run_in_env(state, "root:path('')", "=t", env, &err) == FR_ERR;
+    snprintf(empty_message, sizeof empty_message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERT(climb_refused);
+    ASSERTm(climb_message, strstr(climb_message, "climbs out") != NULL);
+    ASSERT(backslash_refused);
+    ASSERTm(backslash_message, strstr(backslash_message, "backslash") != NULL);
+    ASSERT(empty_refused);
+    ASSERTm(empty_message, strstr(empty_message, "needs a name") != NULL);
+    PASS();
+}
+
+/* A provisioned root is fixed content, so a member that is not there is always
+   a mistake in the plugin and never a path it means to create. */
+TEST a_root_path_refuses_a_member_that_is_not_there(void) {
+    static char message[512];
+    char cache[1024];
+    char saved_cache[1024];
+    char root[1024];
+    use_private_provision_cache("path-absent", cache, sizeof cache, saved_cache,
+                                sizeof saved_cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int refused = rooted
+        && fr_lua_run_in_env(state, "root:path('lib/absent.js')", "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "lib/absent.js") != NULL);
+    PASS();
+}
+
+/* root:path does not care whether a member is executable, which is the one
+   rule it drops. A .bat is the sharpest case: root:tool refuses it outright
+   because CreateProcessA cannot start one, and naming it is still harmless. */
+TEST a_root_path_names_a_batch_file_that_a_root_tool_refuses(void) {
+    static char tool_message[512];
+    char cache[1024];
+    char saved_cache[1024];
+    char root[1024];
+    use_private_provision_cache("path-batch", cache, sizeof cache, saved_cache,
+                                sizeof saved_cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int tool_refused = rooted
+        && fr_lua_run_in_env(state, "root:tool('bin/thing.bat')", "=t", env, &err) == FR_ERR;
+    snprintf(tool_message, sizeof tool_message, "%s", err.message);
+
+    int path_named = rooted
+        && fr_lua_run_in_env(state, "named = root:path('bin/thing.bat')", "=t", env, &err) == FR_OK;
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERT(tool_refused);
+    ASSERTm(tool_message, strstr(tool_message, ".bat") != NULL
+                       || strstr(tool_message, "batch") != NULL);
+    ASSERT(path_named);
+    PASS();
+}
+
 TEST provision_is_refused_while_generating(void) {
     static char message[512];
     static const char *const chunk =
@@ -1593,6 +1909,12 @@ int main(int argc, char **argv) {
     RUN_TEST(a_root_handle_does_not_guess_an_extension);
     RUN_TEST(a_root_handle_refuses_a_member_spelled_with_a_backslash);
     RUN_TEST(a_root_handle_is_absolute_from_a_relative_cache_directory);
+    RUN_TEST(a_root_path_names_a_member_no_plugin_could_run);
+    RUN_TEST(a_named_path_is_a_string_that_exec_still_refuses);
+    RUN_TEST(a_root_tool_and_a_root_path_disagree_about_a_script);
+    RUN_TEST(a_root_path_refuses_what_a_root_tool_refuses);
+    RUN_TEST(a_root_path_refuses_a_member_that_is_not_there);
+    RUN_TEST(a_root_path_names_a_batch_file_that_a_root_tool_refuses);
     RUN_TEST(provision_is_refused_while_generating);
     GREATEST_MAIN_END();
 }

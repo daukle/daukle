@@ -32,6 +32,11 @@ int fr_tool_is_batch_file(const char *path);
    to the same test as a name found on the search path. */
 int fr_tool_is_executable_file(const char *path);
 
+/* Whether path is a file at all, with no opinion on running it. It is what
+   root:path is held to, since a member a plugin only names never reaches an
+   exec backend and a directory would still be the wrong answer. */
+int fr_tool_is_regular_file(const char *path);
+
 /* The absolute form of path, which the caller frees, or NULL when it cannot be
    resolved. Every program path reaches the exec backends through this, because
    a relative one makes the two disagree about what it names: POSIX chdir()s

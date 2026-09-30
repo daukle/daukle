@@ -389,9 +389,11 @@ static int verb_tool(lua_State *state) {
 
 #define FR_PROVISION_HANDLE "daukle.provision.root"
 
+/* Sized like fr_provision_result.root, so taking that root cannot truncate. */
+#define FR_PROVISION_ROOT_MAX 1024
+
 typedef struct {
-    /* Sized like fr_provision_result.root, so taking that root cannot truncate. */
-    char root[1024];
+    char root[FR_PROVISION_ROOT_MAX];
 } fr_lua_root;
 
 static const char *const PROVISION_FIELDS[] = { "url", "sha256", "as" };
@@ -491,26 +493,66 @@ static const char *member_base_name(const char *member) {
    point. The containment rule still holds, and a backslash is refused because
    it separates on one host only, so the same member would name a file there
    and a strangely named one everywhere else. */
-static int root_tool(lua_State *state) {
+/* Shared by root:tool and root:path, which differ only in what they do with a
+   member that is there: the containment rules are one set and must stay one. */
+static const char *root_member_path(lua_State *state, const char *verb, char *path, size_t size) {
     fr_lua_root *root = luaL_testudata(state, 1, FR_PROVISION_HANDLE);
     if (root == NULL) {
-        return luaL_error(state, "tool must be called on a root from daukle.provision");
+        luaL_error(state, "%s must be called on a root from daukle.provision", verb);
+        return NULL;
     }
     const char *member = luaL_checkstring(state, 2);
-    if (member[0] == '\0') return luaL_error(state, "a provisioned root's member needs a name");
+    if (member[0] == '\0') {
+        luaL_error(state, "a provisioned root's member needs a name");
+        return NULL;
+    }
     if (fr_lua_sandbox_climbs_out(member)) {
-        return luaL_error(state, "\"%s\" climbs out of the provisioned root", member);
+        luaL_error(state, "\"%s\" climbs out of the provisioned root", member);
+        return NULL;
     }
     if (strchr(member, '\\') != NULL) {
-        return luaL_error(state, "\"%s\" names a member with a backslash; a member inside a"
-                                 " provisioned root is spelled with forward slashes", member);
+        luaL_error(state, "\"%s\" names a member with a backslash; a member inside a"
+                          " provisioned root is spelled with forward slashes", member);
+        return NULL;
     }
 
-    char path[sizeof root->root];
-    int written = snprintf(path, sizeof path, "%s/%s", root->root, member);
-    if (written < 0 || (size_t) written >= sizeof path) {
-        return luaL_error(state, "\"%s\" is too long a path inside the provisioned root", member);
+    int written = snprintf(path, size, "%s/%s", root->root, member);
+    if (written < 0 || (size_t) written >= size) {
+        luaL_error(state, "\"%s\" is too long a path inside the provisioned root", member);
+        return NULL;
     }
+    return member;
+}
+
+/* Names a member without resolving it to something runnable. It exists because
+   a tool handle is opaque and only ever executable, so without this a plugin
+   cannot pass a provisioned script to a provisioned interpreter, which is the
+   shape of npm under node and of the Gradle launcher under java. It widens what
+   a plugin may NAME and not what it may RUN: daukle.exec takes a handle, never a
+   string, so what this returns can only be an argument. */
+static int root_path(lua_State *state) {
+    char path[FR_PROVISION_ROOT_MAX];
+    const char *member = root_member_path(state, "path", path, sizeof path);
+
+    if (!fr_tool_is_regular_file(path)) {
+        return luaL_error(state, "the provisioned root holds no \"%s\"", member);
+    }
+
+    /* A provisioned root inherits DAUKLE_CACHE_DIR verbatim and may be relative. */
+    char *absolute = fr_tool_absolute_path(path);
+    if (absolute == NULL) {
+        return luaL_error(state, "\"%s\" is in the provisioned root but its absolute path could"
+                                 " not be resolved", member);
+    }
+    lua_pushstring(state, absolute);
+    free(absolute);
+    return 1;
+}
+
+static int root_tool(lua_State *state) {
+    char path[FR_PROVISION_ROOT_MAX];
+    const char *member = root_member_path(state, "tool", path, sizeof path);
+
     if (fr_tool_is_batch_file(member)) {
         return luaL_error(state, FR_TOOL_BATCH_REFUSAL, member, path);
     }
@@ -739,6 +781,8 @@ static int protected_push_env(lua_State *state) {
     lua_newtable(state);
     lua_pushcfunction(state, root_tool);
     lua_setfield(state, -2, "tool");
+    lua_pushcfunction(state, root_path);
+    lua_setfield(state, -2, "path");
     lua_setfield(state, -2, "__index");
     lua_pop(state, 1);
 
