@@ -19,6 +19,7 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
 #else
 #include <sys/stat.h>
 #endif
@@ -1897,6 +1898,9 @@ int main(int argc, char **argv) {
         return code;
     }
     fr_test_prepend_to_path_dir_of(argv[0]);
+#ifdef _WIN32
+    if (getenv("DAUKLE_TEST_TRACE") != NULL) SetErrorMode(SEM_FAILCRITICALERRORS);
+#endif
 
     GREATEST_MAIN_BEGIN();
     GREATEST_SET_SETUP_CB(mark_test_entry, NULL);
