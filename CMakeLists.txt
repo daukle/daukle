@@ -16,6 +16,12 @@ if(MSVC)
 else()
     set(DAUKLE_WARNING_FLAGS -Wall -Wextra -Werror)
     set(DAUKLE_TEST_WARNING_FLAGS ${DAUKLE_WARNING_FLAGS})
+    if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+        # An assertion message composed into a fixed buffer is still a correct
+        # assertion message when it truncates. src/ keeps the diagnostic, where
+        # a truncated path is a defect rather than a shorter sentence.
+        list(APPEND DAUKLE_TEST_WARNING_FLAGS -Wno-format-truncation)
+    endif()
 endif()
 
 file(GLOB DAUKLE_LUA_SOURCES CONFIGURE_DEPENDS vendor/lua/*.c)

@@ -21,6 +21,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 #endif
 
 #define FR_DERIVED_LEDGER ".daukle-generated"

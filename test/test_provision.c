@@ -560,6 +560,14 @@ static void restore_cache_dir(const char *saved) {
     fr_test_set_env("DAUKLE_CACHE_DIR", saved[0] != '\0' ? saved : NULL);
 }
 
+/* fr_test_tar_append writes mode 0644, and a provisioned member that is not
+   executable is refused. On Windows executability is not a permission bit, so
+   only POSIX ever reads this. */
+static void mark_tar_member_executable(char *archive, size_t header_offset) {
+    memcpy(archive + header_offset + 100, "0000755", 8);
+    fr_test_tar_fix_checksum(archive, header_offset);
+}
+
 /* The headline case of the whole branch: a repository holding daukle.toml, a
    plugin and nothing daukle itself needs, which provisions a program from a
    pinned archive and runs it. The tar member is this test binary's own bytes,
@@ -591,6 +599,7 @@ TEST a_project_provisions_a_tool_and_runs_it(void) {
     if (archive != NULL) {
         memset(archive, 0, archive_capacity);
         size_t used = fr_test_tar_append(archive, 0, "bin/tool.exe", '0', self_bytes, self_length);
+        mark_tar_member_executable(archive, 0);
         archive_length = fr_test_tar_end(archive, used);
     }
 

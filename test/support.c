@@ -73,7 +73,10 @@ static void for_each_child(const char *path, child_visitor visit, void *state) {
         char child[1024];
         snprintf(child, sizeof child, "%s/%s", path, entry->d_name);
         struct stat info;
-        if (stat(child, &info) != 0) continue;
+        /* lstat and not stat: readdir order is unspecified, so a symlink whose
+           target this same walk already removed must still be visited, or the
+           tree never empties and the next test inherits it. */
+        if (lstat(child, &info) != 0) continue;
         visit(child, S_ISDIR(info.st_mode), state);
     }
     closedir(dir);

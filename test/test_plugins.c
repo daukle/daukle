@@ -898,7 +898,7 @@ static int github_release_fetch(const char *daukle_token, const char *github_tok
    what reaches the request proves the precedence, and that neither being set
    sends no header at all instead of an empty one. */
 TEST the_github_plugin_authenticates_from_either_token_variable(void) {
-    fr_error err;
+    static fr_error err;
 
     ASSERT_EQm(err.message, FR_OK, github_release_fetch("daukle-token", "github-token", &err));
     ASSERT_STR_EQ("Bearer daukle-token", AUTH_VALUE_SEEN);
@@ -1018,7 +1018,7 @@ static int loads_reaching_the_network(const char *document_json, int *out_status
 }
 
 TEST a_url_entry_fetches_and_loads(void) {
-    fr_error err;
+    static fr_error err;
     int status = FR_ERR;
     int registered = loads_reaching_the_network("{\"plugins\":{\"p\":\"https://x/plain.lua\"}}",
                                                 &status, &err);
@@ -1032,7 +1032,7 @@ TEST a_url_entry_fetches_and_loads(void) {
    reaches the network is the one assertion that separates "the resolver ran"
    from "what the resolver named is what was fetched". */
 TEST a_resolved_entry_loads_what_its_resolver_names(void) {
-    fr_error err;
+    static fr_error err;
     int status = FR_ERR;
     int registered = loads_reaching_the_network(
         "{\"resolvers\":{\"t\":{\"url\":\"https://x/resolver.lua\",\"sha256\":\"" INLINE_DIGEST
@@ -1118,7 +1118,7 @@ static int stub_records_authorization(const char *url, const fr_http_header *hea
    no authentication scheme of its own: what reaches the request is whatever
    opaque strings the resolver returned beside the url. */
 TEST the_headers_a_resolver_returns_reach_the_artifact_fetch(void) {
-    fr_error err;
+    static fr_error err;
     const char *document_json =
         "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/with-headers.lua\"}},"
         "\"plugins\":{\"p\":\"t:a/b\"}}";
@@ -1301,7 +1301,7 @@ TEST a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests(void) {
    primary toolchain is Windows, so an uppercase pin over the same bytes must
    still match the lowercase digest fr_sha256_hex computes. */
 TEST an_uppercase_pin_still_matches_the_lowercase_digest(void) {
-    fr_error err;
+    static fr_error err;
     char expected[65];
     fr_sha256_hex(ARTIFACT_BODY, strlen(ARTIFACT_BODY), expected);
 
@@ -1448,7 +1448,7 @@ TEST fr_plugins_report_clear_empties_the_report(void) {
    a coordinate is what the manifest wrote and what a reader recognises, while
    the url is wherever that resolver happens to keep its artifacts. */
 TEST the_report_names_what_the_resolver_resolved(void) {
-    fr_error err;
+    static fr_error err;
     fr_http_fn previous = fr_http_set_backend(stub_inline);
     fr_registry *registry = NULL;
     int built = fr_build_registry(&registry, &err) == FR_OK;
@@ -2176,7 +2176,7 @@ static int resolve_once(const fr_resolver_entry *resolver, const char *coordinat
    run fetches the old url whose artifact this command just discarded: a
    silent no-op on the one entry kind the command exists for. */
 TEST plugin_update_persists_the_fresh_url_with_the_cache_disabled(void) {
-    fr_error err;
+    static fr_error err;
     const char *document_json =
         "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/from-env.lua\"}},"
         "\"plugins\":{\"p\":\"t:c/d\"}}";
@@ -2238,7 +2238,7 @@ TEST plugin_update_persists_the_fresh_url_with_the_cache_disabled(void) {
    stands in for a plugin some OTHER project cached, never named in the
    manifest entries this call is given. */
 TEST fr_plugins_update_cache_with_no_label_touches_only_the_given_entries(void) {
-    fr_error err;
+    static fr_error err;
     char declared_url[128];
     char other_url[128];
     snprintf(declared_url, sizeof declared_url, "https://x/%d-declared.lua", fr_test_process_id());
@@ -2302,7 +2302,7 @@ TEST fr_plugins_update_cache_with_no_label_touches_only_the_given_entries(void) 
 /* The other half of the honesty fix: a label matching a REAL fetched entry must
    report removed_count 1, not just the local no-op case reporting 0. */
 TEST fr_plugins_update_cache_with_a_label_matching_a_url_entry_removes_it(void) {
-    fr_error err;
+    static fr_error err;
     char url[128];
     snprintf(url, sizeof url, "https://x/%d-labelled.lua", fr_test_process_id());
     fr_plugin_fetch_discard(url);
@@ -2455,7 +2455,7 @@ TEST fetched_bytes_carry_their_length_past_an_embedded_nul(void) {
 
     char *text = NULL;
     size_t length = 0;
-    fr_error err;
+    static fr_error err;
     int status = fr_plugin_fetch("https://x/artifact", NULL, 0, &text, &length, &err);
 
     char expected[65];

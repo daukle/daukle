@@ -45,7 +45,7 @@ TEST keeps_the_header_across_a_same_origin_redirect(void) {
     fr_test_server_start(server);
 
     char *body = NULL;
-    fr_error err;
+    static fr_error err;
     int result = fetch(start, &body, &err);
     fr_test_server_stop(server);
 
@@ -79,7 +79,7 @@ TEST drops_the_header_when_the_redirect_leaves_the_origin(void) {
     fr_test_server_start(second);
 
     char *body = NULL;
-    fr_error err;
+    static fr_error err;
     int result = fetch(start, &body, &err);
     fr_test_server_stop(first);
     fr_test_server_stop(second);
