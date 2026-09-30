@@ -1339,6 +1339,12 @@ TEST a_root_handle_refuses_a_member_that_climbs_out(void) {
     restore_cache_directory(saved_cache);
     fr_test_mark("climb cache restored");
 
+    fr_test_mark("climb writing to stdout");
+    fputc('#', stdout);
+    fr_test_mark("climb wrote to stdout");
+    fflush(stdout);
+    fr_test_mark("climb flushed stdout");
+
     ASSERT(prepared);
     ASSERT(rooted);
     ASSERT(climb_refused);
@@ -1857,6 +1863,16 @@ TEST provision_is_refused_while_generating(void) {
 
 GREATEST_MAIN_DEFS();
 
+static void mark_test_entry(void *udata) {
+    (void) udata;
+    fr_test_mark("enter %s", greatest_info.name_buf);
+}
+
+static void mark_test_exit(void *udata) {
+    (void) udata;
+    fr_test_mark("leave %s", greatest_info.name_buf);
+}
+
 int main(int argc, char **argv) {
     if (argc >= 3 && strcmp(argv[1], "--exec-child") == 0) {
 #ifdef _WIN32
@@ -1870,6 +1886,8 @@ int main(int argc, char **argv) {
     fr_test_prepend_to_path_dir_of(argv[0]);
 
     GREATEST_MAIN_BEGIN();
+    GREATEST_SET_SETUP_CB(mark_test_entry, NULL);
+    GREATEST_SET_TEARDOWN_CB(mark_test_exit, NULL);
     RUN_TEST(a_declared_verb_is_present);
     RUN_TEST(an_undeclared_verb_raises_naming_itself);
     RUN_TEST(registration_functions_are_always_present);
