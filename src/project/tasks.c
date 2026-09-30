@@ -442,6 +442,11 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
         const fr_task_node *node = plan->nodes[index];
         if (node->plugin == NULL || node->plugin->run == NULL) continue;
 
+        if (node->publish != NULL) {
+            fprintf(stderr, "daukle publish: %s (from %s)\n", node->publish->name,
+                    node->publish->from);
+        }
+
         char *derived_dir = NULL;
         if (fr_derived_dir(session->manifest_dir, node->toolchain->name, &derived_dir, err) != FR_OK) {
             return FR_ERR;

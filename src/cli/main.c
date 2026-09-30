@@ -692,7 +692,6 @@ static int run_publish(const char *only, int use_cache, int verbose) {
             report_error(&err, verbose);
             return 1;
         }
-        fprintf(stderr, "daukle publish: %s (from %s)\n", target->name, target->from);
 
         fr_task_plan plan;
         if (fr_tasks_plan(&set, goal, &plan, &err) != FR_OK) {
