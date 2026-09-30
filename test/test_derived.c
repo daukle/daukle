@@ -657,7 +657,8 @@ static int create_directory_link(const char *link_path, const char *target_path)
              link_path, target_path);
     system(command);
 #else
-    symlink(target_path, link_path);
+    int created = symlink(target_path, link_path);
+    (void) created;
 #endif
     char probe[900];
     snprintf(probe, sizeof probe, "%s/marker.txt", link_path);
