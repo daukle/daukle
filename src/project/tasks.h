@@ -92,9 +92,10 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
 /* Spells the task name a publish destination runs under. Non-zero when it fit. */
 int fr_tasks_publish_goal(const char *destination, char *out, size_t out_size);
 
-/* Fails naming the first destination no publisher declares. only names one destination,
-   or is NULL for every declared one. Called before anything runs: the first upload must
-   not happen on a run whose third destination was never going to resolve. */
+/* Fails naming the first destination no publisher declares, or whose plan cannot be
+   built. only names one destination, or is NULL for every declared one. Every selected
+   destination is planned here, before anything runs: the first upload must not happen on
+   a run whose third destination was never going to resolve. */
 int fr_tasks_check_publish(const fr_task_set *set, const fr_manifest *manifest,
                            const char *only, fr_error *err);
 

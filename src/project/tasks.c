@@ -522,6 +522,9 @@ int fr_tasks_check_publish(const fr_task_set *set, const fr_manifest *manifest,
                               " needs", target->name, target->name);
             return FR_ERR;
         }
+        fr_task_plan plan;
+        if (fr_tasks_plan(set, goal, &plan, err) != FR_OK) return FR_ERR;
+        fr_tasks_plan_free(&plan);
     }
     return FR_OK;
 }
