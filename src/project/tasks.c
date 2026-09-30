@@ -82,6 +82,14 @@ static const fr_publish_target *publish_target_for(const fr_manifest *manifest, 
     return NULL;
 }
 
+/* The destination's "from" is validated when the manifest is read, so this returns NULL only
+   for a manifest built another way; a caller that gets NULL skips the task rather than handing
+   a run a toolchain-less node. */
+static const fr_toolchain *toolchain_of_destination(const fr_manifest *manifest,
+                                                    const fr_publish_target *publish) {
+    return toolchain_for(manifest, publish->from, strlen(publish->from));
+}
+
 const fr_task_node *fr_tasks_find(const fr_task_set *set, const char *name) {
     for (size_t index = 0; index < set->count; index++) {
         if (strcmp(set->nodes[index].name, name) == 0) return &set->nodes[index];
@@ -158,10 +166,7 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
             if (prefix_is_publish(name, prefix)) {
                 publish = publish_target_for(manifest, name, prefix);
                 if (publish == NULL) continue;
-                toolchain = toolchain_for(manifest, publish->from, strlen(publish->from));
-                /* fr_manifest_from_document refuses a "from" naming no declared toolchain, so
-                   this cannot fire; it is here so a future reader of a manifest built another
-                   way does not get a NULL toolchain through a path that promises one. */
+                toolchain = toolchain_of_destination(manifest, publish);
                 if (toolchain == NULL) continue;
             } else {
                 toolchain = toolchain_for(manifest, name, prefix);
