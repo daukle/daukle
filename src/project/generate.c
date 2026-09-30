@@ -1,11 +1,11 @@
 #include "project/generate.h"
 
-#include "project/derived.h"
-#include "util/error.h"
 #include "exec/exec.h"
 #include "lua/lua_sandbox.h"
 #include "plugin/plugins.h"
 #include "plugin/resolve.h"
+#include "project/derived.h"
+#include "util/error.h"
 
 #include <stdio.h>
 #include <stdlib.h>

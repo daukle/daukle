@@ -1,8 +1,8 @@
 #ifndef DAUKLE_RESOLVE_H
 #define DAUKLE_RESOLVE_H
 
-#include "util/types.h"
 #include "plugin/registry.h"
+#include "util/types.h"
 
 #include <stddef.h>
 

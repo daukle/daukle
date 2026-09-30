@@ -1,7 +1,7 @@
 #include "cache/cache.h"
 
-#include "util/error.h"
 #include "project/region.h"
+#include "util/error.h"
 
 #include <errno.h>
 #include <stdio.h>

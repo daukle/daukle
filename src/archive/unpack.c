@@ -1,7 +1,7 @@
 #include "archive/unpack.h"
 
-#include "util/error.h"
 #include "lua/lua_sandbox.h"
+#include "util/error.h"
 
 #include <errno.h>
 #include <stdio.h>

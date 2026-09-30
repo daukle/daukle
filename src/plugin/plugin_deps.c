@@ -1,9 +1,9 @@
 #include "plugin/plugin_deps.h"
 
 #include "cJSON.h"
-#include "util/error.h"
 #include "plugin/plugin_fetch.h"
 #include "plugin/plugin_modules.h"
+#include "util/error.h"
 #include "util/sha256.h"
 
 #include <stdio.h>

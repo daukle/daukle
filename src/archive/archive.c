@@ -1,7 +1,7 @@
 #include "archive/archive.h"
 
-#include "util/error.h"
 #include "archive/tar.h"
+#include "util/error.h"
 
 #include "miniz.h"
 

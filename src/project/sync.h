@@ -1,8 +1,8 @@
 #ifndef DAUKLE_SYNC_H
 #define DAUKLE_SYNC_H
 
-#include "util/types.h"
 #include "plugin/registry.h"
+#include "util/types.h"
 
 #include <stddef.h>
 

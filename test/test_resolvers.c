@@ -6,8 +6,8 @@
 #include "util/error.h"
 #include "greatest.h"
 #include "net/http.h"
-#include "project/region.h"
 #include "plugin/registry.h"
+#include "project/region.h"
 #include "util/sha256.h"
 
 #include <stdio.h>

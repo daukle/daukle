@@ -1,9 +1,9 @@
 #include "plugin/plugin_fetch.h"
 
 #include "cache/cache.h"
-#include "util/error.h"
 #include "net/http.h"
 #include "project/region.h"
+#include "util/error.h"
 #include "util/sha256.h"
 
 #include <stdio.h>

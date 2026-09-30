@@ -2,15 +2,15 @@
 
 #include "cache/cache.h"
 #include "config/config_lua.h"
-#include "project/derived.h"
-#include "net/http.h"
 #include "lua/lua_verbs.h"
 #include "lua/luax.h"
-#include "provision/provision.h"
+#include "net/http.h"
 #include "plugin/registry.h"
+#include "project/derived.h"
+#include "provision/provision.h"
 #include "support.h"
-#include "project/sync.h"
 #include "exec/toolreport.h"
+#include "project/sync.h"
 
 #include <stdio.h>
 #include <stdlib.h>

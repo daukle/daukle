@@ -1,12 +1,12 @@
 #include "greatest.h"
 #include "config/config_lua.h"
 #include "config/config_toml.h"
-#include "util/error.h"
 #include "config/manifest.h"
 #include "plugin/plugins.h"
-#include "project/region.h"
 #include "plugin/registry.h"
 #include "plugin/resolve.h"
+#include "project/region.h"
+#include "util/error.h"
 
 #include "cJSON.h"
 

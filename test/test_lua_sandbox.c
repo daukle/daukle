@@ -1,6 +1,6 @@
 #include "greatest.h"
-#include "lua/luax.h"
 #include "lua/lua_sandbox.h"
+#include "lua/luax.h"
 #include "project/region.h"
 #include "support.h"
 

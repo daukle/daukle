@@ -4,14 +4,14 @@
 #include "config/config.h"
 #include "config/config_lua.h"
 #include "config/config_toml.h"
-#include "util/error.h"
-#include "project/generate.h"
 #include "config/manifest.h"
 #include "plugin/plugins.h"
-#include "project/region.h"
 #include "plugin/registry.h"
 #include "plugin/resolve.h"
 #include "plugin/resolvers.h"
+#include "project/generate.h"
+#include "project/region.h"
+#include "util/error.h"
 
 #include <stdio.h>
 #include <stdlib.h>

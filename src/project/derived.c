@@ -1,10 +1,10 @@
 #include "project/derived.h"
 
 #include "cache/cache.h"
-#include "util/error.h"
 #include "lua/lua_sandbox.h"
 #include "plugin/plugins.h"
 #include "project/region.h"
+#include "util/error.h"
 #include "util/sha256.h"
 #include "util/strbuf.h"
 

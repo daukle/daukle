@@ -1,8 +1,8 @@
 #ifndef DAUKLE_PROVISION_H
 #define DAUKLE_PROVISION_H
 
-#include "util/types.h"
 #include "archive/unpack.h"
+#include "util/types.h"
 
 #include <stddef.h>
 

@@ -1,8 +1,8 @@
 #include "net/http.h"
 
+#include "net/url.h"
 #include "util/error.h"
 #include "util/sha256.h"
-#include "net/url.h"
 
 #include <curl/curl.h>
 #include <stdio.h>

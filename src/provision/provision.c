@@ -2,8 +2,8 @@
 
 #include "archive/archive.h"
 #include "cache/cache.h"
-#include "util/error.h"
 #include "net/http.h"
+#include "util/error.h"
 #include "util/sha256.h"
 
 #include <errno.h>

@@ -2,11 +2,11 @@
 #include "plugin/plugin_modules.h"
 
 #include "config/config_lua.h"
-#include "util/error.h"
 #include "plugin/registry.h"
+#include "util/error.h"
 #include "support.h"
-#include "project/sync.h"
 #include "archive/tar.h"
+#include "project/sync.h"
 
 #include <stdlib.h>
 #include <string.h>

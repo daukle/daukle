@@ -1,8 +1,8 @@
 #include "project/tasks.h"
 
+#include "plugin/resolve.h"
 #include "project/derived.h"
 #include "util/error.h"
-#include "plugin/resolve.h"
 
 #include <stdio.h>
 #include <stdlib.h>

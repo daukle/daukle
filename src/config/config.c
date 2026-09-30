@@ -1,9 +1,9 @@
 #include "config/config.h"
 
-#include "util/error.h"
 #include "config/manifest.h"
 #include "plugin/plugins.h"
 #include "project/region.h"
+#include "util/error.h"
 
 #include "cJSON.h"
 

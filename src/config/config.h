@@ -1,8 +1,8 @@
 #ifndef DAUKLE_CONFIG_H
 #define DAUKLE_CONFIG_H
 
-#include "util/types.h"
 #include "plugin/registry.h"
+#include "util/types.h"
 
 /* Dispatches on the file's extension alone, so the set of formats is whatever
    is registered and this module never names one. */

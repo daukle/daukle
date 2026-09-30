@@ -1,7 +1,7 @@
 #include "plugin/resolve.h"
 
-#include "util/error.h"
 #include "config/manifest.h"
+#include "util/error.h"
 #include "util/semver.h"
 
 #include "cJSON.h"

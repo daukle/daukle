@@ -1,8 +1,8 @@
 #include "lua/lua_sandbox.h"
 
-#include "util/error.h"
 #include "lua/luax.h"
 #include "project/region.h"
+#include "util/error.h"
 
 #include "lauxlib.h"
 

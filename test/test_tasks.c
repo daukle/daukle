@@ -3,8 +3,8 @@
 
 #include "cJSON.h"
 #include "config/config_lua.h"
-#include "util/error.h"
 #include "config/manifest.h"
+#include "util/error.h"
 #include "support.h"
 
 #include <stdlib.h>

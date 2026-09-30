@@ -2,12 +2,12 @@
 
 #include "cJSON.h"
 #include "config/config_lua.h"
-#include "util/error.h"
 #include "config/jsonx.h"
 #include "lua/lua_sandbox.h"
 #include "plugin/plugin_fetch.h"
 #include "plugin/plugins.h"
 #include "project/region.h"
+#include "util/error.h"
 #include "util/sha256.h"
 
 #include <stdio.h>

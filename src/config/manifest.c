@@ -1,9 +1,9 @@
 #include "config/manifest.h"
 
-#include "util/error.h"
 #include "config/jsonx.h"
 #include "plugin/plugins.h"
 #include "project/region.h"
+#include "util/error.h"
 #include "util/semver.h"
 
 #include <stdlib.h>

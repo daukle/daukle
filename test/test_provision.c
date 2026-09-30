@@ -6,10 +6,10 @@
 #include "project/region.h"
 #include "util/sha256.h"
 #include "support.h"
-#include "project/sync.h"
 #include "archive/tar.h"
-#include "project/tasks.h"
 #include "exec/toolreport.h"
+#include "project/sync.h"
+#include "project/tasks.h"
 
 #include <stdio.h>
 #include <stdlib.h>
