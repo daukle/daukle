@@ -1482,7 +1482,8 @@ TEST a_root_handle_is_absolute_from_a_relative_cache_directory(void) {
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
-    /* bin/java.exe holds four bytes of text, so starting it always fails. */
+    /* bin/java.exe holds four bytes of text, so starting it always fails. On a
+       Windows session with no desktop it also used to hang: see start_process. */
     int failed_to_start = rooted
         && fr_lua_run_in_env(state, "daukle.exec(root:tool('bin/java.exe'), {})", "=t", env,
                              &err) == FR_ERR;
@@ -1846,6 +1847,16 @@ TEST provision_is_refused_while_generating(void) {
 
 GREATEST_MAIN_DEFS();
 
+static void mark_test_entry(void *udata) {
+    (void) udata;
+    fr_test_mark("enter %s", greatest_info.name_buf);
+}
+
+static void mark_test_exit(void *udata) {
+    (void) udata;
+    fr_test_mark("leave %s", greatest_info.name_buf);
+}
+
 int main(int argc, char **argv) {
     if (argc >= 3 && strcmp(argv[1], "--exec-child") == 0) {
 #ifdef _WIN32
@@ -1859,6 +1870,8 @@ int main(int argc, char **argv) {
     fr_test_prepend_to_path_dir_of(argv[0]);
 
     GREATEST_MAIN_BEGIN();
+    GREATEST_SET_SETUP_CB(mark_test_entry, NULL);
+    GREATEST_SET_TEARDOWN_CB(mark_test_exit, NULL);
     RUN_TEST(a_declared_verb_is_present);
     RUN_TEST(an_undeclared_verb_raises_naming_itself);
     RUN_TEST(registration_functions_are_always_present);
