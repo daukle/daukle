@@ -2303,7 +2303,7 @@ TEST a_drive_letter_is_an_escape_rather_than_an_alias(void) {
 TEST a_publisher_reaches_the_registry_under_the_publish_prefix(void) {
     fr_registry *registry = fr_registry_create();
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.publisher{ name = 'github', publish = function(context) end }\n";
     int status = fr_lua_plugin_load(chunk, strlen(chunk), "github.lua", NULL, 0, NULL, NULL, &err);
@@ -2313,6 +2313,7 @@ TEST a_publisher_reaches_the_registry_under_the_publish_prefix(void) {
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
 
+    ASSERT(began);
     ASSERT_EQ(FR_OK, status);
     ASSERT(found);
     PASS();
@@ -2323,7 +2324,7 @@ TEST a_publisher_may_declare_exec(void) {
        outright for having declared exec. */
     fr_registry *registry = fr_registry_create();
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *uses[] = { "exec" };
     const char *chunk =
         "daukle.publisher{ name = 'github', publish = function(context) end }\n";
@@ -2334,6 +2335,7 @@ TEST a_publisher_may_declare_exec(void) {
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
 
+    ASSERT(began);
     ASSERT_EQ(FR_OK, status);
     ASSERT_STR_EQ("", status == FR_OK ? "" : message);
     PASS();
@@ -2342,7 +2344,7 @@ TEST a_publisher_may_declare_exec(void) {
 TEST a_publisher_needs_a_publish_function(void) {
     fr_registry *registry = fr_registry_create();
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk = "daukle.publisher{ name = 'github' }\n";
     int status = fr_lua_plugin_load(chunk, strlen(chunk), "github.lua", NULL, 0, NULL, NULL, &err);
     char message[512];
@@ -2351,6 +2353,7 @@ TEST a_publisher_needs_a_publish_function(void) {
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
 
+    ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
     ASSERT(strstr(message, "needs a publish function") != NULL);
     PASS();
@@ -2380,7 +2383,7 @@ TEST a_resolver_chunk_may_not_declare_a_publisher(void) {
 TEST a_publisher_chunk_declaring_a_task_is_told_why(void) {
     fr_registry *registry = fr_registry_create();
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *uses[] = { "exec" };
     const char *chunk =
         "daukle.publisher{ name = 'github', publish = function(context) end }\n"
@@ -2392,6 +2395,7 @@ TEST a_publisher_chunk_declaring_a_task_is_told_why(void) {
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
 
+    ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
     ASSERT(strstr(message, "a publisher declares publishers, not tasks") != NULL);
     PASS();
@@ -2400,14 +2404,14 @@ TEST a_publisher_chunk_declaring_a_task_is_told_why(void) {
 TEST a_publish_callback_reads_its_destination(void) {
     fr_registry *registry = fr_registry_create();
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.publisher{ name = 'github', publish = function(context)\n"
         "  error(context.publish.name .. '|' .. tostring(context.publish.config.tokenEnv)"
         " .. '|' .. tostring(context.publish.config.from), 0)\n"
         "end }\n";
-    ASSERT_EQ(FR_OK,
-              fr_lua_plugin_load(chunk, strlen(chunk), "github.lua", NULL, 0, NULL, NULL, &err));
+    int loaded =
+        fr_lua_plugin_load(chunk, strlen(chunk), "github.lua", NULL, 0, NULL, NULL, &err) == FR_OK;
     const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/publish:github");
 
     cJSON *root = cJSON_Parse(
@@ -2439,6 +2443,8 @@ TEST a_publish_callback_reads_its_destination(void) {
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
 
+    ASSERT(began);
+    ASSERT(loaded);
     ASSERT(found);
     ASSERT(parsed);
     ASSERT_EQ(FR_ERR, status);
