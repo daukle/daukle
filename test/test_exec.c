@@ -220,6 +220,30 @@ TEST a_program_that_does_not_exist_fails_naming_it(void) {
     PASS();
 }
 
+#ifdef _WIN32
+/* The other half of the D-13 fix, and the only half a developer's machine can
+   prove: a plugin API may borrow the caller's error mode for one CreateProcess
+   and must hand it back. The hang it was borrowed for reproduces on a session
+   with no desktop and nowhere else. */
+TEST the_callers_error_mode_survives_a_child(void) {
+    /* Not SEM_FAILCRITICALERRORS, which is what the fix sets, so a restore that
+       never happened cannot pass by coincidence. */
+    DWORD borrowed = 0;
+    ASSERT(SetThreadErrorMode(SEM_NOOPENFILEERRORBOX, &borrowed));
+
+    const char *argv[] = { "--exec-child", "0" };
+    fr_exec_result result; fr_error err;
+    int ran = run(argv, 2, 0, &result, &err);
+    DWORD after = GetThreadErrorMode();
+    SetThreadErrorMode(borrowed, NULL);
+
+    ASSERT_EQ(FR_OK, ran);
+    ASSERT_EQ_FMT((unsigned long) SEM_NOOPENFILEERRORBOX, (unsigned long) after, "%lu");
+    fr_exec_result_free(&result);
+    PASS();
+}
+#endif
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -238,5 +262,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_child_exiting_127_is_reported_as_one_that_could_not_start);
     RUN_TEST(a_child_that_dies_abnormally_reports_its_platforms_code);
     RUN_TEST(a_program_that_does_not_exist_fails_naming_it);
+#ifdef _WIN32
+    RUN_TEST(the_callers_error_mode_survives_a_child);
+#endif
     GREATEST_MAIN_END();
 }
