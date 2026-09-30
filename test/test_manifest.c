@@ -298,6 +298,21 @@ TEST a_publish_from_naming_no_toolchain_is_refused(void) {
     PASS();
 }
 
+TEST a_toolchain_named_publish_is_refused(void) {
+    cJSON *root = cJSON_Parse(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"publish\":\"1.0\"}}");
+    fr_manifest manifest; fr_error err;
+    int status = fr_manifest_from_document(root, "daukle.toml", &manifest, &err);
+    char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+    if (status == FR_OK) fr_manifest_free(&manifest);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "toolchains.publish may not be named \"publish\"") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -323,5 +338,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_publish_block_carries_its_from_and_its_block);
     RUN_TEST(a_publish_block_without_from_is_refused);
     RUN_TEST(a_publish_from_naming_no_toolchain_is_refused);
+    RUN_TEST(a_toolchain_named_publish_is_refused);
     GREATEST_MAIN_END();
 }

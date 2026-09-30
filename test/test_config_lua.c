@@ -2336,8 +2336,7 @@ TEST a_publisher_may_declare_exec(void) {
     fr_registry_destroy(registry);
 
     ASSERT(began);
-    ASSERT_EQ(FR_OK, status);
-    ASSERT_STR_EQ("", status == FR_OK ? "" : message);
+    ASSERT_EQm(message, FR_OK, status);
     PASS();
 }
 

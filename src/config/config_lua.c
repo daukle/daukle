@@ -1101,12 +1101,8 @@ static int lua_declare_publisher(lua_State *state) {
     chunk_declared_other = 1;
     luaL_checktype(state, 1, LUA_TTABLE);
 
-    /* Composed, not one literal: check_agnostic forbids the task prefix followed by a letter. */
-    char prefix[64];
-    snprintf(prefix, sizeof prefix, "daukle.task/%s:", "publish");
-
     fr_lua_plugin_slot *slot = NULL;
-    if (take_slot(state, prefix, "publish", &slot) != 0 || slot == NULL) {
+    if (take_slot(state, "daukle.task/publish:", "publish", &slot) != 0 || slot == NULL) {
         return luaL_error(state, "a publisher could not be declared");
     }
 

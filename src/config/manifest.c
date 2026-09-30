@@ -233,6 +233,13 @@ static int read_toolchain(const cJSON *entry, const char *name, fr_toolchain *ou
     char path[320];
     snprintf(path, sizeof path, "toolchains.%s", name);
 
+    if (strcmp(name, "publish") == 0) {
+        fr_error_set(err, "%s may not be named \"publish\": that prefix is reserved for publish"
+                          " destinations, so a \"publish:\" task would never reach this toolchain",
+                     path);
+        return FR_ERR;
+    }
+
     out->name = duplicate(name);
     if (out->name == NULL) {
         fr_error_set(err, "out of memory reading %s", path);
