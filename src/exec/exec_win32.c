@@ -4,6 +4,7 @@
 
 #include <windows.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -131,17 +132,98 @@ static int drain_both(HANDLE out_pipe, HANDLE err_pipe, fr_exec_result *out) {
     return ok;
 }
 
+static int entry_name_matches(const char *entry, const char *name) {
+    size_t length = strlen(name);
+    /* Windows environment variable names are case insensitive, so an override
+       of "path" must replace "Path" rather than sit beside it and lose. */
+    return _strnicmp(entry, name, length) == 0 && entry[length] == '=';
+}
+
+static int compare_block_entries(const void *left, const void *right) {
+    return _stricmp(*(const char *const *) left, *(const char *const *) right);
+}
+
+/* CreateProcess wants one block of NUL-separated "NAME=VALUE" strings ended by
+   a second NUL, sorted case insensitively. Built rather than applied with
+   SetEnvironmentVariable around the call, because daukle is a plugin API as
+   well as a command and a library may not mutate its host's environment, even
+   briefly. NULL out means "no additions": the caller then passes NULL to
+   CreateProcess and the child inherits ours wholesale. */
+static char *build_environment_block(const fr_exec_request *request) {
+    if (request->env_count == 0) return NULL;
+
+    char *inherited = GetEnvironmentStringsA();
+    if (inherited == NULL) return NULL;
+
+    size_t inherited_count = 0;
+    for (const char *scan = inherited; *scan != '\0'; scan += strlen(scan) + 1) inherited_count++;
+
+    const char **entries = malloc((inherited_count + request->env_count) * sizeof *entries);
+    char **joined = malloc(request->env_count * sizeof *joined);
+    if (entries == NULL || joined == NULL) {
+        free(entries); free(joined);
+        FreeEnvironmentStringsA(inherited);
+        return NULL;
+    }
+
+    size_t count = 0;
+    for (const char *scan = inherited; *scan != '\0'; scan += strlen(scan) + 1) {
+        int overridden = 0;
+        for (size_t entry = 0; entry < request->env_count && !overridden; entry++) {
+            overridden = entry_name_matches(scan, request->env[entry].name);
+        }
+        /* A block from GetEnvironmentStrings can open with "=C:=C:\..." drive
+           entries whose name is empty; they are kept as they arrived. */
+        if (!overridden) entries[count++] = scan;
+    }
+
+    size_t made = 0;
+    for (size_t entry = 0; entry < request->env_count; entry++) {
+        const char *name = request->env[entry].name;
+        const char *value = request->env[entry].value;
+        size_t length = strlen(name) + strlen(value) + 2;
+        char *text = malloc(length);
+        if (text == NULL) break;
+        snprintf(text, length, "%s=%s", name, value);
+        joined[made++] = text;
+        entries[count++] = text;
+    }
+
+    char *block = NULL;
+    if (made == request->env_count) {
+        qsort(entries, count, sizeof *entries, compare_block_entries);
+        size_t total = 1;
+        for (size_t index = 0; index < count; index++) total += strlen(entries[index]) + 1;
+        block = malloc(total);
+        if (block != NULL) {
+            size_t offset = 0;
+            for (size_t index = 0; index < count; index++) {
+                size_t length = strlen(entries[index]) + 1;
+                memcpy(block + offset, entries[index], length);
+                offset += length;
+            }
+            block[offset] = '\0';
+        }
+    }
+
+    for (size_t index = 0; index < made; index++) free(joined[index]);
+    free(joined);
+    free(entries);
+    FreeEnvironmentStringsA(inherited);
+    return block;
+}
+
 /* Windows raises a hard-error box when the program is not a valid image, and a
    session with no desktop has nobody to dismiss it, so CreateProcess never
    returns there while it returns error 193 on a developer's machine. The scope
    is the thread rather than the process because daukle is a plugin API as well
    as a command, and a library may not leave a host's error mode rewritten. */
 static BOOL start_process(const fr_exec_request *request, char *line, STARTUPINFOA *startup,
-                          PROCESS_INFORMATION *process, DWORD *start_error) {
+                          PROCESS_INFORMATION *process, DWORD *start_error, char *block) {
     DWORD previous = 0;
     BOOL scoped = SetThreadErrorMode(SEM_FAILCRITICALERRORS, &previous);
     BOOL started = CreateProcessA(request->program, line, NULL, NULL,
-                                  request->capture ? TRUE : FALSE, 0, NULL, request->cwd, startup,
+                                  request->capture ? TRUE : FALSE, 0, block, request->cwd, startup,
                                   process);
     *start_error = started ? 0 : GetLastError();
     if (scoped) SetThreadErrorMode(previous, NULL);
@@ -200,8 +282,17 @@ int fr_exec_run(const fr_exec_request *request, fr_exec_result *out, fr_error *e
     PROCESS_INFORMATION process;
     memset(&process, 0, sizeof process);
     DWORD start_error = 0;
-    BOOL started = start_process(request, line, &startup, &process, &start_error);
+    char *block = build_environment_block(request);
+    if (request->env_count > 0 && block == NULL) {
+        free(line);
+        if (out_read != NULL) { CloseHandle(out_read); CloseHandle(out_write); }
+        if (err_read != NULL) { CloseHandle(err_read); CloseHandle(err_write); }
+        fr_error_set(err, "out of memory building the environment for \"%s\"", request->program);
+        return FR_ERR;
+    }
+    BOOL started = start_process(request, line, &startup, &process, &start_error, block);
     free(line);
+    free(block);
     if (!started) {
         if (out_read != NULL) { CloseHandle(out_read); CloseHandle(out_write); }
         if (err_read != NULL) { CloseHandle(err_read); CloseHandle(err_write); }

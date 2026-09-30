@@ -35,6 +35,21 @@ static int run_as_child(int argc, char **argv) {
     return code;
 }
 
+/* Prints one environment variable per remaining argument, as "NAME=VALUE" or
+   "NAME=<unset>", so a test can assert an addition arrived, an override won,
+   and an untouched variable survived, all from one child. */
+static int run_as_env_child(int argc, char **argv) {
+#ifdef _WIN32
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+    for (int index = 2; index < argc; index++) {
+        const char *value = getenv(argv[index]);
+        printf("%s=%s\n", argv[index], value == NULL ? "<unset>" : value);
+    }
+    fflush(stdout);
+    return 0;
+}
+
 #define BIG_STDERR_LENGTH 70000
 
 /* Bigger than a typical pipe buffer (4 KiB on Windows, 64 KiB on Linux), so
@@ -91,6 +106,7 @@ static const char *self_path;
 static int run(const char *const *argv, size_t count, int capture, fr_exec_result *out,
                fr_error *err) {
     fr_exec_request request;
+    memset(&request, 0, sizeof request);
     request.program = self_path;
     request.argv = argv;
     request.argv_count = count;
@@ -206,8 +222,62 @@ TEST a_child_that_dies_abnormally_reports_its_platforms_code(void) {
     PASS();
 }
 
+/* Three properties in one child, because they are one mechanism: an addition
+   arrives, an addition whose name daukle already has replaces it rather than
+   sitting beside it, and a variable nobody mentioned still reaches the child.
+   The third is what makes this additions-and-overrides rather than a
+   replacement, and it is the half a build breaks on when it is wrong, since a
+   tool with no PATH fails in a way that names neither daukle nor the plugin. */
+TEST env_adds_overrides_and_leaves_the_rest_inherited(void) {
+    static char message[1024];
+#ifdef _WIN32
+    _putenv_s("DAUKLE_TEST_INHERITED", "from-parent");
+    _putenv_s("DAUKLE_TEST_OVERRIDDEN", "parent-value");
+#else
+    setenv("DAUKLE_TEST_INHERITED", "from-parent", 1);
+    setenv("DAUKLE_TEST_OVERRIDDEN", "parent-value", 1);
+#endif
+    const char *argv[] = { "--exec-env", "DAUKLE_TEST_ADDED", "DAUKLE_TEST_OVERRIDDEN",
+                           "DAUKLE_TEST_INHERITED" };
+    fr_exec_env_entry env[] = {
+        { "DAUKLE_TEST_ADDED", "added-value" },
+        { "DAUKLE_TEST_OVERRIDDEN", "child-value" },
+    };
+    fr_exec_request request;
+    memset(&request, 0, sizeof request);
+    request.program = self_path;
+    request.argv = argv;
+    request.argv_count = sizeof argv / sizeof argv[0];
+    request.capture = 1;
+    request.env = env;
+    request.env_count = sizeof env / sizeof env[0];
+
+    fr_exec_result result; fr_error err;
+    int status = fr_exec_run(&request, &result, &err);
+    snprintf(message, sizeof message, "status=%d code=%d stdout=[%s]", status,
+             status == FR_OK ? result.code : -1,
+             status == FR_OK && result.stdout_text != NULL ? result.stdout_text : "");
+    int added = status == FR_OK && result.stdout_text != NULL
+                && strstr(result.stdout_text, "DAUKLE_TEST_ADDED=added-value") != NULL;
+    int overridden = status == FR_OK && result.stdout_text != NULL
+                     && strstr(result.stdout_text, "DAUKLE_TEST_OVERRIDDEN=child-value") != NULL;
+    int stale = status == FR_OK && result.stdout_text != NULL
+                && strstr(result.stdout_text, "DAUKLE_TEST_OVERRIDDEN=parent-value") != NULL;
+    int inherited = status == FR_OK && result.stdout_text != NULL
+                    && strstr(result.stdout_text, "DAUKLE_TEST_INHERITED=from-parent") != NULL;
+    if (status == FR_OK) fr_exec_result_free(&result);
+
+    ASSERT_EQm(message, FR_OK, status);
+    ASSERTm(message, added);
+    ASSERTm(message, overridden);
+    ASSERTm(message, !stale);
+    ASSERTm(message, inherited);
+    PASS();
+}
+
 TEST a_program_that_does_not_exist_fails_naming_it(void) {
     fr_exec_request request;
+    memset(&request, 0, sizeof request);
     request.program = "daukle-no-such-program";
     request.argv = NULL;
     request.argv_count = 0;
@@ -249,6 +319,7 @@ GREATEST_MAIN_DEFS();
 int main(int argc, char **argv) {
     self_path = argv[0];
     if (argc >= 3 && strcmp(argv[1], "--exec-child") == 0) return run_as_child(argc, argv);
+    if (argc >= 3 && strcmp(argv[1], "--exec-env") == 0) return run_as_env_child(argc, argv);
     if (argc >= 2 && strcmp(argv[1], "--exec-big-stderr") == 0) return run_as_big_stderr_child();
     if (argc >= 2 && strcmp(argv[1], "--exec-huge-stdout") == 0) return run_as_huge_stdout_child();
     if (argc >= 2 && strcmp(argv[1], "--exec-abnormal") == 0) return run_as_abnormal_child();
@@ -261,6 +332,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_captured_stream_past_the_limit_is_truncated_and_says_so);
     RUN_TEST(a_child_exiting_127_is_reported_as_one_that_could_not_start);
     RUN_TEST(a_child_that_dies_abnormally_reports_its_platforms_code);
+    RUN_TEST(env_adds_overrides_and_leaves_the_rest_inherited);
     RUN_TEST(a_program_that_does_not_exist_fails_naming_it);
 #ifdef _WIN32
     RUN_TEST(the_callers_error_mode_survives_a_child);

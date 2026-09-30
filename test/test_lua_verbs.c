@@ -186,6 +186,69 @@ TEST exec_returns_the_code_when_check_is_false(void) {
     PASS();
 }
 
+/* The plugin-facing half of D-17: a plugin can now hand a child a credential
+   it did not have to ask the user to export. */
+TEST exec_passes_an_env_addition_to_the_child(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    int status = fr_lua_run_in_env(state,
+        "local t = daukle.tool('test_lua_verbs')\n"
+        "out = daukle.exec(t, { '--exec-env', 'DAUKLE_PLUGIN_TOKEN' },"
+        " { capture = true, env = { DAUKLE_PLUGIN_TOKEN = 'from-the-plugin' } }).stdout",
+        "=t", env, &err);
+    char seen[256] = "";
+    if (status == FR_OK) {
+        lua_getfield(state, env, "out");
+        snprintf(seen, sizeof seen, "%s", lua_tostring(state, -1) ? lua_tostring(state, -1) : "");
+    }
+    char message[512];
+    snprintf(message, sizeof message, "status=%d out=[%s] err=%s", status, seen,
+             status == FR_OK ? "" : err.message);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQm(message, FR_OK, status);
+    ASSERTm(message, strstr(seen, "DAUKLE_PLUGIN_TOKEN=from-the-plugin") != NULL);
+    PASS();
+}
+
+/* The other half, and the one that makes the first safe to rely on: a
+   misspelled option must not be discarded in silence. */
+TEST exec_refuses_an_option_key_it_does_not_know(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    int status = fr_lua_run_in_env(state,
+        "local t = daukle.tool('test_lua_verbs')\n"
+        "daukle.exec(t, { '--exec-child', '0' }, { environment = { A = 'b' } })",
+        "=t", env, &err);
+    char message[512];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "(accepted)" : err.message);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQm(message, FR_ERR, status);
+    ASSERTm(message, strstr(message, "\"environment\" is not a daukle.exec option") != NULL);
+    PASS();
+}
+
 TEST exec_refuses_anything_that_is_not_a_tool_handle(void) {
     fr_error err;
     fr_registry *registry = fr_registry_create();
@@ -1867,6 +1930,17 @@ int main(int argc, char **argv) {
         fflush(stdout);
         return code;
     }
+    if (argc >= 3 && strcmp(argv[1], "--exec-env") == 0) {
+#ifdef _WIN32
+        _setmode(_fileno(stdout), _O_BINARY);
+#endif
+        for (int index = 2; index < argc; index++) {
+            const char *value = getenv(argv[index]);
+            printf("%s=%s\n", argv[index], value == NULL ? "<unset>" : value);
+        }
+        fflush(stdout);
+        return 0;
+    }
     fr_test_prepend_to_path_dir_of(argv[0]);
 
     GREATEST_MAIN_BEGIN();
@@ -1879,6 +1953,8 @@ int main(int argc, char **argv) {
     RUN_TEST(tool_resolves_and_exec_runs_what_it_resolved);
     RUN_TEST(exec_raises_on_a_nonzero_exit_by_default);
     RUN_TEST(exec_returns_the_code_when_check_is_false);
+    RUN_TEST(exec_passes_an_env_addition_to_the_child);
+    RUN_TEST(exec_refuses_an_option_key_it_does_not_know);
     RUN_TEST(exec_refuses_anything_that_is_not_a_tool_handle);
     RUN_TEST(tool_names_what_it_could_not_find);
     RUN_TEST(tool_refuses_a_name_that_climbs_out);

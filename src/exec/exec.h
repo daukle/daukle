@@ -8,11 +8,26 @@
 #define FR_EXEC_CAPTURE_LIMIT (1024u * 1024u)
 
 typedef struct {
+    const char *name;  /* never empty and never holding '=' */
+    const char *value;
+} fr_exec_env_entry;
+
+/* Zero the whole struct before filling it. `env` is a pointer, so a caller
+   that assigns the fields it cares about and leaves this one uninitialised
+   passes a garbage address rather than "no additions". */
+typedef struct {
     const char *program;
     const char *const *argv;
     size_t argv_count;
     const char *cwd;
     int capture;
+    /* Additions and overrides applied over the environment daukle itself has,
+       never a replacement for it: a tool needs PATH, HOME, TMPDIR, proxy
+       variables and locale, and a caller made to enumerate those gets it wrong
+       in a way the user cannot debug from the error. An entry whose name
+       matches one daukle already has replaces it. */
+    const fr_exec_env_entry *env;
+    size_t env_count;
 } fr_exec_request;
 
 typedef struct {

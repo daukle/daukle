@@ -596,6 +596,40 @@ static int option_flag(lua_State *state, int index, const char *key, int fallbac
     return value;
 }
 
+#define FR_VERB_MAX_ENV 64
+
+static const char *EXEC_OPTIONS[] = { "cwd", "capture", "check", "env" };
+
+/* A key daukle does not know is a key daukle must refuse. An ignored "env"
+   was the whole of D-17: a plugin written from child spec 1 set a credential,
+   daukle discarded it without a word, and the tool then failed for a reason
+   that named neither. Returns nonzero with the error already pushed. */
+static int refuse_unknown_exec_option(lua_State *state, int index) {
+    if (lua_type(state, index) != LUA_TTABLE) return 0;
+    lua_pushnil(state);
+    while (lua_next(state, index) != 0) {
+        if (lua_type(state, -2) != LUA_TSTRING) {
+            lua_pop(state, 2);
+            lua_pushstring(state, "daukle.exec option keys must be strings");
+            return 1;
+        }
+        const char *key = lua_tostring(state, -2);
+        int known = 0;
+        for (size_t option = 0; option < sizeof EXEC_OPTIONS / sizeof EXEC_OPTIONS[0]; option++) {
+            if (strcmp(EXEC_OPTIONS[option], key) == 0) { known = 1; break; }
+        }
+        if (!known) {
+            lua_pushfstring(state, "\"%s\" is not a daukle.exec option; only cwd, capture, check"
+                                   " and env are", key);
+            lua_remove(state, -2);
+            lua_remove(state, -2);
+            return 1;
+        }
+        lua_pop(state, 1);
+    }
+    return 0;
+}
+
 /* Space-joining alone would print {"a b"} and {"a","b"} identically, and the
    line would read like the shell command daukle deliberately never builds. */
 static int argument_needs_showing_as_one(const char *argument) {
@@ -627,6 +661,8 @@ static int verb_exec(lua_State *state) {
     }
     fr_lua_tool *handle = lua_touserdata(state, 1);
     luaL_checktype(state, 2, LUA_TTABLE);
+
+    if (refuse_unknown_exec_option(state, 3) != 0) return lua_error(state);
 
     int capture = option_flag(state, 3, "capture", 0);
     int check = option_flag(state, 3, "check", 1);
@@ -672,12 +708,53 @@ static int verb_exec(lua_State *state) {
 
     if (g_verbose) report_verbose_exec(handle, argv, count, cwd);
 
+    /* The names and values stay on the lua stack below anchor_base until
+       fr_exec_run returns, exactly as argv[] does. */
+    fr_exec_env_entry env_entries[FR_VERB_MAX_ENV];
+    size_t env_count = 0;
+    if (lua_type(state, 3) == LUA_TTABLE) {
+        lua_getfield(state, 3, "env");
+        if (!lua_isnil(state, -1)) {
+            if (lua_type(state, -1) != LUA_TTABLE) {
+                free(cwd);
+                return luaL_error(state, "daukle.exec option \"env\" must be a table");
+            }
+            int table = lua_gettop(state);
+            lua_pushnil(state);
+            while (lua_next(state, table) != 0) {
+                if (env_count == FR_VERB_MAX_ENV) {
+                    free(cwd);
+                    return luaL_error(state, "daukle.exec takes at most %d environment entries",
+                                      FR_VERB_MAX_ENV);
+                }
+                if (lua_type(state, -2) != LUA_TSTRING || lua_type(state, -1) != LUA_TSTRING) {
+                    free(cwd);
+                    return luaL_error(state, "every daukle.exec env name and value must be"
+                                             " a string");
+                }
+                const char *name = lua_tostring(state, -2);
+                if (name[0] == '\0' || strchr(name, '=') != NULL) {
+                    free(cwd);
+                    return luaL_error(state, "a daukle.exec env name may not be empty or hold"
+                                             " \"=\", found \"%s\"", name);
+                }
+                env_entries[env_count].name = name;
+                env_entries[env_count].value = lua_tostring(state, -1);
+                env_count++;
+                lua_pop(state, 1);
+            }
+        }
+    }
+
     fr_exec_request request;
+    memset(&request, 0, sizeof request);
     request.program = handle->path;
     request.argv = argv;
     request.argv_count = (size_t) count;
     request.cwd = cwd;
     request.capture = capture;
+    request.env = env_count > 0 ? env_entries : NULL;
+    request.env_count = env_count;
 
     fr_exec_result result;
     int status = fr_exec_run(&request, &result, &err);

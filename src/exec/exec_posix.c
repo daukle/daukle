@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <poll.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
@@ -18,6 +19,72 @@ static char **build_argv(const fr_exec_request *request) {
     }
     argv[request->argv_count + 1] = NULL;
     return argv;
+}
+
+extern char **environ;
+
+static int name_matches(const char *entry, const char *name, size_t name_length) {
+    return strncmp(entry, name, name_length) == 0 && entry[name_length] == '=';
+}
+
+/* Built in the PARENT and handed to execve, rather than calling setenv between
+   fork and exec: only async-signal-safe functions may run there, and setenv
+   allocates. Returns NULL with *failed clear when there is nothing to add, in
+   which case the caller passes environ through unchanged. */
+static char **build_envp(const fr_exec_request *request, char ***owned, int *failed) {
+    *owned = NULL;
+    *failed = 0;
+    if (request->env_count == 0) return environ;
+
+    size_t inherited = 0;
+    while (environ[inherited] != NULL) inherited++;
+
+    char **envp = malloc((inherited + request->env_count + 1) * sizeof *envp);
+    if (envp == NULL) { *failed = 1; return NULL; }
+
+    size_t count = 0;
+    for (size_t index = 0; index < inherited; index++) {
+        int overridden = 0;
+        for (size_t entry = 0; entry < request->env_count && !overridden; entry++) {
+            overridden = name_matches(environ[index], request->env[entry].name,
+                                      strlen(request->env[entry].name));
+        }
+        if (!overridden) envp[count++] = environ[index];
+    }
+
+    /* The joined strings are the last `appended` entries, which is what
+       free_envp relies on: the kept count is smaller than `inherited`
+       whenever an entry overrode one, so the boundary cannot be derived
+       from `inherited`. */
+    size_t appended = 0;
+    for (size_t entry = 0; entry < request->env_count; entry++) {
+        const char *name = request->env[entry].name;
+        const char *value = request->env[entry].value;
+        size_t length = strlen(name) + strlen(value) + 2;
+        char *joined = malloc(length);
+        if (joined == NULL) {
+            for (size_t done = 0; done < appended; done++) free(envp[count - 1 - done]);
+            free(envp);
+            *failed = 1;
+            return NULL;
+        }
+        snprintf(joined, length, "%s=%s", name, value);
+        envp[count++] = joined;
+        appended++;
+    }
+    envp[count] = NULL;
+    *owned = envp;
+    return envp;
+}
+
+/* Frees only the joined strings this file allocated, never the entries
+   borrowed from environ, which the process still owns. */
+static void free_envp(char **owned, size_t appended) {
+    if (owned == NULL) return;
+    size_t total = 0;
+    while (owned[total] != NULL) total++;
+    for (size_t index = total - appended; index < total; index++) free(owned[index]);
+    free(owned);
 }
 
 static void close_pipe(int pipe_fds[2]) {
@@ -190,9 +257,20 @@ int fr_exec_run(const fr_exec_request *request, fr_exec_result *out, fr_error *e
         return FR_ERR;
     }
 
+    char **owned_envp = NULL;
+    int envp_failed = 0;
+    char **envp = build_envp(request, &owned_envp, &envp_failed);
+    if (envp_failed) {
+        free(argv);
+        if (request->capture) { close_pipe(out_pipe); close_pipe(err_pipe); }
+        fr_error_set(err, "out of memory building the environment for \"%s\"", request->program);
+        return FR_ERR;
+    }
+
     pid_t child = fork();
     if (child < 0) {
         free(argv);
+        free_envp(owned_envp, request->env_count);
         if (request->capture) { close_pipe(out_pipe); close_pipe(err_pipe); }
         fr_error_set(err, "\"%s\" could not be started: %s", request->program, strerror(errno));
         return FR_ERR;
@@ -205,11 +283,12 @@ int fr_exec_run(const fr_exec_request *request, fr_exec_result *out, fr_error *e
             close(out_pipe[0]); close(out_pipe[1]);
             close(err_pipe[0]); close(err_pipe[1]);
         }
-        execv(request->program, argv);
+        execve(request->program, argv, envp);
         _exit(127);
     }
 
     free(argv);
+    free_envp(owned_envp, request->env_count);
 
     int captured_ok = 1;
     if (request->capture) {
