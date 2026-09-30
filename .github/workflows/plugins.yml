@@ -20,5 +20,6 @@ jobs:
       # change here still satisfies the plugins written against it. Nothing in daukle's own suite
       # covers that: the coverage moved out to these repositories and the report never came back.
       repositories: '["daukle/daukle"]'
+      workflow: does-not-exist.yml
     secrets:
       envPAT: ${{ secrets.GITHUB_TOKEN }}
