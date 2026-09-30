@@ -293,6 +293,57 @@ static int read_toolchain(const cJSON *entry, const char *name, fr_toolchain *ou
     return FR_OK;
 }
 
+static int read_publish(const cJSON *entry, const char *name, fr_publish_target *out,
+                        fr_error *err) {
+    memset(out, 0, sizeof *out);
+    char path[320];
+    snprintf(path, sizeof path, "publish.%s", name);
+
+    out->name = duplicate(name);
+    if (out->name == NULL) {
+        fr_error_set(err, "out of memory reading %s", path);
+        return FR_ERR;
+    }
+    if (!cJSON_IsObject(entry)) {
+        fr_error_set(err, "%s must be a table", path);
+        return FR_ERR;
+    }
+    out->block = entry;
+
+    const cJSON *from = cJSON_GetObjectItemCaseSensitive(entry, "from");
+    if (from == NULL || !cJSON_IsString(from)) {
+        fr_error_set(err, "%s needs a \"from\" string naming the toolchain whose output it"
+                          " publishes", path);
+        return FR_ERR;
+    }
+    out->from = duplicate(from->valuestring);
+    if (out->from == NULL) {
+        fr_error_set(err, "out of memory reading %s.from", path);
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
+static int check_publish_targets(const fr_manifest *out, const char *file_path, fr_error *err) {
+    for (size_t index = 0; index < out->publish_count; index++) {
+        const fr_publish_target *target = &out->publishes[index];
+        int declared = 0;
+        for (size_t other = 0; other < out->toolchain_count; other++) {
+            if (strcmp(out->toolchains[other].name, target->from) == 0) {
+                declared = 1;
+                break;
+            }
+        }
+        if (!declared) {
+            fr_error_set(err, "%s.publish.%s.from names \"%s\", but this manifest declares no"
+                              " toolchain \"%s\"", file_path, target->name, target->from,
+                              target->from);
+            return FR_ERR;
+        }
+    }
+    return FR_OK;
+}
+
 static int read_task(const cJSON *entry, const char *name, fr_task *out, fr_error *err) {
     memset(out, 0, sizeof *out);
     char path[320];
@@ -436,6 +487,32 @@ static int manifest_from_json(const cJSON *root, const char *file_path, fr_manif
         }
     }
 
+    const cJSON *publish_obj = cJSON_GetObjectItemCaseSensitive(root, "publish");
+    if (publish_obj != NULL) {
+        if (!cJSON_IsObject(publish_obj)) {
+            fr_error_set(err, "%s.publish must be a table", file_path);
+            return FR_ERR;
+        }
+        int size = cJSON_GetArraySize(publish_obj);
+        if (size > 0) {
+            out->publishes = calloc((size_t) size, sizeof *out->publishes);
+            if (out->publishes == NULL) {
+                fr_error_set(err, "out of memory reading %s.publish", file_path);
+                return FR_ERR;
+            }
+        }
+        size_t index = 0;
+        const cJSON *entry = NULL;
+        cJSON_ArrayForEach(entry, publish_obj) {
+            out->publish_count = index + 1;
+            if (read_publish(entry, entry->string, &out->publishes[index], err) != FR_OK) {
+                return FR_ERR;
+            }
+            index++;
+        }
+        if (check_publish_targets(out, file_path, err) != FR_OK) return FR_ERR;
+    }
+
     const cJSON *tasks_obj = cJSON_GetObjectItemCaseSensitive(root, "tasks");
     if (tasks_obj != NULL) {
         if (!cJSON_IsObject(tasks_obj)) {
@@ -553,6 +630,11 @@ void fr_manifest_free(fr_manifest *manifest) {
         free(toolchain->dependencies);
     }
     free(manifest->toolchains);
+    for (size_t index = 0; index < manifest->publish_count; index++) {
+        free(manifest->publishes[index].name);
+        free(manifest->publishes[index].from);
+    }
+    free(manifest->publishes);
     for (size_t index = 0; index < manifest->task_count; index++) {
         fr_task *task = &manifest->tasks[index];
         free(task->name);
@@ -567,6 +649,8 @@ void fr_manifest_free(fr_manifest *manifest) {
     manifest->consumer_count = 0;
     manifest->toolchains = NULL;
     manifest->toolchain_count = 0;
+    manifest->publishes = NULL;
+    manifest->publish_count = 0;
     manifest->tasks = NULL;
     manifest->task_count = 0;
     cJSON_Delete(manifest->document);
