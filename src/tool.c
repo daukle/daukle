@@ -49,6 +49,18 @@ int fr_tool_is_executable_file(const char *path) {
 #endif
 }
 
+int fr_tool_is_regular_file(const char *path) {
+#ifdef _WIN32
+    FILE *probe = fopen(path, "rb");
+    if (probe == NULL) return 0;
+    fclose(probe);
+    return 1;
+#else
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+#endif
+}
+
 static char *join_candidate(const char *dir, size_t dir_length, const char *name,
                             const char *extension) {
     size_t size = dir_length + 1 + strlen(name) + strlen(extension) + 1;
