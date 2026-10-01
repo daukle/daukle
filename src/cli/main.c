@@ -40,13 +40,6 @@ static void report_error(const fr_error *err, int verbose) {
     }
 }
 
-static char *duplicate_string(const char *text) {
-    size_t length = strlen(text) + 1;
-    char *copy = malloc(length);
-    if (copy != NULL) memcpy(copy, text, length);
-    return copy;
-}
-
 /* sync.c keeps its own copy of this same small split rather than exposing one. */
 static char *manifest_directory(const char *manifest_path) {
     const char *last_slash = strrchr(manifest_path, '/');
@@ -68,7 +61,7 @@ static char *manifest_directory(const char *manifest_path) {
    rule that every registry a path builds is destroyed and shut down there. */
 static int resolve_manifest_path(const char *manifest_path, char **out_path, fr_error *err) {
     if (manifest_path != NULL) {
-        *out_path = duplicate_string(manifest_path);
+        *out_path = fr_dup_string(manifest_path);
         if (*out_path == NULL) {
             fr_error_set(err, "out of memory copying the manifest path");
             return FR_ERR;
@@ -294,7 +287,7 @@ static int split_modules(const char *modules_arg, char ***out_modules, size_t *o
     *out_count = 0;
     if (modules_arg == NULL) return FR_OK;
 
-    char *copy = duplicate_string(modules_arg);
+    char *copy = fr_dup_string(modules_arg);
     if (copy == NULL) {
         fr_error_set(err, "out of memory splitting the module list");
         return FR_ERR;
@@ -466,9 +459,8 @@ static int read_manifest_plugins(const char *manifest_path, const char *base_dir
    against. It is opened BEFORE the manifest is read because of that second
    reason: a lua format's own reopen must be handed this same registry, and
    the runtime refuses any other. */
-static int plugin_update(const char *label, int use_cache, int verbose) {
+static int plugin_update(const char *label, int verbose) {
     fr_error err;
-    fr_cache_set_enabled(use_cache);
 
     char *resolved = NULL;
     if (resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
@@ -789,7 +781,7 @@ int main(int argc, char **argv) {
         case FR_CLI_ADD:
             return add_dependency(&options);
         case FR_CLI_PLUGIN_UPDATE:
-            return plugin_update(options.plugin_label, options.use_cache, options.verbose);
+            return plugin_update(options.plugin_label, options.verbose);
         case FR_CLI_CLEAN:
             return clean_derived(options.manifest_path, options.verbose);
         case FR_CLI_TASK:
@@ -804,6 +796,13 @@ int main(int argc, char **argv) {
 
     if (options.plugin_unknown_subcommand != NULL) {
         fprintf(stderr, "daukle: unknown plugin subcommand \"%s\"\n", options.plugin_unknown_subcommand);
+        return 2;
+    }
+
+    if (options.plugin_update_rejected_option != NULL) {
+        fprintf(stderr, "daukle: \"plugin update\" cannot take %s: the command is itself a cache"
+                        " refresh, so the flag would suppress the one write it exists to make\n",
+                options.plugin_update_rejected_option);
         return 2;
     }
 

@@ -34,6 +34,11 @@ typedef struct {
     /* Set only when "plugin" was followed by a word other than "update", so the
        caller can name the mistake rather than print a bare usage line. */
     const char *plugin_unknown_subcommand;
+    /* The option "plugin update" was given but can never honour, or NULL.
+       That command forces the cache on for its whole duration because it IS
+       the refresh, so honouring --no-cache would suppress the one write the
+       command exists to make. */
+    const char *plugin_update_rejected_option;
     /* The word a run names when it matches no built-in command. A task takes
        no positional manifest path, because two bare words cannot be told
        apart from a task and a path. */
