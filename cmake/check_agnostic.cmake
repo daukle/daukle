@@ -70,13 +70,26 @@ endif()
 file(GLOB STAGED_PLUGINS "${SOURCE_DIR}/plugins/*.lua")
 file(GLOB_RECURSE FIXTURE_LUA "${SOURCE_DIR}/test/fixtures/*.lua")
 
+# Either glob going empty reads exactly like a clean run: deleting plugins/
+# compares nothing and passes, measured. The count is asserted rather than
+# trusted, same as the source glob above, and a staged plugin held identical to
+# no copy at all is reported rather than skipped.
+list(LENGTH STAGED_PLUGINS STAGED_PLUGINS_COUNT)
+if(STAGED_PLUGINS_COUNT LESS 5)
+    message(FATAL_ERROR "staged-plugin-copies: found ${STAGED_PLUGINS_COUNT} plugins under "
+                        "plugins/, which is too few to be the staged set; the glob has gone stale")
+endif()
+
 set(DIVERGED "")
+set(UNCOMPARED "")
 foreach(staged ${STAGED_PLUGINS})
     get_filename_component(staged_name "${staged}" NAME)
     file(READ "${staged}" staged_text)
+    set(copies_compared 0)
     foreach(copy ${FIXTURE_LUA})
         get_filename_component(copy_name "${copy}" NAME)
         if(copy_name STREQUAL staged_name)
+            math(EXPR copies_compared "${copies_compared} + 1")
             file(READ "${copy}" copy_text)
             if(NOT copy_text STREQUAL staged_text)
                 file(RELATIVE_PATH shown "${SOURCE_DIR}" "${copy}")
@@ -84,7 +97,17 @@ foreach(staged ${STAGED_PLUGINS})
             endif()
         endif()
     endforeach()
+    if(copies_compared EQUAL 0)
+        list(APPEND UNCOMPARED "plugins/${staged_name} is held identical to no fixture copy")
+    endif()
 endforeach()
+
+if(UNCOMPARED)
+    foreach(finding ${UNCOMPARED})
+        message(STATUS "staged-plugin-copies: ${finding}")
+    endforeach()
+    message(FATAL_ERROR "a staged plugin is compared against nothing")
+endif()
 
 if(DIVERGED)
     foreach(finding ${DIVERGED})
