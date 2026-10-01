@@ -3,12 +3,10 @@
 
 #include "util/types.h"
 
-int fr_project_read(const char *file_path, fr_project *out, fr_error *err);
 int fr_project_parse(const char *text, const char *origin, fr_project *out, fr_error *err);
 /* Takes ownership of root on both paths: the manifest holds it on success and
    it is deleted here on failure, so no caller ever frees root itself. */
 int fr_manifest_from_document(struct cJSON *root, const char *origin, fr_manifest *out, fr_error *err);
-int fr_manifest_read(const char *file_path, fr_manifest *out, fr_error *err);
 void fr_project_free(fr_project *project);
 void fr_manifest_free(fr_manifest *manifest);
 const fr_module *fr_project_module(const fr_project *project, const char *name);

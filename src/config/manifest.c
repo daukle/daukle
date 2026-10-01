@@ -573,17 +573,6 @@ int fr_project_parse(const char *text, const char *origin, fr_project *out, fr_e
     return FR_OK;
 }
 
-/* Initialised up front, not only by fr_project_parse further down, so that
-   *out is safe to inspect and to free however early this fails. */
-int fr_project_read(const char *file_path, fr_project *out, fr_error *err) {
-    memset(out, 0, sizeof *out);
-    char *text = NULL;
-    if (fr_file_read_text(file_path, &text, err) != FR_OK) return FR_ERR;
-    int result = fr_project_parse(text, file_path, out, err);
-    free(text);
-    return result;
-}
-
 int fr_manifest_from_document(cJSON *root, const char *origin, fr_manifest *out, fr_error *err) {
     memset(out, 0, sizeof *out);
     if (manifest_from_json(root, origin, out, err) != FR_OK) {
@@ -593,13 +582,6 @@ int fr_manifest_from_document(cJSON *root, const char *origin, fr_manifest *out,
     }
     out->document = root;
     return FR_OK;
-}
-
-int fr_manifest_read(const char *file_path, fr_manifest *out, fr_error *err) {
-    memset(out, 0, sizeof *out);
-    cJSON *root = NULL;
-    if (fr_json_read_file(file_path, &root, err) != FR_OK) return FR_ERR;
-    return fr_manifest_from_document(root, file_path, out, err);
 }
 
 void fr_project_free(fr_project *project) {
