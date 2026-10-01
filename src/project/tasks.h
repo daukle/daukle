@@ -99,4 +99,20 @@ int fr_tasks_publish_goal(const char *destination, char *out, size_t out_size);
 int fr_tasks_check_publish(const fr_task_set *set, const fr_manifest *manifest,
                            const char *only, fr_error *err);
 
+/* Called once per destination that has finished publishing, so a command can
+   confirm it on stdout. Core announces the step itself on stderr before it runs;
+   this is the other half, and core may not print it. */
+typedef void (*fr_publish_done_fn)(const char *goal, void *state);
+
+/* Runs every selected destination in the order the manifest declares them,
+   stopping at the first that fails. only names one destination, or is NULL for
+   every declared one, matching fr_tasks_check_publish, which is meant to have
+   run first: this plans each destination again as it reaches it, and a plan that
+   first fails here has already let an earlier destination publish.
+   @implNote it lives beside the check rather than in the command for exactly
+   that reason. The two halves of one guarantee drifted apart once already, and
+   the command is the one layer this project cannot test. */
+int fr_tasks_run_publish(const fr_task_set *set, const fr_session *session, const char *only,
+                         fr_publish_done_fn done, void *done_state, fr_error *err);
+
 #endif
