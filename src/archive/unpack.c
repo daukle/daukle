@@ -478,32 +478,34 @@ static int write_file_member(const fr_archive_member *member, const native_root 
    needs developer mode, and a toolchain that silently half-unpacks is worse
    than one that says which links it left out. The target is validated on both
    platforms anyway, so the refusal does not depend on the creation. */
+/* daukle creates no symlink on any platform, and the member is recorded as
+   skipped instead. Measured 2026-10-01 against the archives this project
+   actually provisions: CMake 4.4.3 carries none at all, and all 205 in Temurin
+   21.0.5+11 are under legal/ pointing at a licence file, so nothing executable
+   is reached through one. Creating them cost robustness for nothing: symlink()
+   failing was fatal, so a filesystem without symlink support could not provision
+   a JDK at all, while Windows provisioned the same archive by skipping the same
+   members. See D-38.
+
+   The refusal above still runs. An archive whose link escapes the destination is
+   hostile whether or not daukle would have created the link, so it is reported
+   rather than quietly skipped. */
 static int write_symlink_member(const fr_archive_member *member, const native_root *root,
                                 fr_unpack_report *report, fr_error *err) {
     if (refuse_unsafe_link_target(member, err) != FR_OK) return FR_ERR;
 
-#ifdef _WIN32
     (void) root;
     if (report->symlinks_skipped == 0) {
-        snprintf(report->first_symlink_skipped, sizeof report->first_symlink_skipped, "%s",
-                 member->name);
+        /* The precision is explicit because this field is a diagnostic and a
+           truncated name here is a shorter sentence rather than a defect, which
+           is the opposite of the rule everywhere else in src/. gcc could not see
+           this line until 2026-10-01: it was inside an ifdef _WIN32 and only MSVC
+           ever compiled it. */
+        snprintf(report->first_symlink_skipped, sizeof report->first_symlink_skipped, "%.*s",
+                 (int) (sizeof report->first_symlink_skipped - 1), member->name);
     }
     report->symlinks_skipped++;
     return FR_OK;
-#else
-    char native[UNPACK_MAX_NATIVE];
-    if (join_under_root(root, member->name, native, sizeof native, err) != FR_OK) return FR_ERR;
-    if (make_parent_directories(native, root->length, member->name, report, err) != FR_OK) {
-        return FR_ERR;
-    }
-    if (symlink(member->link_target, native) != 0) {
-        fr_error_set(err, "cannot create the symlink member \"%s\"", member->name);
-        return FR_ERR;
-    }
-
-    report->symlinks_created++;
-    return FR_OK;
-#endif
 }
 
 static int write_member(const fr_archive_member *member, const native_root *root,

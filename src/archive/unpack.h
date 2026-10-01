@@ -18,7 +18,9 @@ extern const fr_unpack_limits FR_UNPACK_DEFAULTS;
 typedef struct {
     size_t files_written;
     size_t directories_created;
-    size_t symlinks_created;
+    /* daukle creates no symlink, so every link member in an archive is counted
+       here on every platform. There is deliberately no symlinks_created beside
+       it: a counter that can only be zero is a field someone will try to use. */
     size_t symlinks_skipped;
     char first_symlink_skipped[256];
 } fr_unpack_report;
