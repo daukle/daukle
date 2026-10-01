@@ -22,7 +22,6 @@
    which is the plugin's own chunk name and line. */
 int fr_json_parse(const char *text, cJSON **out, fr_error *err);
 
-int fr_json_read_file(const char *path, cJSON **out, fr_error *err);
 int fr_json_string(const cJSON *object, const char *key, const char *path, const char **out, fr_error *err);
 int fr_json_object(const cJSON *object, const char *key, const char *path, const cJSON **out, fr_error *err);
 /* True for a real array and for the empty object a lua table with no entries

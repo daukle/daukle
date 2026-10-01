@@ -2,7 +2,6 @@
 
 #include "util/error.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -12,46 +11,6 @@ static char *duplicate(const char *text) {
     char *copy = malloc(length);
     if (copy != NULL) memcpy(copy, text, length);
     return copy;
-}
-
-int fr_json_read_file(const char *path, cJSON **out, fr_error *err) {
-    *out = NULL;
-    FILE *file = fopen(path, "rb");
-    if (file == NULL) {
-        fr_error_set(err, "cannot open \"%s\"", path);
-        return FR_ERR;
-    }
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-    if (size < 0) {
-        fclose(file);
-        fr_error_set(err, "cannot size \"%s\"", path);
-        return FR_ERR;
-    }
-    char *buffer = malloc((size_t) size + 1);
-    if (buffer == NULL) {
-        fclose(file);
-        fr_error_set(err, "out of memory reading \"%s\"", path);
-        return FR_ERR;
-    }
-    size_t read = fread(buffer, 1, (size_t) size, file);
-    fclose(file);
-    if (read != (size_t) size) {
-        free(buffer);
-        fr_error_set(err, "cannot read \"%s\"", path);
-        return FR_ERR;
-    }
-    buffer[read] = '\0';
-
-    cJSON *root = cJSON_Parse(buffer);
-    free(buffer);
-    if (root == NULL) {
-        fr_error_set(err, "\"%s\" is not valid json", path);
-        return FR_ERR;
-    }
-    *out = root;
-    return FR_OK;
 }
 
 int fr_json_string(const cJSON *object, const char *key, const char *path,
