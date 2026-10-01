@@ -1,0 +1,15 @@
+schema = 1
+project = "forebay/publish-provision"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+provisioner = "./plugins/provisioner.lua"
+publisher = "./plugins/publisher.lua"
+
+[toolchains.provisioner]
+version = "1"
+
+[publish.somewhere]
+from = "provisioner"
