@@ -234,7 +234,7 @@ TEST a_module_name_past_the_length_limit_is_refused(void) {
    alone: a second colon in it names nothing. */
 TEST a_module_name_with_a_second_colon_is_refused(void) {
     int status = FR_OK;
-    char message[512];
+    static char message[512];
     member_message("java:semver", &status, message, sizeof message);
     ASSERT_EQ(FR_ERR, status);
     ASSERTm(message, strstr(message, "at most one \":\"") != NULL);
@@ -274,7 +274,7 @@ TEST a_directory_serves_its_entry_and_its_modules(void) {
     }
     int module_is_the_file = module_status == FR_OK && module_length > 0
                              && strstr(module, "greeting") != NULL;
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
     fr_plugin_source_close(source);

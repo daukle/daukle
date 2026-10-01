@@ -1691,14 +1691,17 @@ TEST a_root_path_names_a_member_no_plugin_could_run(void) {
     fr_test_remove_tree(cache);
     restore_cache_directory(saved_cache);
 
+    static char named_report[1280];
+    snprintf(named_report, sizeof named_report, "kind=%s value=%s", named_kind, named_value);
+
     ASSERT(prepared);
     ASSERT(rooted);
     ASSERTm(message, named);
-    ASSERT_STR_EQm(named_kind, "string", named_kind);
+    ASSERT_STR_EQm(named_report, "string", named_kind);
     /* The separator is the platform's, so the member is matched by its base
        name and the root by the pin that names it. */
-    ASSERTm(named_value, strstr(named_value, "cli.js") != NULL);
-    ASSERTm(named_value, strstr(named_value, PROVISION_PIN) != NULL);
+    ASSERTm(named_report, strstr(named_value, "cli.js") != NULL);
+    ASSERTm(named_report, strstr(named_value, PROVISION_PIN) != NULL);
     PASS();
 }
 

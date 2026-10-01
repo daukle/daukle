@@ -306,7 +306,7 @@ TEST a_header_value_holding_a_line_break_is_refused(void) {
     int status = use_resolver(
         "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/header-injection.lua\"}}}",
         "a/b", &url, &resolved, &err);
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
     free(url);
     free(resolved);
@@ -323,7 +323,7 @@ TEST more_headers_than_the_bound_are_refused(void) {
     int status = use_resolver(
         "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/too-many-headers.lua\"}}}",
         "a/b", &url, &resolved, &err);
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
     free(url);
     free(resolved);
@@ -345,7 +345,7 @@ TEST a_hostile_metatable_on_the_returned_table_is_never_consulted(void) {
     int status = use_resolver(
         "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/hostile-result.lua\"}}}",
         "a/b", &url, &resolved, &err);
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
     int url_taken = url != NULL;
     free(url);

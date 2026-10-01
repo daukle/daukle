@@ -998,7 +998,7 @@ TEST the_same_chunk_reordered_is_the_difference_between_refused_and_accepted(voi
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", first, &err));
     int refused = fr_lua_plugin_load(below, strlen(below), "cmake.lua", NULL, 0, NULL, NULL, &err);
-    char message[256];
+    static char message[256];
     snprintf(message, sizeof message, "%s", refused == FR_OK ? "" : err.message);
     fr_lua_runtime_shutdown();
     fr_registry_destroy(first);
@@ -1027,7 +1027,7 @@ TEST exec_for_a_task_above_its_toolchain_is_refused_naming_the_order(void) {
         "daukle.task{ name = 'build', run = function() end }\n"
         "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n";
     int status = fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", uses, 1, NULL, NULL, &err);
-    char message[256];
+    static char message[256];
     snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
     fr_lua_runtime_shutdown();
     fr_registry_destroy(registry);
@@ -1116,7 +1116,7 @@ TEST a_chunk_not_acquired_as_a_resolver_may_not_declare_one(void) {
         "daukle.resolver{ resolve = function(c) return { url = c } end }\n";
     int status = fr_lua_plugin_load(chunk, strlen(chunk), "ordinary.lua", NULL, 0, NULL, NULL, &err);
     int declared = fr_lua_resolver_declared();
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
     fr_registry_destroy(registry);
@@ -2329,7 +2329,7 @@ TEST a_publisher_may_declare_exec(void) {
     const char *chunk =
         "daukle.publisher{ name = 'github', publish = function(context) end }\n";
     int status = fr_lua_plugin_load(chunk, strlen(chunk), "github.lua", uses, 1, NULL, NULL, &err);
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
     fr_lua_runtime_shutdown();

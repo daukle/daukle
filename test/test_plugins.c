@@ -1082,7 +1082,7 @@ TEST a_plugin_chunk_may_not_declare_a_resolver(void) {
     cJSON *document = cJSON_Parse(document_json);
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = fr_plugins_load(registry, document, ".", &err);
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
     char log[sizeof FETCH_LOG];
     snprintf(log, sizeof log, "%s", FETCH_LOG);
@@ -2559,7 +2559,7 @@ TEST a_single_file_path_with_a_sha256_still_loads(void) {
     if (fr_lua_runtime_begin("test/fixtures/plugin-local", registry, &err) == FR_OK) {
         status = fr_plugins_load(registry, document, "test/fixtures/plugin-local", &err);
     }
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
     cJSON_Delete(document);

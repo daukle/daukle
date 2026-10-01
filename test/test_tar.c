@@ -313,7 +313,7 @@ TEST a_real_tar_archive_reads(void) {
 
     fr_tar archive;
     int status = fr_tar_read(bytes, length, &archive, &err);
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
     int recognised = fr_tar_looks_like_archive(bytes, length);
