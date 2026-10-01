@@ -768,6 +768,72 @@ TEST clean_refuses_when_the_derived_root_is_a_link_inside_the_project(void) {
     PASS();
 }
 
+/* The two cases above guard the derived ROOT. This one guards a link nested
+   INSIDE a root that legitimately passes both of those checks, which nothing
+   else covers: fr_derived_clean validates the root and then hands the whole
+   tree to fr_remove_tree, so a child link is protected only by that sweep
+   refusing to descend into it. Measured before this test existed: making the
+   sweep follow links reddened nothing on either platform. */
+TEST clean_removes_a_nested_link_without_following_it(void) {
+    make_scratch("cleannested");
+
+    char build_dir[700];
+    snprintf(build_dir, sizeof build_dir, "%s/build", scratch);
+    fr_test_make_directory(build_dir);
+
+    char root_dir[700];
+    snprintf(root_dir, sizeof root_dir, "%s/daukle", build_dir);
+    fr_test_make_directory(root_dir);
+
+    char generated_path[800];
+    snprintf(generated_path, sizeof generated_path, "%s/generated.txt", root_dir);
+    fr_error err;
+    int wrote_generated = fr_file_write_text(generated_path, "generated\n", &err) == FR_OK;
+
+    char outside_dir[700];
+    snprintf(outside_dir, sizeof outside_dir, "%s/daukle_test_derived_nested_outside_%d",
+             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(outside_dir);
+    fr_test_make_directory(outside_dir);
+
+    char marker_path[800];
+    snprintf(marker_path, sizeof marker_path, "%s/marker.txt", outside_dir);
+    int wrote_marker = fr_file_write_text(marker_path, "precious\n", &err) == FR_OK;
+
+    char link_path[800];
+    snprintf(link_path, sizeof link_path, "%s/linked", root_dir);
+
+    int link_created = wrote_generated && wrote_marker
+                       && create_directory_link(link_path, outside_dir);
+    if (!link_created) {
+        remove_link_before_tree(link_path, scratch);
+        fr_test_remove_tree(outside_dir);
+        ASSERT(wrote_generated);
+        ASSERT(wrote_marker);
+        SKIPm("could not create a junction/symlink inside the derived root on this "
+              "machine; the follow-through assertion did not run");
+    }
+
+    err.message[0] = '\0';
+    int status = fr_derived_clean(scratch, &err);
+
+    char *survivor = read_file(marker_path);
+    int marker_survived = survivor != NULL && strcmp(survivor, "precious\n") == 0;
+    free(survivor);
+
+    char *generated = read_file(generated_path);
+    int root_was_cleaned = generated == NULL;
+    free(generated);
+
+    remove_link_before_tree(link_path, scratch);
+    fr_test_remove_tree(outside_dir);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(marker_survived);
+    ASSERT(root_was_cleaned);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -800,5 +866,6 @@ int main(int argc, char **argv) {
     RUN_TEST(clean_on_a_project_that_never_generated_is_not_an_error);
     RUN_TEST(clean_refuses_when_the_derived_root_escapes_through_a_link);
     RUN_TEST(clean_refuses_when_the_derived_root_is_a_link_inside_the_project);
+    RUN_TEST(clean_removes_a_nested_link_without_following_it);
     GREATEST_MAIN_END();
 }

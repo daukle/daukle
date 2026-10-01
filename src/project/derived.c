@@ -7,6 +7,7 @@
 #include "util/error.h"
 #include "util/sha256.h"
 #include "util/strbuf.h"
+#include "util/tree.h"
 
 #include <errno.h>
 #include <stdarg.h>
@@ -429,75 +430,6 @@ static int derived_root_is_link(const char *path) {
 }
 #endif
 
-typedef void (*derived_visit_fn)(const char *child_path, int is_directory, int is_link, void *state);
-
-static void derived_for_each_child(const char *path, derived_visit_fn visit, void *state) {
-#ifdef _WIN32
-    char pattern[1024];
-    int written = snprintf(pattern, sizeof pattern, "%s/*", path);
-    if (written < 0 || (size_t) written >= sizeof pattern) return;
-
-    WIN32_FIND_DATAA found;
-    HANDLE handle = FindFirstFileA(pattern, &found);
-    if (handle == INVALID_HANDLE_VALUE) return;
-    do {
-        if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) continue;
-        char child[1024];
-        int child_written = snprintf(child, sizeof child, "%s/%s", path, found.cFileName);
-        if (child_written < 0 || (size_t) child_written >= sizeof child) continue;
-        int is_directory = (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-        int is_link = (found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-        visit(child, is_directory, is_link, state);
-    } while (FindNextFileA(handle, &found));
-    FindClose(handle);
-#else
-    DIR *dir = opendir(path);
-    if (dir == NULL) return;
-    const struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-        char child[1024];
-        int child_written = snprintf(child, sizeof child, "%s/%s", path, entry->d_name);
-        if (child_written < 0 || (size_t) child_written >= sizeof child) continue;
-        struct stat info;
-        if (lstat(child, &info) != 0) continue;
-        int is_link = S_ISLNK(info.st_mode);
-        int is_directory = !is_link && S_ISDIR(info.st_mode);
-        visit(child, is_directory, is_link, state);
-    }
-    closedir(dir);
-#endif
-}
-
-static void derived_remove_tree(const char *path);
-
-/* A link entry is removed as the single node it is rather than opened: opening
-   a junction or a directory symlink for listing follows it transparently, which
-   is exactly how an unguarded sweep would delete whatever the link points to
-   instead of the link itself. */
-static void derived_remove_child(const char *child_path, int is_directory, int is_link, void *state) {
-    (void) state;
-    if (is_link) {
-#ifdef _WIN32
-        if (is_directory) _rmdir(child_path); else remove(child_path);
-#else
-        remove(child_path);
-#endif
-        return;
-    }
-    if (is_directory) derived_remove_tree(child_path);
-    else remove(child_path);
-}
-
-static void derived_remove_tree(const char *path) {
-    derived_for_each_child(path, derived_remove_child, NULL);
-#ifdef _WIN32
-    _rmdir(path);
-#else
-    rmdir(path);
-#endif
-}
-
 int fr_derived_root_is_contained(const char *canonical_base, const char *canonical_root) {
     size_t base_length = strlen(canonical_base);
     if (strncmp(canonical_base, canonical_root, base_length) != 0) return 0;
@@ -543,7 +475,7 @@ int fr_derived_clean(const char *manifest_dir, fr_error *err) {
         return FR_ERR;
     }
 
-    derived_remove_tree(root);
+    fr_remove_tree(root);
     int still_there = derived_root_exists(root);
     if (still_there) fr_error_set(err, "could not fully remove \"%s\"", root);
     free(root);
