@@ -116,3 +116,79 @@ if(DIVERGED)
     endforeach()
     message(FATAL_ERROR "a fixture copy of a staged plugin is not byte identical")
 endif()
+
+# greatest keeps the assertion message POINTER, not a copy, so a frame-local
+# buffer handed to an ASSERT_*m prints stack garbage once the case returns.
+# gcc's -Wdangling-pointer does not catch this in the shape these tests are
+# written: any earlier assertion in the same function stores a string literal
+# into greatest_info.msg first, and the analysis stops tracking the field.
+# Nineteen shipped that way through a -Werror build on three runners.
+#
+# Scoped to one function at a time, which is the whole difficulty. A file-level
+# version of this rule was written first and measured: on a clean tree it
+# reported 43 findings and every one was false, because "message" is an ordinary
+# local name that most functions never hand to an assertion at all. The rule is
+# only exact when the declaration and the use are known to share a frame.
+file(GLOB TEST_SOURCES "${SOURCE_DIR}/test/*.c")
+list(LENGTH TEST_SOURCES TEST_SOURCES_COUNT)
+if(TEST_SOURCES_COUNT LESS 30)
+    message(FATAL_ERROR "assertion-messages: found ${TEST_SOURCES_COUNT} files under test/, "
+                        "which is too few to be the whole suite; the glob has gone stale")
+endif()
+
+set(DANGLING "")
+set(FUNCTIONS_SCANNED 0)
+foreach(source ${TEST_SOURCES})
+    file(READ "${source}" content)
+    get_filename_component(source_name "${source}" NAME)
+    # list(LENGTH) miscounts items carrying an unbalanced "[" and silently
+    # returns 1 rather than failing, which made the first version of this rule
+    # compare nothing while passing. Subscripts are removed before any matching.
+    string(REPLACE "[" "<" content "${content}")
+
+    # Walked with FIND and SUBSTRING rather than split into a list: C bodies are
+    # full of semicolons, and a list of them would be shredded into fragments.
+    set(remaining "${content}")
+    while(1)
+        string(FIND "${remaining}" "\nTEST " start)
+        if(start LESS 0)
+            break()
+        endif()
+        string(SUBSTRING "${remaining}" ${start} -1 rest)
+        string(FIND "${rest}" "\n}" stop)
+        if(stop LESS 0)
+            break()
+        endif()
+        string(SUBSTRING "${rest}" 0 ${stop} body)
+        string(SUBSTRING "${rest}" ${stop} -1 remaining)
+        math(EXPR FUNCTIONS_SCANNED "${FUNCTIONS_SCANNED} + 1")
+
+        string(REGEX MATCHALL "ASSERT[A-Za-z_]*m[ \t]*\\([A-Za-z_][A-Za-z0-9_]*[,)]"
+               uses "${body}")
+        foreach(use ${uses})
+            string(REGEX REPLACE "^ASSERT[A-Za-z_]*m[ \t]*\\(" "" name "${use}")
+            string(REGEX REPLACE "[,)]$" "" name "${name}")
+            if(body MATCHES "char[ \t]+${name}<"
+               AND NOT body MATCHES "static[ \t]+char[ \t]+${name}<")
+                list(APPEND DANGLING
+                     "${source_name}: \"${name}\" is handed to an ASSERT_*m in the same function "
+                     "that declares it without static")
+            endif()
+        endforeach()
+    endwhile()
+endforeach()
+
+# A rule that examined nothing reads exactly like a clean run, which this file
+# has now shipped twice.
+if(FUNCTIONS_SCANNED LESS 200)
+    message(FATAL_ERROR "assertion-messages: scanned ${FUNCTIONS_SCANNED} test functions, which is "
+                        "too few to be the real suite; the function split has gone stale")
+endif()
+
+if(DANGLING)
+    list(REMOVE_DUPLICATES DANGLING)
+    foreach(finding ${DANGLING})
+        message(STATUS "assertion-messages: ${finding}")
+    endforeach()
+    message(FATAL_ERROR "an assertion message buffer is not static, and greatest keeps the pointer")
+endif()
