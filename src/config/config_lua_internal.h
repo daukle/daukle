@@ -1,15 +1,52 @@
 #ifndef DAUKLE_CONFIG_LUA_INTERNAL_H
 #define DAUKLE_CONFIG_LUA_INTERNAL_H
 
+#include "config/manifest.h"
 #include "plugin/registry.h"
+#include "project/tasks.h"
 #include "util/error.h"
 
 #include "lua.h"
+
+#include <stddef.h>
 
 /* The seam between the runtime in config_lua.c, which owns the one lua state and
    the load phase, and the declaration verbs in config_declare.c, which own the
    plugin slots every declaration fills. Neither file reaches into the other's
    storage: everything that crosses does so through this file. */
+
+/* One registered plugin: the capability it answers to, the lua reference of
+   the callback it registered, and, for a task, what it is part of and what it
+   depends on. config_declare.c fills these; config_dispatch.c is handed one as
+   the plugin struct's state pointer and calls the callback it names. */
+typedef struct {
+    char *capability;
+    int callback;
+    char *part_of;
+    char **depends_on;
+    size_t depends_on_count;
+    int has_run;
+} fr_lua_plugin_slot;
+
+/* What each registered plugin kind is dispatched through. Every one takes the
+   slot above as its state pointer, and each is what config_declare.c stores in
+   the registry when a plugin of that kind declares itself. */
+int fr_lua_dispatch_language_apply(void *state, const fr_consumer *consumer,
+                                  const fr_resolved *resolved, size_t count,
+                                  const char *original_text, char **out_text,
+                                  fr_error *err);
+int fr_lua_dispatch_toolchain_generate(void *state, const fr_toolchain *toolchain,
+                                      const char *project, const char *version,
+                                      const char *root, const fr_resolved *resolved,
+                                      size_t count, fr_generated_file **out_files,
+                                      size_t *out_count, fr_error *err);
+int fr_lua_dispatch_source_load(void *state, const char *project, const struct cJSON *block,
+                                const char *base_dir, fr_project *out, fr_error *err);
+int fr_lua_dispatch_task_run(void *state, const fr_task_run_context *context, fr_error *err);
+
+/* The lua reference of the resolver callback the running chunk, or the last
+   chunk to declare one, installed. LUA_NOREF when none has been. */
+int fr_lua_declare_resolver_callback(void);
 
 /* daukle's own spellings, which are not any vendor's: x86_64 rather than x64,
    and linux for every platform that is not Windows or Apple. */
