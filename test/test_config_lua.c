@@ -6,6 +6,7 @@
 #include "net/http.h"
 #include "plugin/plugin_deps.h"
 #include "plugin/plugin_modules.h"
+#include "lua/lua_verbs.h"
 #include "plugin/plugins.h"
 #include "plugin/registry.h"
 #include "project/derived.h"
@@ -1373,6 +1374,86 @@ static int load_declaring_provision(const char *declaration, int is_resolver, fr
         : fr_lua_plugin_load(source, strlen(source), "provision-refusal.lua", verbs, 1, NULL, NULL, err);
 }
 
+/* Mirrors load_one: read the declaration, point the runtime at the env it
+   declared, run the chunk. Calling fr_lua_plugin_load directly would skip the
+   step that reads "env" and every case below would fail for the wrong
+   reason. */
+static int load_chunk_through_its_declaration(const char *source, const char *origin,
+                                              fr_error *err) {
+    fr_plugin_declaration declaration;
+    if (fr_plugins_read_declaration(source, strlen(source), origin, "plugin", origin,
+                                    &declaration, err) != FR_OK) {
+        return FR_ERR;
+    }
+    fr_lua_verbs_set_declared_env((const char *const *) declaration.env,
+                                  declaration.env_count);
+    int status = fr_lua_plugin_load(source, strlen(source), origin,
+                                    (const char *const *) declaration.uses,
+                                    declaration.uses_count, NULL, NULL, err);
+    fr_lua_verbs_set_declared_env(NULL, 0);
+    fr_plugins_free_declaration(&declaration);
+    return status;
+}
+
+/* The read half of the env allowlist, and the half that makes it a control
+   rather than theatre: a plugin that could READ a credential would hand it to a
+   child as an ordinary addition, which no filter on inheritance can see. This
+   chunk declares the verb and not the permission. D-32. */
+TEST reading_an_undeclared_core_credential_is_refused(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *source = "daukle.plugin{ api = 1, uses = { \"env\" } }\n"
+                         "daukle.env(\"DAUKLE_TOKEN\")\n";
+    int status = load_chunk_through_its_declaration(source, "env-refusal.lua", &err);
+    snprintf(message, sizeof message, "%s", err.message);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_ERR, status);
+    ASSERTm(message, strstr(message, "DAUKLE_TOKEN") != NULL);
+    ASSERTm(message, strstr(message, "env") != NULL);
+    PASS();
+}
+
+/* The other half of the pair. Declaring it is today's behaviour exactly, which
+   is what stops the case above being satisfied by a verb that refuses always. */
+TEST reading_a_declared_core_credential_is_allowed(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *source = "daukle.plugin{ api = 1, uses = { \"env\" }, env = { \"DAUKLE_TOKEN\" } }\n"
+                         "daukle.env(\"DAUKLE_TOKEN\")\n";
+    int status = load_chunk_through_its_declaration(source, "env-allowed.lua", &err);
+    snprintf(message, sizeof message, "%s", err.message);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_OK, status);
+    PASS();
+}
+
+/* A variable daukle does not read is nobody's business but the user's, and this
+   pins that as behaviour. Without it the refusal above could grow into a general
+   environment sandbox by accident, which the design explicitly is not. */
+TEST reading_a_variable_core_does_not_use_needs_no_declaration(void) {
+    static char message[512];
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *source = "daukle.plugin{ api = 1, uses = { \"env\" } }\n"
+                         "daukle.env(\"DAUKLE_TEST_ORDINARY\")\n";
+    int status = load_chunk_through_its_declaration(source, "env-ordinary.lua", &err);
+    snprintf(message, sizeof message, "%s", err.message);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_OK, status);
+    PASS();
+}
+
 /* Three separate tests, not a loop over the three kinds: child spec 8 found
    that the exec refusal lives in daukle.language and daukle.source
    individually, so daukle.resolver refused nothing until it carried the same
@@ -2496,6 +2577,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_name_too_long_for_the_capability_buffer_is_rejected);
     RUN_TEST(a_language_plugin_that_raises_an_error_produces_a_clean_failure);
     RUN_TEST(a_language_plugin_that_returns_a_non_string_is_refused);
+    RUN_TEST(reading_an_undeclared_core_credential_is_refused);
+    RUN_TEST(reading_a_declared_core_credential_is_allowed);
+    RUN_TEST(reading_a_variable_core_does_not_use_needs_no_declaration);
     RUN_TEST(a_source_plugin_that_raises_an_error_produces_a_clean_failure);
     RUN_TEST(a_low_instruction_limit_stops_a_script_that_would_otherwise_finish);
     RUN_TEST(a_low_memory_limit_fails_a_script_that_would_otherwise_finish);

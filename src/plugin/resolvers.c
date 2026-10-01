@@ -4,6 +4,7 @@
 #include "config/config_lua.h"
 #include "config/jsonx.h"
 #include "lua/lua_sandbox.h"
+#include "lua/lua_verbs.h"
 #include "plugin/plugin_fetch.h"
 #include "plugin/plugins.h"
 #include "project/region.h"
@@ -236,9 +237,12 @@ static int acquire(const fr_resolver_entry *entry, fr_error *err) {
     }
     if (status == FR_OK) {
         fr_lua_set_acquiring_resolver(1);
+        fr_lua_verbs_set_declared_env((const char *const *) declaration.env,
+                                      declaration.env_count);
         status = fr_lua_plugin_load(chunk, chunk_length, origin,
                                     (const char *const *) declaration.uses, declaration.uses_count,
                                     source, NULL, err);
+        fr_lua_verbs_set_declared_env(NULL, 0);
         fr_lua_set_acquiring_resolver(0);
     }
     fr_plugins_free_declaration(&declaration);

@@ -35,6 +35,10 @@ void fr_plugins_free_declaration(fr_plugin_declaration *declaration) {
         free(declaration->requires[index].sha256);
     }
     declaration->requires_count = 0;
+    for (size_t index = 0; index < declaration->env_count; index++) {
+        free(declaration->env[index]);
+    }
+    declaration->env_count = 0;
 }
 
 static int record_uses(lua_State *state, fr_plugin_declaration *declaration) {
@@ -67,6 +71,55 @@ static int record_uses(lua_State *state, fr_plugin_declaration *declaration) {
         }
         declaration->uses[declaration->uses_count] = copy;
         declaration->uses_count++;
+        lua_pop(state, 1);
+    }
+    return 0;
+}
+
+/* Mirrors record_uses, with the validation a variable name needs rather than the
+   known-verb check: a name is compared against the environment, so an empty one
+   or one holding "=" could never match anything and is a typo rather than a
+   permission. */
+static int record_env(lua_State *state, fr_plugin_declaration *declaration) {
+    if (lua_isnil(state, -1)) return 0;
+    if (!lua_istable(state, -1)) {
+        return luaL_error(state, "%s \"%s\": env must be a list of variable names",
+                          declaration->kind, declaration->label);
+    }
+
+    lua_Integer length = (lua_Integer) lua_rawlen(state, -1);
+    for (lua_Integer index = 1; index <= length; index++) {
+        lua_rawgeti(state, -1, index);
+        if (lua_type(state, -1) != LUA_TSTRING) {
+            return luaL_error(state, "%s \"%s\": every name in env must be a string",
+                              declaration->kind, declaration->label);
+        }
+        const char *name = lua_tostring(state, -1);
+        if (name[0] == 0x00) {
+            return luaL_error(state, "%s \"%s\": env names an empty variable",
+                              declaration->kind, declaration->label);
+        }
+        if (strlen(name) >= FR_PLUGIN_MAX_ENV_NAME) {
+            return luaL_error(state, "%s \"%s\": the env name \"%s\" is longer than %d bytes",
+                              declaration->kind, declaration->label, name,
+                              FR_PLUGIN_MAX_ENV_NAME - 1);
+        }
+        if (strchr(name, 0x3d) != NULL) {
+            return luaL_error(state, "%s \"%s\": the env name \"%s\" holds \"=\", which no"
+                                     " variable name can", declaration->kind,
+                              declaration->label, name);
+        }
+        if (declaration->env_count == FR_PLUGIN_MAX_ENV) {
+            return luaL_error(state, "%s \"%s\": env names more than %d variables",
+                              declaration->kind, declaration->label, FR_PLUGIN_MAX_ENV);
+        }
+        char *copy = fr_dup_string(name);
+        if (copy == NULL) {
+            return luaL_error(state, "%s \"%s\": out of memory reading env",
+                              declaration->kind, declaration->label);
+        }
+        declaration->env[declaration->env_count] = copy;
+        declaration->env_count++;
         lua_pop(state, 1);
     }
     return 0;
@@ -264,6 +317,10 @@ static int declare_plugin(lua_State *state) {
 
     lua_getfield(state, 1, "exports");
     record_exports(state, declaration);
+    lua_pop(state, 1);
+
+    lua_getfield(state, 1, "env");
+    record_env(state, declaration);
     lua_pop(state, 1);
 
     lua_pushliteral(state, FR_PLUGIN_DECLARATION_READ);

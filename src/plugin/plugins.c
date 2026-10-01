@@ -451,9 +451,12 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
                                         &deps, err);
     }
     if (status == FR_OK) {
+        fr_lua_verbs_set_declared_env((const char *const *) declaration.env,
+                                      declaration.env_count);
         status = fr_lua_plugin_load(chunk, chunk_length, origin,
                                     (const char *const *) declaration.uses,
                                     declaration.uses_count, source, deps, err);
+        fr_lua_verbs_set_declared_env(NULL, 0);
     }
     if (status == FR_OK) {
         status = fr_plugins_report_append(entry, origin, resolved, digest, &declaration, err);

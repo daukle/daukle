@@ -1,4 +1,5 @@
-daukle.plugin{ api = 1, uses = { "fetch", "cache", "env", "parse" } }
+daukle.plugin{ api = 1, uses = { "fetch", "cache", "env", "parse" },
+              env = { "DAUKLE_TOKEN", "GITHUB_TOKEN" } }
 
 --- The replacement is a function so a version containing "%" is not read as a
 --- capture reference, and the extra parentheses drop gsub's match count.

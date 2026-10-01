@@ -121,11 +121,14 @@ static void host_component(char *out, size_t size) {
     if (out[0] == '\0') snprintf(out, size, "host");
 }
 
-static int fetch_and_verify(const char *url, const char *sha256_hex, const char *archive_path,
+static int fetch_and_verify(const char *url, const char *sha256_hex,
+                            const fr_http_header *headers, size_t header_count,
+                            const char *archive_path,
                             fr_error *err) {
     fr_sha256 digest;
     size_t length = 0;
-    if (fr_http_get_to_file(url, NULL, 0, archive_path, FR_HTTP_MAX_FILE, &digest, &length, err)
+    if (fr_http_get_to_file(url, headers, header_count, archive_path, FR_HTTP_MAX_FILE,
+                            &digest, &length, err)
         != FR_OK) {
         return FR_ERR;
     }
@@ -158,7 +161,8 @@ static int unpack_into(const char *archive_path, const char *tree_path, fr_unpac
     return result;
 }
 
-int fr_provision(const char *url, const char *sha256_hex, fr_provision_result *out,
+int fr_provision(const char *url, const char *sha256_hex, const fr_http_header *headers,
+                 size_t header_count, fr_provision_result *out,
                  fr_error *err) {
     memset(out, 0, sizeof *out);
 
@@ -210,7 +214,7 @@ int fr_provision(const char *url, const char *sha256_hex, fr_provision_result *o
     fr_unpack_report report;
     memset(&report, 0, sizeof report);
 
-    int result = fetch_and_verify(url, sha256_hex, archive_path, err);
+    int result = fetch_and_verify(url, sha256_hex, headers, header_count, archive_path, err);
     if (result == FR_OK) result = unpack_into(archive_path, tree_path, &report, err);
     if (result == FR_OK && fr_cache_rename_directory(tree_path, out->root) != FR_OK) {
         fr_error_set(err, "cannot move the unpacked tree for %s into the cache", sha256_hex);

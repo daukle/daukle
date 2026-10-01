@@ -57,6 +57,83 @@ int fr_lua_verbs_is_reserved(const char *name) {
     return 0;
 }
 
+/* The variables daukle itself reads, and therefore the only ones it is
+   responsible for a child seeing. This is not a denylist of secrets, which
+   child spec 1 refused as wrong by construction: that refusal is about guessing
+   which of the USER's variables are secret, which is unknowable. These two are
+   enumerated by reading daukle's own plugins, which ask for them by name.
+   daukle cannot make a child safe; it can stop being the reason one sees a
+   credential, and those are different claims. D-32. */
+static const char *const CORE_CREDENTIALS[] = { "DAUKLE_TOKEN", "GITHUB_TOKEN" };
+
+static const char *const *declared_env;
+static size_t declared_env_count;
+
+void fr_lua_verbs_set_declared_env(const char *const *names, size_t count) {
+    declared_env = names;
+    declared_env_count = count;
+}
+
+/* Case insensitive on Windows, where environment variable names are, so that a
+   plugin declaring "DAUKLE_TOKEN" is not bypassed by a child inheriting
+   "daukle_token". build_environment_block already follows this rule for
+   overrides, and a control that followed a different one would be a hole. */
+static int env_names_match(const char *left, const char *right) {
+#ifdef _WIN32
+    return _stricmp(left, right) == 0;
+#else
+    return strcmp(left, right) == 0;
+#endif
+}
+
+int fr_lua_verbs_copy_declared_env(char ***out, size_t *out_count) {
+    *out = NULL;
+    *out_count = 0;
+    if (declared_env_count == 0) return 0;
+
+    char **copy = calloc(declared_env_count, sizeof *copy);
+    if (copy == NULL) return -1;
+    for (size_t index = 0; index < declared_env_count; index++) {
+        size_t length = strlen(declared_env[index]) + 1;
+        copy[index] = malloc(length);
+        if (copy[index] == NULL) {
+            for (size_t done = 0; done < index; done++) free(copy[done]);
+            free(copy);
+            return -1;
+        }
+        memcpy(copy[index], declared_env[index], length);
+    }
+    *out = copy;
+    *out_count = declared_env_count;
+    return 0;
+}
+
+int fr_lua_verbs_is_core_credential(const char *name) {
+    for (size_t index = 0; index < sizeof CORE_CREDENTIALS / sizeof CORE_CREDENTIALS[0];
+         index++) {
+        if (env_names_match(name, CORE_CREDENTIALS[index])) return 1;
+    }
+    return 0;
+}
+
+int fr_lua_verbs_env_is_declared(const char *name) {
+    for (size_t index = 0; index < declared_env_count; index++) {
+        if (env_names_match(name, declared_env[index])) return 1;
+    }
+    return 0;
+}
+
+size_t fr_lua_verbs_env_to_scrub(const char **out, size_t limit) {
+    size_t written = 0;
+    for (size_t index = 0; index < sizeof CORE_CREDENTIALS / sizeof CORE_CREDENTIALS[0]
+                           && written < limit; index++) {
+        if (fr_lua_verbs_env_is_declared(CORE_CREDENTIALS[index])) continue;
+        out[written] = CORE_CREDENTIALS[index];
+        written++;
+    }
+    return written;
+}
+
 static int env_declared_exec;
 static int env_declared_tool;
 static int env_declared_provision;
@@ -75,6 +152,10 @@ int fr_lua_verbs_env_declared_provision(void) {
 
 static int verb_env(lua_State *state) {
     const char *name = luaL_checkstring(state, 1);
+    if (fr_lua_verbs_is_core_credential(name) && !fr_lua_verbs_env_is_declared(name)) {
+        return luaL_error(state, "this plugin may not read %s: name it in env on"
+                                 " daukle.plugin{}", name);
+    }
     const char *value = getenv(name);
     if (value == NULL) {
         lua_pushnil(state);
@@ -397,7 +478,7 @@ typedef struct {
     char root[FR_PROVISION_ROOT_MAX];
 } fr_lua_root;
 
-static const char *const PROVISION_FIELDS[] = { "url", "sha256", "as" };
+static const char *const PROVISION_FIELDS[] = { "url", "sha256", "as", "headers" };
 
 static int provision_field_is_known(const char *key) {
     for (size_t index = 0; index < sizeof PROVISION_FIELDS / sizeof PROVISION_FIELDS[0]; index++) {
@@ -419,7 +500,7 @@ static int refuse_an_unknown_provision_field(lua_State *state) {
         const char *key = lua_tostring(state, -2);
         if (!provision_field_is_known(key)) {
             return luaL_error(state, "daukle.provision does not take \"%s\"; it takes url, sha256"
-                                     " and as", key);
+                                     ", as and headers", key);
         }
         lua_pop(state, 1);
     }
@@ -434,6 +515,113 @@ static const char *provision_field(lua_State *state, const char *key) {
     lua_pushstring(state, key);
     lua_rawget(state, 1);
     return lua_type(state, -1) == LUA_TSTRING ? lua_tostring(state, -1) : NULL;
+}
+
+/* One "%s" and no other specifier. The template exists so that "Bearer " is not
+   written into core, and it is one specifier precisely so it cannot become a
+   format string a plugin controls. */
+static int format_takes_one_string(const char *format) {
+    int seen = 0;
+    for (const char *scan = format; *scan != 0; scan++) {
+        if (*scan != 37) continue;
+        scan++;
+        if (*scan == 37) continue;
+        if (*scan != 115) return 0;
+        seen++;
+    }
+    return seen == 1;
+}
+
+
+#define FR_PROVISION_MAX_HEADERS 8
+
+/* Reads the "headers" table, resolving each value from the environment. A value
+   is a table naming a variable, never a string: a literal would make a plugin,
+   and the manifest that pins it, places a secret ends up, and both are
+   committed. The variable must be one this plugin declared, so one allowlist
+   governs reading and fetching rather than two. An unset variable omits the
+   header rather than sending it empty, which is what plugins/github.lua already
+   does: an empty Bearer is a worse diagnostic than an anonymous request. D-32. */
+static size_t read_provision_headers(lua_State *state, fr_http_header *out) {
+    lua_pushstring(state, "headers");
+    lua_rawget(state, 1);
+    if (lua_isnil(state, -1)) return 0;
+    if (!lua_istable(state, -1)) {
+        luaL_error(state, "daukle.provision field \"headers\" must be a table");
+    }
+
+    int headers_index = lua_gettop(state);
+    size_t count = 0;
+    lua_pushnil(state);
+    while (lua_next(state, headers_index) != 0) {
+        if (lua_type(state, -2) != LUA_TSTRING) {
+            luaL_error(state, "daukle.provision: every header name must be a string");
+        }
+        const char *name = lua_tostring(state, -2);
+        if (lua_type(state, -1) == LUA_TSTRING) {
+            luaL_error(state, "daukle.provision: headers.%s must name an environment"
+                              " variable, not a value", name);
+        }
+        if (!lua_istable(state, -1)) {
+            luaL_error(state, "daukle.provision: headers.%s must be a table naming env", name);
+        }
+        if (count == FR_PROVISION_MAX_HEADERS) {
+            luaL_error(state, "daukle.provision: more than %d headers",
+                       FR_PROVISION_MAX_HEADERS);
+        }
+
+        lua_pushstring(state, "env");
+        lua_rawget(state, -2);
+        const char *variable = lua_type(state, -1) == LUA_TSTRING
+                             ? lua_tostring(state, -1) : NULL;
+        if (variable == NULL) {
+            luaL_error(state, "daukle.provision: headers.%s needs an env string", name);
+        }
+        if (fr_lua_verbs_is_core_credential(variable)
+            && !fr_lua_verbs_env_is_declared(variable)) {
+            luaL_error(state, "daukle.provision: headers.%s names %s, which this plugin did"
+                              " not declare in env", name, variable);
+        }
+
+        lua_pushstring(state, "format");
+        lua_rawget(state, -3);
+        const char *format = lua_type(state, -1) == LUA_TSTRING
+                           ? lua_tostring(state, -1) : NULL;
+        if (format != NULL && !format_takes_one_string(format)) {
+            luaL_error(state, "daukle.provision: headers.%s format takes exactly one %%s", name);
+        }
+
+        const char *value = getenv(variable);
+        if (value != NULL && value[0] != 0) {
+            char *rendered = NULL;
+            if (format != NULL) {
+                size_t length = strlen(format) + strlen(value) + 1;
+                rendered = malloc(length);
+                if (rendered != NULL) snprintf(rendered, length, format, value);
+            } else {
+                rendered = fr_dup_string(value);
+            }
+            char *header_name = fr_dup_string(name);
+            if (rendered == NULL || header_name == NULL) {
+                free(rendered);
+                free(header_name);
+                luaL_error(state, "out of memory building the %s header", name);
+            }
+            out[count].name = header_name;
+            out[count].value = rendered;
+            count++;
+        }
+
+        lua_pop(state, 3);
+    }
+    return count;
+}
+
+static void free_provision_headers(fr_http_header *headers, size_t count) {
+    for (size_t index = 0; index < count; index++) {
+        free((char *) headers[index].name);
+        free((char *) headers[index].value);
+    }
 }
 
 static int verb_provision(lua_State *state) {
@@ -469,9 +657,16 @@ static int verb_provision(lua_State *state) {
         return luaL_error(state, "daukle.provision field \"as\" may not hold a control character");
     }
 
+    fr_http_header headers[FR_PROVISION_MAX_HEADERS];
+    memset(headers, 0, sizeof headers);
+    size_t header_count = read_provision_headers(state, headers);
+
     fr_provision_result result;
     fr_error err;
-    if (fr_provision(url, digest, &result, &err) != FR_OK) {
+    int provisioned = fr_provision(url, digest, header_count > 0 ? headers : NULL,
+                                   header_count, &result, &err);
+    free_provision_headers(headers, header_count);
+    if (provisioned != FR_OK) {
         return luaL_error(state, "%s", err.message);
     }
     fr_toolreport_provisioned(label, url, digest, result.was_cached);
@@ -758,6 +953,16 @@ static int verb_exec(lua_State *state) {
     request.capture = capture;
     request.env = env_count > 0 ? env_entries : NULL;
     request.env_count = env_count;
+
+    /* Every credential core reads that this plugin did not declare. The child
+       inherits the rest of the environment untouched, including whatever the
+       user exported: daukle cannot know which of those are secret and does not
+       guess. What it can do is stop being the reason a child sees one of its
+       own. D-32. */
+    const char *scrub[FR_LUA_VERBS_MAX_SCRUB];
+    size_t scrub_count = fr_lua_verbs_env_to_scrub(scrub, FR_LUA_VERBS_MAX_SCRUB);
+    request.scrub = scrub_count > 0 ? scrub : NULL;
+    request.scrub_count = scrub_count;
 
     fr_exec_result result;
     int status = fr_exec_run(&request, &result, &err);

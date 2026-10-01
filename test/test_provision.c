@@ -89,7 +89,7 @@ TEST a_pinned_archive_is_fetched_verified_and_unpacked(void) {
     fr_provision_result result;
     fr_error err;
     err.message[0] = '\0';
-    int provisioned = fr_provision(url, pin, &result, &err);
+    int provisioned = fr_provision(url, pin, NULL, 0, &result, &err);
     fr_test_server_stop(server);
     fr_test_server_free(server);
 
@@ -104,6 +104,82 @@ TEST a_pinned_archive_is_fetched_verified_and_unpacked(void) {
     ASSERT_EQm(message, 0, was_cached);
     ASSERT_EQm(message, 1u, files);
     ASSERTm(message, unpacked);
+    PASS();
+}
+
+/* The one case that proves the feature rather than its refusals. Written after
+   a mutation of the header resolution reddened nothing at all: the three cases
+   in test_lua_verbs.c are all refusals, so the path that actually sends a header
+   had no test. When a mutation reddens nothing the finding is the coverage hole.
+   D-32. */
+TEST a_provision_sends_the_header_it_was_given(void) {
+    static char message[512];
+    char cache[1024];
+    use_private_cache("header", cache, sizeof cache);
+
+    char archive[ARCHIVE_SIZE];
+    size_t length = build_archive(archive, sizeof archive);
+    char pin[65];
+    fr_sha256_hex(archive, length, pin);
+
+    fr_test_server *server = fr_test_server_create();
+    fr_test_server_add_body_bytes(server, "/toolchain.tar", archive, length);
+    fr_test_server_start(server);
+
+    char url[256];
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/toolchain.tar", fr_test_server_port(server));
+
+    fr_http_header headers[] = { { "Authorization", "Bearer opaque" } };
+    fr_provision_result result;
+    fr_error err;
+    err.message[0] = 0;
+    int provisioned = fr_provision(url, pin, headers, 1, &result, &err);
+    int saw = fr_test_server_saw_header(server, "/toolchain.tar", "Authorization");
+    fr_test_server_stop(server);
+    fr_test_server_free(server);
+
+    snprintf(message, sizeof message, "result %d, saw %d, err \"%s\"", provisioned, saw,
+             err.message);
+    fr_test_remove_tree(cache);
+
+    ASSERT_EQm(message, FR_OK, provisioned);
+    ASSERTm(message, saw);
+    PASS();
+}
+
+/* The pair. Without it the case above is satisfied by a fetch that always sends
+   an Authorization header, which is what a careless implementation would do. */
+TEST a_provision_given_no_header_sends_none(void) {
+    static char message[512];
+    char cache[1024];
+    use_private_cache("noheader", cache, sizeof cache);
+
+    char archive[ARCHIVE_SIZE];
+    size_t length = build_archive(archive, sizeof archive);
+    char pin[65];
+    fr_sha256_hex(archive, length, pin);
+
+    fr_test_server *server = fr_test_server_create();
+    fr_test_server_add_body_bytes(server, "/toolchain.tar", archive, length);
+    fr_test_server_start(server);
+
+    char url[256];
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/toolchain.tar", fr_test_server_port(server));
+
+    fr_provision_result result;
+    fr_error err;
+    err.message[0] = 0;
+    int provisioned = fr_provision(url, pin, NULL, 0, &result, &err);
+    int saw = fr_test_server_saw_header(server, "/toolchain.tar", "Authorization");
+    fr_test_server_stop(server);
+    fr_test_server_free(server);
+
+    snprintf(message, sizeof message, "result %d, saw %d, err \"%s\"", provisioned, saw,
+             err.message);
+    fr_test_remove_tree(cache);
+
+    ASSERT_EQm(message, FR_OK, provisioned);
+    ASSERTm(message, !saw);
     PASS();
 }
 
@@ -130,7 +206,7 @@ TEST the_second_provision_makes_no_request_at_all(void) {
     fr_provision_result first;
     fr_error err;
     err.message[0] = '\0';
-    int once = fr_provision(url, pin, &first, &err);
+    int once = fr_provision(url, pin, NULL, 0, &first, &err);
 
     fr_test_server_stop(server);
     fr_test_server_free(server);
@@ -138,7 +214,7 @@ TEST the_second_provision_makes_no_request_at_all(void) {
     fr_provision_result second;
     fr_error again_err;
     again_err.message[0] = '\0';
-    int again = fr_provision(url, pin, &second, &again_err);
+    int again = fr_provision(url, pin, NULL, 0, &second, &again_err);
 
     int same_root = strcmp(first.root, second.root) == 0;
     int unpacked = member_reads_back(second.root);
@@ -180,7 +256,7 @@ TEST a_wrong_digest_is_refused_and_leaves_nothing_behind(void) {
     fr_provision_result result;
     fr_error err;
     err.message[0] = '\0';
-    int provisioned = fr_provision(url, pinned, &result, &err);
+    int provisioned = fr_provision(url, pinned, NULL, 0, &result, &err);
     fr_test_server_stop(server);
     fr_test_server_free(server);
 
@@ -245,7 +321,7 @@ TEST a_partial_directory_is_not_mistaken_for_a_provisioned_tree(void) {
     fr_provision_result result;
     fr_error err;
     err.message[0] = '\0';
-    int provisioned = fr_provision(url, pin, &result, &err);
+    int provisioned = fr_provision(url, pin, NULL, 0, &result, &err);
     fr_test_server_stop(server);
     fr_test_server_free(server);
 
@@ -295,8 +371,8 @@ TEST two_urls_serving_identical_bytes_share_one_tree(void) {
     fr_provision_result second;
     fr_error err;
     err.message[0] = '\0';
-    int once = fr_provision(first_url, pin, &first, &err);
-    int twice = fr_provision(second_url, pin, &second, &err);
+    int once = fr_provision(first_url, pin, NULL, 0, &first, &err);
+    int twice = fr_provision(second_url, pin, NULL, 0, &second, &err);
 
     fr_test_server_stop(server);
     int second_was_requested = fr_test_server_was_requested(server, "/b");
@@ -347,8 +423,8 @@ TEST a_digest_that_is_not_64_hex_characters_is_refused(void) {
     fr_provision_result result;
     fr_error provision_err;
     provision_err.message[0] = '\0';
-    int provisioned = fr_provision("http://127.0.0.1:1/never-asked", non_hex, &result,
-                                   &provision_err);
+    int provisioned = fr_provision("http://127.0.0.1:1/never-asked", non_hex, NULL, 0,
+                                   &result, &provision_err);
     int named_the_digest = strstr(provision_err.message, "hexadecimal") != NULL;
 
     snprintf(message, sizeof message, "paths %d %d %d %d, provision %d (\"%s\")", non_hex_path,
@@ -826,6 +902,8 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--task-child") == 0) return run_as_task_child();
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_pinned_archive_is_fetched_verified_and_unpacked);
+    RUN_TEST(a_provision_sends_the_header_it_was_given);
+    RUN_TEST(a_provision_given_no_header_sends_none);
     RUN_TEST(the_second_provision_makes_no_request_at_all);
     RUN_TEST(a_wrong_digest_is_refused_and_leaves_nothing_behind);
     RUN_TEST(a_partial_directory_is_not_mistaken_for_a_provisioned_tree);

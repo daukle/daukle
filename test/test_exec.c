@@ -275,6 +275,81 @@ TEST env_adds_overrides_and_leaves_the_rest_inherited(void) {
     PASS();
 }
 
+/* The pair, and neither half means anything alone: a scrub that removed
+   everything would pass the first and fail the second, and a scrub that did
+   nothing would pass the second and fail the first. Removing a variable from a
+   child is new on both platforms (D-32) and is the one thing here with no older
+   shape to copy, so it is written twice and asserted twice.
+
+   The third assertion is the one that keeps this honest about its scope: a
+   variable daukle does not read reaches the child whatever is scrubbed. This is
+   not a sandbox and must not start reading like one. */
+TEST scrub_removes_a_named_variable_and_leaves_the_rest(void) {
+    static char message[1024];
+#ifdef _WIN32
+    _putenv_s("DAUKLE_TEST_SECRET", "leaked");
+    _putenv_s("DAUKLE_TEST_ORDINARY", "kept");
+#else
+    setenv("DAUKLE_TEST_SECRET", "leaked", 1);
+    setenv("DAUKLE_TEST_ORDINARY", "kept", 1);
+#endif
+    const char *argv[] = { "--exec-env", "DAUKLE_TEST_SECRET", "DAUKLE_TEST_ORDINARY" };
+    const char *scrub[] = { "DAUKLE_TEST_SECRET" };
+    fr_exec_request request;
+    memset(&request, 0, sizeof request);
+    request.program = self_path;
+    request.argv = argv;
+    request.argv_count = sizeof argv / sizeof argv[0];
+    request.capture = 1;
+    request.scrub = scrub;
+    request.scrub_count = 1;
+
+    fr_exec_result result; fr_error err;
+    int status = fr_exec_run(&request, &result, &err);
+    snprintf(message, sizeof message, "status=%d stdout=[%s]", status,
+             status == FR_OK && result.stdout_text != NULL ? result.stdout_text : "");
+    int leaked = status == FR_OK && result.stdout_text != NULL
+                 && strstr(result.stdout_text, "DAUKLE_TEST_SECRET=leaked") != NULL;
+    int ordinary_kept = status == FR_OK && result.stdout_text != NULL
+                        && strstr(result.stdout_text, "DAUKLE_TEST_ORDINARY=kept") != NULL;
+    if (status == FR_OK) fr_exec_result_free(&result);
+
+    ASSERT_EQm(message, FR_OK, status);
+    ASSERTm(message, !leaked);
+    ASSERTm(message, ordinary_kept);
+    PASS();
+}
+
+/* The other half: without a scrub the same variable reaches the child, so the
+   case above measures the scrub rather than a child that never sees anything. */
+TEST a_variable_not_scrubbed_still_reaches_the_child(void) {
+    static char message[1024];
+#ifdef _WIN32
+    _putenv_s("DAUKLE_TEST_SECRET", "leaked");
+#else
+    setenv("DAUKLE_TEST_SECRET", "leaked", 1);
+#endif
+    const char *argv[] = { "--exec-env", "DAUKLE_TEST_SECRET" };
+    fr_exec_request request;
+    memset(&request, 0, sizeof request);
+    request.program = self_path;
+    request.argv = argv;
+    request.argv_count = sizeof argv / sizeof argv[0];
+    request.capture = 1;
+
+    fr_exec_result result; fr_error err;
+    int status = fr_exec_run(&request, &result, &err);
+    snprintf(message, sizeof message, "status=%d stdout=[%s]", status,
+             status == FR_OK && result.stdout_text != NULL ? result.stdout_text : "");
+    int present = status == FR_OK && result.stdout_text != NULL
+                  && strstr(result.stdout_text, "DAUKLE_TEST_SECRET=leaked") != NULL;
+    if (status == FR_OK) fr_exec_result_free(&result);
+
+    ASSERT_EQm(message, FR_OK, status);
+    ASSERTm(message, present);
+    PASS();
+}
+
 TEST a_program_that_does_not_exist_fails_naming_it(void) {
     fr_exec_request request;
     memset(&request, 0, sizeof request);
@@ -333,6 +408,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_child_exiting_127_is_reported_as_one_that_could_not_start);
     RUN_TEST(a_child_that_dies_abnormally_reports_its_platforms_code);
     RUN_TEST(env_adds_overrides_and_leaves_the_rest_inherited);
+    RUN_TEST(scrub_removes_a_named_variable_and_leaves_the_rest);
+    RUN_TEST(a_variable_not_scrubbed_still_reaches_the_child);
     RUN_TEST(a_program_that_does_not_exist_fails_naming_it);
 #ifdef _WIN32
     RUN_TEST(the_callers_error_mode_survives_a_child);

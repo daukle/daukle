@@ -26,6 +26,13 @@ typedef struct {
     char **depends_on;
     size_t depends_on_count;
     int has_run;
+    /* The env allowlist the declaring chunk carried, copied because the
+       declaration is freed when the load ends while a callback runs long after.
+       A per-chunk window was the first shape tried and it was wrong for exactly
+       that reason: a source plugin reads its token inside "load", not inside its
+       chunk. D-32. */
+    char **env;
+    size_t env_count;
 } fr_lua_plugin_slot;
 
 /* What each registered plugin kind is dispatched through. Every one takes the
@@ -43,6 +50,11 @@ int fr_lua_dispatch_toolchain_generate(void *state, const fr_toolchain *toolchai
 int fr_lua_dispatch_source_load(void *state, const char *project, const struct cJSON *block,
                                 const char *base_dir, fr_project *out, fr_error *err);
 int fr_lua_dispatch_task_run(void *state, const fr_task_run_context *context, fr_error *err);
+
+/* Points the env allowlist at whatever the chunk that declared the resolver
+   carried. A resolver is held by lua reference rather than in a slot, so it is
+   the one dispatch with no struct to read the list off. */
+void fr_lua_declare_set_resolver_env(void);
 
 /* The lua reference of the resolver callback the running chunk, or the last
    chunk to declare one, installed. LUA_NOREF when none has been. */
