@@ -375,3 +375,8 @@ static int to_json(lua_State *state, int index, int depth, cJSON **out, fr_error
 int fr_lua_to_json(lua_State *state, int index, cJSON **out, fr_error *err) {
     return to_json(state, index, 0, out, err);
 }
+
+void fr_lua_raw_getfield(lua_State *state, int index, const char *key) {
+    lua_pushstring(state, key);
+    lua_rawget(state, index);
+}

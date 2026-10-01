@@ -8,7 +8,8 @@ set(CORE_FILES
     plugin/plugin_fetch.c plugin/plugin_fetch.h archive/tar.c archive/tar.h plugin/plugin_modules.c plugin/plugin_modules.h
     plugin/plugin_deps.c plugin/plugin_deps.h archive/archive.c archive/archive.h archive/unpack.c archive/unpack.h
     provision/provision.c provision/provision.h exec/toolreport.c exec/toolreport.h
-    util/tree.c util/tree.h)
+    util/tree.c util/tree.h plugin/plugin_report.c plugin/plugins_internal.h
+    lua/lua_modules.c lua/lua_modules.h config/config_lua_internal.h config/config_dispatch.c)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"

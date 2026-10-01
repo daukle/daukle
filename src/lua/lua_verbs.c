@@ -7,6 +7,7 @@
 #include "exec/exec.h"
 #include "exec/tool.h"
 #include "exec/toolreport.h"
+#include "lua/lua_modules.h"
 #include "lua/lua_sandbox.h"
 #include "lua/luax.h"
 #include "net/http.h"

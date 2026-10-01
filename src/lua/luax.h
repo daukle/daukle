@@ -54,4 +54,18 @@ void fr_lua_set_instruction_limit(lua_State *state, long limit);
    traceback. */
 const char *fr_lua_last_traceback(void);
 
+/* Reads table[index]'s field `key` without honoring a metatable, leaving the
+   value on the stack exactly as lua_getfield would. setmetatable is a
+   reachable base global in this sandbox, so a plugin's declaration table
+   could carry an __index that raises on an ordinary miss, or that answers
+   inconsistently across two reads of the same key; lua_declare_task and
+   lua_declare_toolchain each use this for every field whose value the rest
+   of the function depends on, so nothing they decide can be answered by a
+   plugin-supplied metatable. lua_declare_task's depends_on walk applies the
+   same reasoning to its own table: lua_rawlen in place of luaL_len, because
+   a raw length can report a hole (lua_rawlen({1, nil, 3}) is 3) and a __len
+   metamethod can itself raise; lua_rawgeti in place of lua_geti, so reading
+   that hole cannot dispatch to an __index either. */
+void fr_lua_raw_getfield(lua_State *state, int index, const char *key);
+
 #endif
