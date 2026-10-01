@@ -209,7 +209,7 @@ TEST exec_passes_an_env_addition_to_the_child(void) {
         lua_getfield(state, env, "out");
         snprintf(seen, sizeof seen, "%s", lua_tostring(state, -1) ? lua_tostring(state, -1) : "");
     }
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "status=%d out=[%s] err=%s", status, seen,
              status == FR_OK ? "" : err.message);
 
@@ -311,7 +311,7 @@ TEST exec_refuses_an_option_key_it_does_not_know(void) {
         "local t = daukle.tool('test_lua_verbs')\n"
         "daukle.exec(t, { '--exec-child', '0' }, { environment = { A = 'b' } })",
         "=t", env, &err);
-    char message[512];
+    static char message[512];
     snprintf(message, sizeof message, "%s", status == FR_OK ? "(accepted)" : err.message);
 
     lua_settop(state, 0);
