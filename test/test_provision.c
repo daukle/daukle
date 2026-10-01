@@ -609,13 +609,83 @@ static void mark_tar_member_executable(char *archive, size_t header_offset) {
     fr_test_tar_fix_checksum(archive, header_offset);
 }
 
+/* What a fixture needs to provision this test binary: the running server and
+   the two buffers whose lifetime it depends on. A struct rather than four out
+   parameters, so a caller cannot free one and forget another. */
+typedef struct {
+    fr_test_server *server;
+    char *archive;
+    char *self_bytes;
+    int ready;
+} pinned_archive;
+
+/* Serves this test binary as the single executable member of a tar, and points
+   the provisioning fixtures' three environment variables at it. The digest is
+   computed from the bytes at runtime, because a hardcoded one would silently
+   stop matching the moment git rewrote a line ending. */
+static pinned_archive serve_self_as_pinned_archive(void) {
+    pinned_archive held;
+    memset(&held, 0, sizeof held);
+
+    fr_error read_err;
+    read_err.message[0] = '\0';
+    size_t self_length = 0;
+    held.ready = fr_file_read_bytes(self_path, &held.self_bytes, &self_length, &read_err) == FR_OK;
+
+    size_t archive_capacity = held.ready
+        ? FR_TAR_BLOCK + ((self_length + FR_TAR_BLOCK - 1) / FR_TAR_BLOCK) * FR_TAR_BLOCK
+              + 2 * FR_TAR_BLOCK
+        : 0;
+    held.archive = held.ready ? malloc(archive_capacity) : NULL;
+    size_t archive_length = 0;
+    if (held.archive != NULL) {
+        memset(held.archive, 0, archive_capacity);
+        size_t used = fr_test_tar_append(held.archive, 0, "bin/tool.exe", '0',
+                                         held.self_bytes, self_length);
+        mark_tar_member_executable(held.archive, 0);
+        archive_length = fr_test_tar_end(held.archive, used);
+    }
+
+    char digest[65];
+    digest[0] = '\0';
+    if (held.archive != NULL) fr_sha256_hex(held.archive, archive_length, digest);
+
+    held.server = held.archive != NULL ? fr_test_server_create() : NULL;
+    if (held.server != NULL) {
+        fr_test_server_add_body_bytes(held.server, "/toolchain.tar", held.archive, archive_length);
+        fr_test_server_start(held.server);
+    }
+
+    char url[256];
+    url[0] = '\0';
+    if (held.server != NULL) {
+        snprintf(url, sizeof url, "http://127.0.0.1:%d/toolchain.tar",
+                 fr_test_server_port(held.server));
+    }
+
+    fr_test_set_env("DAUKLE_TEST_ARCHIVE_URL", url);
+    fr_test_set_env("DAUKLE_TEST_ARCHIVE_SHA256", digest);
+    fr_test_set_env("DAUKLE_TEST_MEMBER", "bin/tool.exe");
+    return held;
+}
+
+static void pinned_archive_free(pinned_archive *held) {
+    if (held->server != NULL) {
+        fr_test_server_stop(held->server);
+        fr_test_server_free(held->server);
+        held->server = NULL;
+    }
+    free(held->archive);
+    free(held->self_bytes);
+    held->archive = NULL;
+    held->self_bytes = NULL;
+}
+
 /* The headline case of the whole branch: a repository holding daukle.toml, a
    plugin and nothing daukle itself needs, which provisions a program from a
-   pinned archive and runs it. The tar member is this test binary's own bytes,
-   read back and hashed at runtime, so nothing here hardcodes a digest of
-   anything on disk. The only assertion that proves the provisioned binary
-   actually ran, rather than that daukle.provision merely returned FR_OK, is
-   that the sentinel file the child writes appeared. */
+   pinned archive and runs it. The only assertion that proves the provisioned
+   binary actually ran, rather than that daukle.provision merely returned FR_OK,
+   is that the sentinel file the child writes appeared. */
 TEST a_project_provisions_a_tool_and_runs_it(void) {
     static char message[1024];
 
@@ -625,44 +695,8 @@ TEST a_project_provisions_a_tool_and_runs_it(void) {
              fr_test_process_id());
     use_isolated_cache_dir(cache, saved_cache, sizeof saved_cache);
 
-    fr_error read_err;
-    read_err.message[0] = '\0';
-    char *self_bytes = NULL;
-    size_t self_length = 0;
-    int self_read = fr_file_read_bytes(self_path, &self_bytes, &self_length, &read_err) == FR_OK;
-
-    size_t archive_capacity = self_read
-        ? FR_TAR_BLOCK + ((self_length + FR_TAR_BLOCK - 1) / FR_TAR_BLOCK) * FR_TAR_BLOCK
-              + 2 * FR_TAR_BLOCK
-        : 0;
-    char *archive = self_read ? malloc(archive_capacity) : NULL;
-    size_t archive_length = 0;
-    if (archive != NULL) {
-        memset(archive, 0, archive_capacity);
-        size_t used = fr_test_tar_append(archive, 0, "bin/tool.exe", '0', self_bytes, self_length);
-        mark_tar_member_executable(archive, 0);
-        archive_length = fr_test_tar_end(archive, used);
-    }
-
-    char digest[65];
-    digest[0] = '\0';
-    if (archive != NULL) fr_sha256_hex(archive, archive_length, digest);
-
-    fr_test_server *server = archive != NULL ? fr_test_server_create() : NULL;
-    if (server != NULL) {
-        fr_test_server_add_body_bytes(server, "/toolchain.tar", archive, archive_length);
-        fr_test_server_start(server);
-    }
-
-    char url[256];
-    url[0] = '\0';
-    if (server != NULL) {
-        snprintf(url, sizeof url, "http://127.0.0.1:%d/toolchain.tar", fr_test_server_port(server));
-    }
-
-    fr_test_set_env("DAUKLE_TEST_ARCHIVE_URL", url);
-    fr_test_set_env("DAUKLE_TEST_ARCHIVE_SHA256", digest);
-    fr_test_set_env("DAUKLE_TEST_MEMBER", "bin/tool.exe");
+    pinned_archive held = serve_self_as_pinned_archive();
+    int self_read = held.ready;
 
     const char *marker =
         "test/fixtures/provisioned-tool/build/daukle/provisioner/" PROVISIONED_SENTINEL;
@@ -699,12 +733,7 @@ TEST a_project_provisions_a_tool_and_runs_it(void) {
     if (collected == FR_OK) fr_tasks_set_free(&set);
     if (opened == FR_OK) fr_session_close(&session);
 
-    if (server != NULL) {
-        fr_test_server_stop(server);
-        fr_test_server_free(server);
-    }
-    free(archive);
-    free(self_bytes);
+    pinned_archive_free(&held);
     remove(marker);
     restore_cache_dir(saved_cache);
 
@@ -717,6 +746,76 @@ TEST a_project_provisions_a_tool_and_runs_it(void) {
     ASSERT_EQm(message, FR_OK, synced);
     ASSERT_EQm(message, FR_OK, collected);
     ASSERT_EQm(message, FR_OK, planned);
+    ASSERT_EQm(message, FR_OK, run_status);
+    ASSERTm(message, ran_here);
+    PASS();
+}
+
+/* Section 14 of the publishing spec names this untested: section 5 grants
+   provision to a publisher and nothing exercised the grant. The publisher here
+   declares no toolchain of its own, so it has to hold the capability in its own
+   right rather than inherit one, and the fixture's toolchain exists only to give
+   the destination a "from" to run in. As above, the sentinel is the one thing
+   that separates a provisioned binary that RAN from a provision that returned. */
+TEST a_publisher_provisions_its_own_tool_and_runs_it(void) {
+    static char message[1024];
+
+    char cache[1024];
+    char saved_cache[1024];
+    snprintf(cache, sizeof cache, "%s/publish-provision-e2e-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    use_isolated_cache_dir(cache, saved_cache, sizeof saved_cache);
+
+    pinned_archive held = serve_self_as_pinned_archive();
+
+    const char *marker =
+        "test/fixtures/publish-provision/build/daukle/provisioner/" PROVISIONED_SENTINEL;
+    remove(marker);
+
+    fr_error err;
+    err.message[0] = '\0';
+    fr_session session;
+    int opened = fr_session_open("test/fixtures/publish-provision/daukle.toml", 1, &session, &err);
+
+    fr_sync_report sync_report;
+    int synced = FR_ERR;
+    if (opened == FR_OK) {
+        synced = fr_sync_session(&session, 1, &sync_report, &err);
+        if (synced == FR_OK) fr_sync_report_free(&sync_report);
+    }
+
+    fr_task_set set;
+    int collected = FR_ERR;
+    if (synced == FR_OK) {
+        collected = fr_tasks_collect(session.registry, &session.manifest, &set, &err);
+    }
+
+    int checked = FR_ERR;
+    if (collected == FR_OK) checked = fr_tasks_check_publish(&set, &session.manifest, NULL, &err);
+
+    int run_status = FR_ERR;
+    if (checked == FR_OK) {
+        run_status = fr_tasks_run_publish(&set, &session, NULL, NULL, NULL, &err);
+    }
+
+    int ran_here = file_exists(marker);
+
+    if (collected == FR_OK) fr_tasks_set_free(&set);
+    if (opened == FR_OK) fr_session_close(&session);
+
+    pinned_archive_free(&held);
+    remove(marker);
+    restore_cache_dir(saved_cache);
+
+    snprintf(message, sizeof message,
+             "self_read %d, opened %d, synced %d, collected %d, checked %d, run %d, err \"%s\"",
+             held.ready, opened, synced, collected, checked, run_status, err.message);
+
+    ASSERT_EQm(message, 1, held.ready);
+    ASSERT_EQm(message, FR_OK, opened);
+    ASSERT_EQm(message, FR_OK, synced);
+    ASSERT_EQm(message, FR_OK, collected);
+    ASSERT_EQm(message, FR_OK, checked);
     ASSERT_EQm(message, FR_OK, run_status);
     ASSERTm(message, ran_here);
     PASS();
@@ -741,5 +840,6 @@ int main(int argc, char **argv) {
     RUN_TEST(an_empty_label_falls_back_to_a_fact_rather_than_to_nothing);
     RUN_TEST(a_url_ending_in_a_slash_still_falls_back_to_a_fact);
     RUN_TEST(a_project_provisions_a_tool_and_runs_it);
+    RUN_TEST(a_publisher_provisions_its_own_tool_and_runs_it);
     GREATEST_MAIN_END();
 }
