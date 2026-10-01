@@ -1,7 +1,17 @@
 #include "greatest.h"
 #include "net/http.h"
 
+#include <stdio.h>
 #include <stdlib.h>
+
+/* The only case in the suite whose verdict depends on a machine daukle does not
+   own, so it is also the only one that can go red without a defect: on
+   2026-10-01 it timed out on a macOS runner whose network was failing to reach
+   codeload.github.com at the same moment. Retrying keeps the assertion on every
+   platform while absorbing that, and a real outage still fails after the last
+   attempt, so red here still means something. Attempts are deliberately few: the
+   point is to survive a blip, not to wait out a sustained failure. */
+#define FR_NETWORK_ATTEMPTS 3
 
 TEST fetches_a_real_release_asset(void) {
     if (getenv("DAUKLE_NETWORK_TESTS") == NULL) SKIPm("DAUKLE_NETWORK_TESTS is not set");
@@ -9,9 +19,20 @@ TEST fetches_a_real_release_asset(void) {
     char *body = NULL;
     size_t length = 0;
     fr_error err;
-    ASSERT_EQ(FR_OK, fr_http_get(
-        "https://github.com/forebay/basekit/releases/download/5.0.0/basekit-contracts.jar",
-        NULL, 0, &body, &length, &err));
+    int status = FR_ERR;
+    for (int attempt = 1; attempt <= FR_NETWORK_ATTEMPTS; attempt++) {
+        status = fr_http_get(
+            "https://github.com/forebay/basekit/releases/download/5.0.0/basekit-contracts.jar",
+            NULL, 0, &body, &length, &err);
+        if (status == FR_OK) break;
+        fprintf(stderr, "network attempt %d of %d failed: %s\n", attempt, FR_NETWORK_ATTEMPTS,
+                err.message);
+    }
+    /* err lives on this frame and greatest keeps the message POINTER, so the
+       last attempt's reason is copied somewhere that outlives the failure. */
+    static char last_failure[256];
+    snprintf(last_failure, sizeof last_failure, "%s", status == FR_OK ? "" : err.message);
+    ASSERT_EQm(last_failure, FR_OK, status);
     ASSERT(length > 1000);
     ASSERT_EQ('P', body[0]);
     ASSERT_EQ('K', body[1]);
