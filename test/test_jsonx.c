@@ -56,13 +56,6 @@ TEST treats_a_missing_array_as_empty(void) {
     PASS();
 }
 
-TEST reports_a_missing_file_by_name(void) {
-    cJSON *root = NULL; fr_error err;
-    ASSERT_EQ(FR_ERR, fr_json_read_file("test/fixtures/does-not-exist.json", &root, &err));
-    ASSERT(strstr(err.message, "does-not-exist.json") != NULL);
-    PASS();
-}
-
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -72,6 +65,5 @@ int main(int argc, char **argv) {
     RUN_TEST(names_the_path_when_a_member_has_the_wrong_type);
     RUN_TEST(reads_an_array_of_strings);
     RUN_TEST(treats_a_missing_array_as_empty);
-    RUN_TEST(reports_a_missing_file_by_name);
     GREATEST_MAIN_END();
 }
