@@ -156,6 +156,27 @@ TEST rejects_plugin_with_an_unknown_subcommand_naming_it(void) {
     PASS();
 }
 
+/* Refused rather than ignored: fr_plugins_update_cache forces the cache on for
+   the command's whole duration, so an accepted --no-cache would be silently
+   inert. The second case pins that the flag still reaches every other command,
+   because refusing it everywhere would be the easy wrong fix. */
+TEST rejects_no_cache_on_plugin_update_naming_the_option(void) {
+    const char *argv[] = { "daukle", "plugin", "update", "--no-cache" };
+    fr_cli_options options = parse(4, argv);
+    ASSERT_EQ(FR_CLI_USAGE, options.command);
+    ASSERT_STR_EQ("--no-cache", options.plugin_update_rejected_option);
+    PASS();
+}
+
+TEST keeps_no_cache_on_the_commands_that_honour_it(void) {
+    const char *argv[] = { "daukle", "sync", "--no-cache" };
+    fr_cli_options options = parse(3, argv);
+    ASSERT_EQ(FR_CLI_SYNC, options.command);
+    ASSERT_EQ(0, options.use_cache);
+    ASSERT(options.plugin_update_rejected_option == NULL);
+    PASS();
+}
+
 TEST leaves_the_manifest_path_unset_so_the_directory_is_searched(void) {
     const char *argv[] = { "daukle", "sync" };
     fr_cli_options options = parse(2, argv);
@@ -328,6 +349,8 @@ int main(int argc, char **argv) {
     RUN_TEST(parses_plugin_update_with_a_label);
     RUN_TEST(parses_plugin_update_without_a_label);
     RUN_TEST(rejects_plugin_with_an_unknown_subcommand_naming_it);
+    RUN_TEST(rejects_no_cache_on_plugin_update_naming_the_option);
+    RUN_TEST(keeps_no_cache_on_the_commands_that_honour_it);
     RUN_TEST(rejects_a_second_word_after_a_plugin_label);
     RUN_TEST(rejects_a_second_word_after_a_config_print_path);
     RUN_TEST(leaves_the_manifest_path_unset_so_the_directory_is_searched);

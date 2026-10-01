@@ -43,6 +43,7 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
     out->add_modules = NULL;
     out->plugin_label = NULL;
     out->plugin_unknown_subcommand = NULL;
+    out->plugin_update_rejected_option = NULL;
     out->task_name = NULL;
     out->publish_name = NULL;
 
@@ -99,6 +100,10 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
         if (word_count < 2) return;
         if (strcmp(words[1], "update") != 0) {
             out->plugin_unknown_subcommand = words[1];
+            return;
+        }
+        if (!out->use_cache) {
+            out->plugin_update_rejected_option = "--no-cache";
             return;
         }
         out->command = FR_CLI_PLUGIN_UPDATE;
