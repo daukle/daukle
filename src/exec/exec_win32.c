@@ -150,7 +150,7 @@ static int compare_block_entries(const void *left, const void *right) {
    briefly. NULL out means "no additions": the caller then passes NULL to
    CreateProcess and the child inherits ours wholesale. */
 static char *build_environment_block(const fr_exec_request *request) {
-    if (request->env_count == 0) return NULL;
+    if (request->env_count == 0 && request->scrub_count == 0) return NULL;
 
     char *inherited = GetEnvironmentStringsA();
     if (inherited == NULL) return NULL;
@@ -171,6 +171,9 @@ static char *build_environment_block(const fr_exec_request *request) {
         int overridden = 0;
         for (size_t entry = 0; entry < request->env_count && !overridden; entry++) {
             overridden = entry_name_matches(scan, request->env[entry].name);
+        }
+        for (size_t entry = 0; entry < request->scrub_count && !overridden; entry++) {
+            overridden = entry_name_matches(scan, request->scrub[entry]);
         }
         /* A block from GetEnvironmentStrings can open with "=C:=C:\..." drive
            entries whose name is empty; they are kept as they arrived. */

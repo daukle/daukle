@@ -3,6 +3,7 @@
 #include "config/config_lua.h"
 #include "plugin/resolve.h"
 #include "config/manifest.h"
+#include "lua/lua_verbs.h"
 #include "lua/luax.h"
 #include "project/derived.h"
 #include "util/error.h"
@@ -89,9 +90,13 @@ int fr_lua_dispatch_language_apply(void *state, const fr_consumer *consumer,
     int top = lua_gettop(fr_lua_runtime_state());
     lua_apply_context context = { state, consumer, resolved, count, original_text, out_text };
     apply_context = &context;
+    fr_lua_verbs_set_declared_env(
+        (const char *const *) ((const fr_lua_plugin_slot *) state)->env,
+        ((const fr_lua_plugin_slot *) state)->env_count);
     lua_pushcfunction(fr_lua_runtime_state(), protected_language_apply);
     int status = lua_pcall(fr_lua_runtime_state(), 0, 0, 0);
     apply_context = NULL;
+    fr_lua_verbs_set_declared_env(NULL, 0);
 
     if (status != LUA_OK) {
         fr_error_set(err, "%s", fr_lua_error_text(fr_lua_runtime_state()));
@@ -251,11 +256,15 @@ int fr_lua_dispatch_toolchain_generate(void *state, const fr_toolchain *toolchai
     lua_generate_context context = { state, toolchain, project, version, root,
                                      resolved, count, out_files, out_count };
     generate_context = &context;
+    fr_lua_verbs_set_declared_env(
+        (const char *const *) ((const fr_lua_plugin_slot *) state)->env,
+        ((const fr_lua_plugin_slot *) state)->env_count);
     lua_pushcfunction(fr_lua_runtime_state(), protected_toolchain_generate);
     generation_is_running = 1;
     int status = lua_pcall(fr_lua_runtime_state(), 0, 0, 0);
     generation_is_running = 0;
     generate_context = NULL;
+    fr_lua_verbs_set_declared_env(NULL, 0);
 
     if (status != LUA_OK) {
         fr_error_set(err, "%s", fr_lua_error_text(fr_lua_runtime_state()));
@@ -300,9 +309,13 @@ int fr_lua_dispatch_source_load(void *state, const char *project, const cJSON *b
     int top = lua_gettop(fr_lua_runtime_state());
     lua_source_context context = { state, project, block, base_dir, NULL };
     source_context = &context;
+    fr_lua_verbs_set_declared_env(
+        (const char *const *) ((const fr_lua_plugin_slot *) state)->env,
+        ((const fr_lua_plugin_slot *) state)->env_count);
     lua_pushcfunction(fr_lua_runtime_state(), protected_source_load);
     int status = lua_pcall(fr_lua_runtime_state(), 0, 0, 0);
     source_context = NULL;
+    fr_lua_verbs_set_declared_env(NULL, 0);
 
     if (status != LUA_OK) {
         fr_error_set(err, "%s", fr_lua_error_text(fr_lua_runtime_state()));
@@ -423,9 +436,11 @@ int fr_lua_resolver_call(const char *coordinate, const cJSON *block, char **out_
     int top = lua_gettop(fr_lua_runtime_state());
     lua_resolver_context context = { coordinate, block, out_url, out_resolved, out_headers };
     resolver_context = &context;
+    fr_lua_declare_set_resolver_env();
     lua_pushcfunction(fr_lua_runtime_state(), protected_resolver_call);
     int status = lua_pcall(fr_lua_runtime_state(), 0, 0, 0);
     resolver_context = NULL;
+    fr_lua_verbs_set_declared_env(NULL, 0);
 
     if (status != LUA_OK) {
         fr_error_set(err, "%s", fr_lua_error_text(fr_lua_runtime_state()));
@@ -550,11 +565,15 @@ int fr_lua_dispatch_task_run(void *state, const fr_task_run_context *context, fr
     int top = lua_gettop(fr_lua_runtime_state());
     lua_task_context wrapper = { state, context };
     task_context = &wrapper;
+    fr_lua_verbs_set_declared_env(
+        (const char *const *) ((const fr_lua_plugin_slot *) state)->env,
+        ((const fr_lua_plugin_slot *) state)->env_count);
     fr_lua_set_task_cwd(context->derived_dir_relative);
     lua_pushcfunction(fr_lua_runtime_state(), protected_task_run);
     int status = lua_pcall(fr_lua_runtime_state(), 0, 0, 0);
     fr_lua_set_task_cwd(NULL);
     task_context = NULL;
+    fr_lua_verbs_set_declared_env(NULL, 0);
 
     if (status != LUA_OK) {
         fr_error_set(err, "%s", fr_lua_error_text(fr_lua_runtime_state()));

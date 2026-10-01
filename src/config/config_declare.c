@@ -66,6 +66,11 @@ static int take_slot(lua_State *state, const char *prefix, const char *field,
     slot->capability = malloc(length);
     if (slot->capability == NULL) return luaL_error(state, "out of memory");
     memcpy(slot->capability, capability, length);
+    if (fr_lua_verbs_copy_declared_env(&slot->env, &slot->env_count) != 0) {
+        free(slot->capability);
+        slot->capability = NULL;
+        return luaL_error(state, "out of memory recording env for \"%s\"", capability);
+    }
 
     lua_getfield(state, 1, field);
     if (!lua_isfunction(state, -1)) {
@@ -85,6 +90,10 @@ static int take_slot(lua_State *state, const char *prefix, const char *field,
    finished running. It is released by fr_lua_runtime_shutdown and replaced
    whenever a later chunk declares another resolver. */
 static int resolver_callback = LUA_NOREF;
+/* Copied rather than borrowed for the same reason a slot copies it: the
+   declaration is freed when the load ends and a resolver runs long after. */
+static char **resolver_env;
+static size_t resolver_env_count;
 static int chunk_declared_resolver;
 static int chunk_declared_other;
 
@@ -184,6 +193,13 @@ static int lua_declare_resolver(lua_State *state) {
     }
     if (resolver_callback != LUA_NOREF) luaL_unref(state, LUA_REGISTRYINDEX, resolver_callback);
     resolver_callback = luaL_ref(state, LUA_REGISTRYINDEX);
+    for (size_t index = 0; index < resolver_env_count; index++) free(resolver_env[index]);
+    free(resolver_env);
+    resolver_env = NULL;
+    resolver_env_count = 0;
+    if (fr_lua_verbs_copy_declared_env(&resolver_env, &resolver_env_count) != 0) {
+        return luaL_error(state, "out of memory recording env for the resolver");
+    }
     chunk_declared_resolver = 1;
     return 0;
 }
@@ -280,6 +296,8 @@ static void copy_toolchain_prefix(const char *name, const char *colon, char *out
 static void release_task_slot(fr_lua_plugin_slot *slot) {
     free(slot->capability);
     free(slot->part_of);
+    for (size_t index = 0; index < slot->env_count; index++) free(slot->env[index]);
+    free(slot->env);
     for (size_t index = 0; index < slot->depends_on_count; index++) free(slot->depends_on[index]);
     free(slot->depends_on);
     memset(slot, 0, sizeof *slot);
@@ -509,6 +527,10 @@ fr_registry *fr_lua_registering_registry(void) {
 void fr_lua_declare_reset(void) {
     resolver_callback = LUA_NOREF;
     resolver_declared = 0;
+    for (size_t index = 0; index < resolver_env_count; index++) free(resolver_env[index]);
+    free(resolver_env);
+    resolver_env = NULL;
+    resolver_env_count = 0;
     for (size_t index = 0; index < plugin_slot_count; index++) {
         free(plugin_slots[index].capability);
         free(plugin_slots[index].part_of);
@@ -516,6 +538,10 @@ void fr_lua_declare_reset(void) {
             free(plugin_slots[index].depends_on[d]);
         }
         free(plugin_slots[index].depends_on);
+        for (size_t e = 0; e < plugin_slots[index].env_count; e++) {
+            free(plugin_slots[index].env[e]);
+        }
+        free(plugin_slots[index].env);
     }
     plugin_slot_count = 0;
     registering_into = NULL;
@@ -526,6 +552,10 @@ void fr_lua_declare_install_config_surface(lua_State *state) {
     lua_setfield(state, -2, "language");
     lua_pushcfunction(state, lua_declare_source);
     lua_setfield(state, -2, "source");
+}
+
+void fr_lua_declare_set_resolver_env(void) {
+    fr_lua_verbs_set_declared_env((const char *const *) resolver_env, resolver_env_count);
 }
 
 int fr_lua_declare_resolver_callback(void) {

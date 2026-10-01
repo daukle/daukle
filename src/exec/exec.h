@@ -28,6 +28,13 @@ typedef struct {
        matches one daukle already has replaces it. */
     const fr_exec_env_entry *env;
     size_t env_count;
+    /* Names removed from the inherited environment, which additions above
+       cannot express: daukle reads DAUKLE_TOKEN and GITHUB_TOKEN, and a plugin
+       that did not declare them must not be the reason a child sees one. This
+       is the only removal daukle performs; the user's own variables are
+       untouched, which is deliberate and is not a sandbox. D-32. */
+    const char *const *scrub;
+    size_t scrub_count;
 } fr_exec_request;
 
 typedef struct {

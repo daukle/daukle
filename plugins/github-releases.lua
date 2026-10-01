@@ -1,4 +1,5 @@
-daukle.plugin{ api = 1, uses = { "fetch", "cache", "env", "json_parse" } }
+daukle.plugin{ api = 1, uses = { "fetch", "cache", "env", "json_parse" },
+              env = { "DAUKLE_TOKEN", "GITHUB_TOKEN" } }
 
 --- DAUKLE_TOKEN wins over GITHUB_TOKEN, so a daukle-specific token cannot be
 --- shadowed by whatever the surrounding CI already exports. The same precedence

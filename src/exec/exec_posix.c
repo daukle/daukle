@@ -34,7 +34,7 @@ static int name_matches(const char *entry, const char *name, size_t name_length)
 static char **build_envp(const fr_exec_request *request, char ***owned, int *failed) {
     *owned = NULL;
     *failed = 0;
-    if (request->env_count == 0) return environ;
+    if (request->env_count == 0 && request->scrub_count == 0) return environ;
 
     size_t inherited = 0;
     while (environ[inherited] != NULL) inherited++;
@@ -48,6 +48,10 @@ static char **build_envp(const fr_exec_request *request, char ***owned, int *fai
         for (size_t entry = 0; entry < request->env_count && !overridden; entry++) {
             overridden = name_matches(environ[index], request->env[entry].name,
                                       strlen(request->env[entry].name));
+        }
+        for (size_t entry = 0; entry < request->scrub_count && !overridden; entry++) {
+            overridden = name_matches(environ[index], request->scrub[entry],
+                                      strlen(request->scrub[entry]));
         }
         if (!overridden) envp[count++] = environ[index];
     }

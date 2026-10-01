@@ -65,6 +65,8 @@ char *fr_dup_prefix(const char *text, size_t length);
 #define FR_PLUGIN_MAX_REQUIRES 16
 #define FR_PLUGIN_MAX_EXPORTS 64
 #define FR_PLUGIN_MAX_ALIAS 64
+#define FR_PLUGIN_MAX_ENV 16
+#define FR_PLUGIN_MAX_ENV_NAME 128
 
 typedef struct {
     char *alias;
@@ -83,6 +85,12 @@ typedef struct {
     size_t exports_count;
     fr_plugin_requirement requires[FR_PLUGIN_MAX_REQUIRES];
     size_t requires_count;
+    /* The environment variables this plugin may read, and the only ones of
+       core's own that a process it starts inherits. Absent means none: the
+       default scrubs, so a plugin written before this existed forwards nothing.
+       See D-32. */
+    char *env[FR_PLUGIN_MAX_ENV];
+    size_t env_count;
 } fr_plugin_declaration;
 
 /* Runs only as much of text as its daukle.plugin{...} call, the same

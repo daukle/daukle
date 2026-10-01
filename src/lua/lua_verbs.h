@@ -35,6 +35,34 @@ int fr_lua_verbs_push_library_env(lua_State *state, const char *dependent, const
 
 /* Every verb name daukle understands, for validating a uses list before the
    environment is built. Returns 1 for a known name. */
+/* The environment variables the chunk about to run declared, which is both the
+   set daukle.env may read of core's own and the set a child it starts inherits
+   of them. Borrowed for the length of the chunk; the caller clears it with
+   (NULL, 0) afterwards. Governing reading as well as inheritance is what makes
+   it a control: a plugin that could read the token would otherwise hand it to a
+   child as an ordinary addition, which no filter on inheritance sees. D-32. */
+void fr_lua_verbs_set_declared_env(const char *const *names, size_t count);
+
+/* Copies the declared list so a registered plugin can keep it past the chunk,
+   which is where every callback that needs it actually runs. Returns 0, or -1
+   out of memory with nothing allocated. */
+int fr_lua_verbs_copy_declared_env(char ***out, size_t *out_count);
+
+/* Whether name is one core itself reads, and so one a plugin must declare
+   before it may see it. daukle cannot know which of the USER's variables are
+   secret and does not guess; it knows these because it asks for them by name. */
+int fr_lua_verbs_is_core_credential(const char *name);
+
+/* Whether the running chunk declared name in env. */
+int fr_lua_verbs_env_is_declared(const char *name);
+
+#define FR_LUA_VERBS_MAX_SCRUB 8
+
+/* Every core credential the running chunk did NOT declare, which is what a
+   child it starts must not inherit. Writes up to limit pointers into out and
+   returns how many; the strings are static. */
+size_t fr_lua_verbs_env_to_scrub(const char **out, size_t limit);
+
 int fr_lua_verbs_is_known(const char *name);
 
 /* Whether the environment most recently built by fr_lua_verbs_push_env included
