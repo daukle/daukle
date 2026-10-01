@@ -1202,7 +1202,7 @@ TEST a_resolver_may_not_declare_exec(void) {
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
-    ASSERT(strstr(message, "available only to a toolchain plugin") != NULL);
+    ASSERT(strstr(message, "available only to a toolchain or publisher plugin") != NULL);
     PASS();
 }
 

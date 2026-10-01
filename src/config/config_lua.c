@@ -548,10 +548,10 @@ void fr_lua_set_acquiring_resolver(int acquiring) {
 
 static int lua_declare_language(lua_State *state) {
     if (fr_lua_verbs_env_declared_exec()) {
-        return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+        return luaL_error(state, "daukle.exec is available only to a toolchain or publisher plugin");
     }
     if (fr_lua_verbs_env_declared_provision()) {
-        return luaL_error(state, "daukle.provision is available only to a toolchain plugin");
+        return luaL_error(state, "daukle.provision is available only to a toolchain or publisher plugin");
     }
     if (chunk_declared_resolver) {
         return luaL_error(state, "a resolver chunk declares only a resolver");
@@ -573,10 +573,10 @@ static int lua_declare_language(lua_State *state) {
 
 static int lua_declare_source(lua_State *state) {
     if (fr_lua_verbs_env_declared_exec()) {
-        return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+        return luaL_error(state, "daukle.exec is available only to a toolchain or publisher plugin");
     }
     if (fr_lua_verbs_env_declared_provision()) {
-        return luaL_error(state, "daukle.provision is available only to a toolchain plugin");
+        return luaL_error(state, "daukle.provision is available only to a toolchain or publisher plugin");
     }
     if (chunk_declared_resolver) {
         return luaL_error(state, "a resolver chunk declares only a resolver");
@@ -602,14 +602,14 @@ static int lua_declare_resolver(lua_State *state) {
                                  " resolver, which this one was not");
     }
     if (fr_lua_verbs_env_declared_exec()) {
-        return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+        return luaL_error(state, "daukle.exec is available only to a toolchain or publisher plugin");
     }
     if (fr_lua_verbs_env_declared_tool()) {
         return luaL_error(state, "a resolver may not start a process, so it may not declare"
                                  " daukle.tool");
     }
     if (fr_lua_verbs_env_declared_provision()) {
-        return luaL_error(state, "daukle.provision is available only to a toolchain plugin");
+        return luaL_error(state, "daukle.provision is available only to a toolchain or publisher plugin");
     }
     luaL_checktype(state, 1, LUA_TTABLE);
     if (chunk_declared_other || chunk_declared_resolver) {

@@ -419,7 +419,8 @@ TEST a_language_plugin_may_not_declare_exec(void) {
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/plugin-exec-refused/daukle.toml",
                                           registry, &manifest, &err));
-    ASSERT(strstr(err.message, "daukle.exec is available only to a toolchain plugin") != NULL);
+    ASSERT(strstr(err.message,
+                  "daukle.exec is available only to a toolchain or publisher plugin") != NULL);
 
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
@@ -434,7 +435,8 @@ TEST a_source_plugin_may_not_declare_exec(void) {
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/plugin-exec-refused-source/daukle.toml",
                                           registry, &manifest, &err));
-    ASSERT(strstr(err.message, "daukle.exec is available only to a toolchain plugin") != NULL);
+    ASSERT(strstr(err.message,
+                  "daukle.exec is available only to a toolchain or publisher plugin") != NULL);
 
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
@@ -452,7 +454,8 @@ TEST a_plugin_execing_before_it_declares_is_refused_at_the_call(void) {
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/plugin-exec-before-declaring/daukle.toml",
                                           registry, &manifest, &err));
-    ASSERT(strstr(err.message, "daukle.exec is available only to a toolchain plugin") != NULL);
+    ASSERT(strstr(err.message, "daukle.exec is not available while a plugin chunk is loading")
+           != NULL);
     ASSERT(strstr(err.message, "must be a tool handle") == NULL);
 
     fr_registry_destroy(registry);
@@ -474,7 +477,8 @@ TEST a_plugin_provisioning_before_it_declares_is_refused_at_the_call(void) {
     ASSERT_EQ(FR_ERR,
               fr_config_load_file("test/fixtures/plugin-provision-before-declaring/daukle.toml",
                                   registry, &manifest, &err));
-    ASSERT(strstr(err.message, "daukle.provision is available only to a toolchain plugin") != NULL);
+    ASSERT(strstr(err.message, "daukle.provision is not available while a plugin chunk is loading")
+           != NULL);
     ASSERT(strstr(err.message, "127.0.0.1") == NULL);
 
     fr_registry_destroy(registry);
@@ -2829,8 +2833,20 @@ TEST an_overlay_rooted_manifest_yields_its_plugins_table_without_loading_them(vo
 
 GREATEST_MAIN_DEFS();
 
+/* The same rescue test_config_lua.c carries, and for the same measured reason:
+   cases here assert before their cleanup, so one failure leaves the lua runtime
+   open and later cases fail against it. Changing two refusal clauses in this
+   file produced two real failures and two collateral ones, which is how the
+   need was noticed. The call is idempotent, so this is a no-op when nothing
+   leaked. */
+static void close_any_leaked_runtime(void *udata) {
+    (void) udata;
+    fr_lua_runtime_shutdown();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
+    GREATEST_SET_TEARDOWN_CB(close_any_leaked_runtime, NULL);
     RUN_TEST(parses_the_string_url_form);
     RUN_TEST(parses_the_table_form_with_a_pin);
     RUN_TEST(parses_the_table_form_naming_a_resolver_and_a_coordinate);

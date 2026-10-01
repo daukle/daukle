@@ -445,7 +445,8 @@ static int verb_provision(lua_State *state) {
        level has already put a tree on disk during `daukle check`. The refusal
        has to reach the call, exactly as daukle.exec's does. */
     if (fr_lua_plugin_exec_is_refused()) {
-        return luaL_error(state, "daukle.provision is available only to a toolchain plugin");
+        return luaL_error(state, "daukle.provision is not available while a plugin chunk is"
+                                 " loading; call it from a task or publish callback");
     }
     luaL_checktype(state, 1, LUA_TTABLE);
     refuse_an_unknown_provision_field(state);
@@ -654,7 +655,8 @@ static int verb_exec(lua_State *state) {
                                  "generation is a pure function of the manifest");
     }
     if (fr_lua_plugin_exec_is_refused()) {
-        return luaL_error(state, "daukle.exec is available only to a toolchain plugin");
+        return luaL_error(state, "daukle.exec is not available while a plugin chunk is"
+                                 " loading; call it from a task or publish callback");
     }
     if (luaL_testudata(state, 1, FR_TOOL_HANDLE) == NULL) {
         return luaL_error(state, "daukle.exec argument 1 must be a tool handle from daukle.tool");
