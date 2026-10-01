@@ -474,21 +474,70 @@ TEST a_symlink_whose_relative_target_climbs_out_is_refused(void) {
     PASS();
 }
 
-TEST a_contained_symlink_is_created_on_posix_and_named_on_windows(void) {
+/* The invariant the whole no-symlink design rests on: skipping a link loses a
+   NAME, never a file. A tar symlink points at a member of the same archive and
+   refuse_unsafe_link_target has already refused any that does not, so the target
+   of every skipped link is present in the tree. Asserted on the bytes rather
+   than on the member count, because a file written empty would satisfy a count.
+   Unlike the helper above this keeps the destination long enough to read it. */
+TEST the_target_of_a_skipped_link_is_present_in_the_tree(void) {
     static char message[512];
-    /* One test with two platform arms, because the behaviour is deliberately
-       different and a test per platform would let the unrun one rot. */
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-link-target-%d",
+             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(destination);
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = fr_test_tar_append(buffer, 0, "lib/real", 0x30, "payload", 7);
+    size_t link_offset = used;
+    used = fr_test_tar_append(buffer, used, "bin/link", 0x32, "", 0);
+    memcpy(buffer + link_offset + 157, "../lib/real", 11);
+    fr_test_tar_fix_checksum(buffer, link_offset);
+    fr_test_tar_end(buffer, used);
+
+    fr_archive *archive = NULL;
+    fr_error err;
+    err.message[0] = 0x00;
+    fr_unpack_report report;
+    memset(&report, 0, sizeof report);
+    int opened = open_archive_from_bytes(buffer, sizeof buffer, &archive, &err);
+    int result = opened == FR_OK
+               ? fr_unpack(archive, destination, &FR_UNPACK_DEFAULTS, &report, &err)
+               : FR_ERR;
+    if (archive != NULL) fr_archive_close(archive);
+
+    char target_path[1200];
+    snprintf(target_path, sizeof target_path, "%s/lib/real", destination);
+    char *contents = NULL;
+    fr_error read_err;
+    int read_status = fr_file_read_text(target_path, &contents, &read_err);
+    int target_is_intact = read_status == FR_OK && contents != NULL
+                        && strcmp(contents, "payload") == 0;
+    free(contents);
+
+    snprintf(message, sizeof message, "%s", err.message);
+    fr_test_remove_tree(destination);
+
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERT_EQm(message, 1u, report.symlinks_skipped);
+    ASSERTm(message, target_is_intact);
+    PASS();
+}
+
+/* Was a_contained_symlink_is_created_on_posix_and_named_on_windows until
+   2026-10-01, with two platform arms. There is one behaviour now: no link is
+   created anywhere and the member is counted as skipped on every platform. The
+   case is rewritten rather than deleted so the diff shows the behaviour change
+   rather than a test disappearing. See D-38. */
+TEST a_contained_symlink_is_skipped_and_named_on_every_platform(void) {
+    static char message[512];
     fr_unpack_report report;
     int result = unpack_one_symlink("../lib/real", &report, message, sizeof message);
     ASSERT_EQm(message, FR_OK, result);
-#ifdef _WIN32
-    ASSERT_EQm(message, 0u, report.symlinks_created);
     ASSERT_EQm(message, 1u, report.symlinks_skipped);
     ASSERT_STR_EQm(message, "bin/link", report.first_symlink_skipped);
-#else
-    ASSERT_EQm(message, 1u, report.symlinks_created);
-    ASSERT_EQm(message, 0u, report.symlinks_skipped);
-#endif
     PASS();
 }
 
@@ -762,7 +811,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_deeply_nested_member_past_the_legacy_path_limit_is_written);
     RUN_TEST(a_symlink_with_an_absolute_target_is_refused);
     RUN_TEST(a_symlink_whose_relative_target_climbs_out_is_refused);
-    RUN_TEST(a_contained_symlink_is_created_on_posix_and_named_on_windows);
+    RUN_TEST(a_contained_symlink_is_skipped_and_named_on_every_platform);
+    RUN_TEST(the_target_of_a_skipped_link_is_present_in_the_tree);
     RUN_TEST(a_chain_of_symlinks_cannot_walk_a_later_member_out);
     RUN_TEST(a_non_file_member_counts_against_the_expansion_ceiling);
     RUN_TEST(a_tar_members_execute_bit_reaches_the_file);
