@@ -2,6 +2,7 @@
 #define DAUKLE_PROVISION_H
 
 #include "archive/unpack.h"
+#include "net/http.h"
 #include "util/types.h"
 
 #include <stddef.h>
@@ -23,6 +24,13 @@ int fr_provision_root_path(const char *sha256_hex, char *out, size_t out_size, f
    @implNote fr_cache_enabled is deliberately not consulted: the key IS the bytes, so no
    entry can go stale and a refetch either costs time or is refused by the digest. Repairing
    a tree corrupted on disk is a cache command's concern, not a fetch-freshness flag's. */
-int fr_provision(const char *url, const char *sha256_hex, fr_provision_result *out, fr_error *err);
+/* headers are sent verbatim with the fetch and may be NULL. They exist so a
+   toolchain archive behind a credential can be provisioned at all; the value
+   reaching here is already resolved, so this layer never learns the name of the
+   variable it came from. The cache key is the content digest alone, so a tree
+   fetched once with a credential is readable afterwards without one: the
+   credential protects the download, not the cache. D-32. */
+int fr_provision(const char *url, const char *sha256_hex, const fr_http_header *headers,
+                 size_t header_count, fr_provision_result *out, fr_error *err);
 
 #endif

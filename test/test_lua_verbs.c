@@ -1396,6 +1396,88 @@ TEST provision_refuses_a_missing_sha256(void) {
     PASS();
 }
 
+/* A literal is the one shape the design exists to forbid: it would make a
+   plugin, and the manifest pinning it, places a secret ends up, and both are
+   committed. D-32. */
+TEST provision_refuses_a_literal_header_value(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = 0;
+    int refused = state != NULL
+        && fr_lua_run_in_env(state,
+               "daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "',"
+               " headers = { Authorization = 'Bearer hunter2' } }", "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "not a value") != NULL);
+    /* The refusal must not quote what it refused, or the diagnostic becomes the
+       leak the rule prevents. */
+    ASSERTm(message, strstr(message, "hunter2") == NULL);
+    PASS();
+}
+
+/* One allowlist governs reading and fetching. Without this the fetch path would
+   be a second way to spend a credential the plugin may not read. */
+TEST provision_refuses_a_header_naming_an_undeclared_variable(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = 0;
+    int refused = state != NULL
+        && fr_lua_run_in_env(state,
+               "daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "',"
+               " headers = { Authorization = { env = 'DAUKLE_TOKEN' } } }", "=t", env, &err)
+           == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "did not declare") != NULL);
+    ASSERTm(message, strstr(message, "DAUKLE_TOKEN") != NULL);
+    PASS();
+}
+
+/* A format is one %s and nothing else, so the template cannot grow into a
+   format string a plugin controls. */
+TEST provision_refuses_a_header_format_with_two_specifiers(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = 0;
+    int refused = state != NULL
+        && fr_lua_run_in_env(state,
+               "daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "',"
+               " headers = { X = { env = 'DAUKLE_TEST_ORDINARY', format = '%s %s' } } }",
+               "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "exactly one") != NULL);
+    PASS();
+}
+
 TEST provision_reads_its_fields_raw(void) {
     static char message[512];
     static const char *const chunk =
@@ -2070,6 +2152,9 @@ int main(int argc, char **argv) {
     RUN_TEST(an_older_library_environments_raiser_survives_a_newer_one_being_built);
     RUN_TEST(provision_refuses_an_unknown_key_by_name);
     RUN_TEST(provision_refuses_a_missing_sha256);
+    RUN_TEST(provision_refuses_a_literal_header_value);
+    RUN_TEST(provision_refuses_a_header_naming_an_undeclared_variable);
+    RUN_TEST(provision_refuses_a_header_format_with_two_specifiers);
     RUN_TEST(provision_reads_its_fields_raw);
     RUN_TEST(a_root_handle_refuses_a_member_that_climbs_out);
     RUN_TEST(a_root_handle_refuses_a_batch_file);

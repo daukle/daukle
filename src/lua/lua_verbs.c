@@ -478,7 +478,7 @@ typedef struct {
     char root[FR_PROVISION_ROOT_MAX];
 } fr_lua_root;
 
-static const char *const PROVISION_FIELDS[] = { "url", "sha256", "as" };
+static const char *const PROVISION_FIELDS[] = { "url", "sha256", "as", "headers" };
 
 static int provision_field_is_known(const char *key) {
     for (size_t index = 0; index < sizeof PROVISION_FIELDS / sizeof PROVISION_FIELDS[0]; index++) {
@@ -500,7 +500,7 @@ static int refuse_an_unknown_provision_field(lua_State *state) {
         const char *key = lua_tostring(state, -2);
         if (!provision_field_is_known(key)) {
             return luaL_error(state, "daukle.provision does not take \"%s\"; it takes url, sha256"
-                                     " and as", key);
+                                     ", as and headers", key);
         }
         lua_pop(state, 1);
     }
@@ -515,6 +515,113 @@ static const char *provision_field(lua_State *state, const char *key) {
     lua_pushstring(state, key);
     lua_rawget(state, 1);
     return lua_type(state, -1) == LUA_TSTRING ? lua_tostring(state, -1) : NULL;
+}
+
+/* One "%s" and no other specifier. The template exists so that "Bearer " is not
+   written into core, and it is one specifier precisely so it cannot become a
+   format string a plugin controls. */
+static int format_takes_one_string(const char *format) {
+    int seen = 0;
+    for (const char *scan = format; *scan != 0; scan++) {
+        if (*scan != 37) continue;
+        scan++;
+        if (*scan == 37) continue;
+        if (*scan != 115) return 0;
+        seen++;
+    }
+    return seen == 1;
+}
+
+
+#define FR_PROVISION_MAX_HEADERS 8
+
+/* Reads the "headers" table, resolving each value from the environment. A value
+   is a table naming a variable, never a string: a literal would make a plugin,
+   and the manifest that pins it, places a secret ends up, and both are
+   committed. The variable must be one this plugin declared, so one allowlist
+   governs reading and fetching rather than two. An unset variable omits the
+   header rather than sending it empty, which is what plugins/github.lua already
+   does: an empty Bearer is a worse diagnostic than an anonymous request. D-32. */
+static size_t read_provision_headers(lua_State *state, fr_http_header *out) {
+    lua_pushstring(state, "headers");
+    lua_rawget(state, 1);
+    if (lua_isnil(state, -1)) return 0;
+    if (!lua_istable(state, -1)) {
+        luaL_error(state, "daukle.provision field \"headers\" must be a table");
+    }
+
+    int headers_index = lua_gettop(state);
+    size_t count = 0;
+    lua_pushnil(state);
+    while (lua_next(state, headers_index) != 0) {
+        if (lua_type(state, -2) != LUA_TSTRING) {
+            luaL_error(state, "daukle.provision: every header name must be a string");
+        }
+        const char *name = lua_tostring(state, -2);
+        if (lua_type(state, -1) == LUA_TSTRING) {
+            luaL_error(state, "daukle.provision: headers.%s must name an environment"
+                              " variable, not a value", name);
+        }
+        if (!lua_istable(state, -1)) {
+            luaL_error(state, "daukle.provision: headers.%s must be a table naming env", name);
+        }
+        if (count == FR_PROVISION_MAX_HEADERS) {
+            luaL_error(state, "daukle.provision: more than %d headers",
+                       FR_PROVISION_MAX_HEADERS);
+        }
+
+        lua_pushstring(state, "env");
+        lua_rawget(state, -2);
+        const char *variable = lua_type(state, -1) == LUA_TSTRING
+                             ? lua_tostring(state, -1) : NULL;
+        if (variable == NULL) {
+            luaL_error(state, "daukle.provision: headers.%s needs an env string", name);
+        }
+        if (fr_lua_verbs_is_core_credential(variable)
+            && !fr_lua_verbs_env_is_declared(variable)) {
+            luaL_error(state, "daukle.provision: headers.%s names %s, which this plugin did"
+                              " not declare in env", name, variable);
+        }
+
+        lua_pushstring(state, "format");
+        lua_rawget(state, -3);
+        const char *format = lua_type(state, -1) == LUA_TSTRING
+                           ? lua_tostring(state, -1) : NULL;
+        if (format != NULL && !format_takes_one_string(format)) {
+            luaL_error(state, "daukle.provision: headers.%s format takes exactly one %%s", name);
+        }
+
+        const char *value = getenv(variable);
+        if (value != NULL && value[0] != 0) {
+            char *rendered = NULL;
+            if (format != NULL) {
+                size_t length = strlen(format) + strlen(value) + 1;
+                rendered = malloc(length);
+                if (rendered != NULL) snprintf(rendered, length, format, value);
+            } else {
+                rendered = fr_dup_string(value);
+            }
+            char *header_name = fr_dup_string(name);
+            if (rendered == NULL || header_name == NULL) {
+                free(rendered);
+                free(header_name);
+                luaL_error(state, "out of memory building the %s header", name);
+            }
+            out[count].name = header_name;
+            out[count].value = rendered;
+            count++;
+        }
+
+        lua_pop(state, 3);
+    }
+    return count;
+}
+
+static void free_provision_headers(fr_http_header *headers, size_t count) {
+    for (size_t index = 0; index < count; index++) {
+        free((char *) headers[index].name);
+        free((char *) headers[index].value);
+    }
 }
 
 static int verb_provision(lua_State *state) {
@@ -550,9 +657,16 @@ static int verb_provision(lua_State *state) {
         return luaL_error(state, "daukle.provision field \"as\" may not hold a control character");
     }
 
+    fr_http_header headers[FR_PROVISION_MAX_HEADERS];
+    memset(headers, 0, sizeof headers);
+    size_t header_count = read_provision_headers(state, headers);
+
     fr_provision_result result;
     fr_error err;
-    if (fr_provision(url, digest, &result, &err) != FR_OK) {
+    int provisioned = fr_provision(url, digest, header_count > 0 ? headers : NULL,
+                                   header_count, &result, &err);
+    free_provision_headers(headers, header_count);
+    if (provisioned != FR_OK) {
         return luaL_error(state, "%s", err.message);
     }
     fr_toolreport_provisioned(label, url, digest, result.was_cached);
