@@ -5,6 +5,7 @@
 #include "net/http.h"
 #include "util/error.h"
 #include "util/sha256.h"
+#include "util/tree.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -21,71 +22,6 @@
 #endif
 
 #define PROVISION_DIGEST_LENGTH 64
-
-typedef void (*child_visitor)(const char *child_path, int is_directory, int is_link);
-
-static void for_each_child(const char *directory, child_visitor visit) {
-#ifdef _WIN32
-    char pattern[1024];
-    int written = snprintf(pattern, sizeof pattern, "%s/*", directory);
-    if (written < 0 || (size_t) written >= sizeof pattern) return;
-
-    WIN32_FIND_DATAA found;
-    HANDLE handle = FindFirstFileA(pattern, &found);
-    if (handle == INVALID_HANDLE_VALUE) return;
-    do {
-        if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) continue;
-        char child[1024];
-        int child_written = snprintf(child, sizeof child, "%s/%s", directory, found.cFileName);
-        if (child_written < 0 || (size_t) child_written >= sizeof child) continue;
-        visit(child, (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0,
-              (found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
-    } while (FindNextFileA(handle, &found));
-    FindClose(handle);
-#else
-    DIR *dir = opendir(directory);
-    if (dir == NULL) return;
-    const struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-        char child[1024];
-        int written = snprintf(child, sizeof child, "%s/%s", directory, entry->d_name);
-        if (written < 0 || (size_t) written >= sizeof child) continue;
-        struct stat info;
-        if (lstat(child, &info) != 0) continue;
-        int is_link = S_ISLNK(info.st_mode);
-        visit(child, !is_link && S_ISDIR(info.st_mode), is_link);
-    }
-    closedir(dir);
-#endif
-}
-
-static void remove_tree(const char *directory);
-
-/* A link is removed as the single node it is rather than descended into:
-   fr_unpack writes contained symlinks, and opening a directory symlink for
-   listing follows it, which is how an unguarded sweep deletes through one. */
-static void remove_child(const char *child_path, int is_directory, int is_link) {
-    if (is_link) {
-#ifdef _WIN32
-        if (is_directory) RemoveDirectoryA(child_path); else remove(child_path);
-#else
-        remove(child_path);
-#endif
-        return;
-    }
-    if (is_directory) remove_tree(child_path);
-    else remove(child_path);
-}
-
-static void remove_tree(const char *directory) {
-    for_each_child(directory, remove_child);
-#ifdef _WIN32
-    RemoveDirectoryA(directory);
-#else
-    rmdir(directory);
-#endif
-}
 
 static int make_directory(const char *directory) {
 #ifdef _WIN32
@@ -258,7 +194,7 @@ int fr_provision(const char *url, const char *sha256_hex, fr_provision_result *o
         out->root[0] = '\0';
         return FR_ERR;
     }
-    remove_tree(temporary);
+    fr_remove_tree(temporary);
     if (!make_directory(temporary)) {
         fr_error_set(err, "cannot create a temporary directory under %s", toolchains);
         out->root[0] = '\0';
@@ -281,7 +217,7 @@ int fr_provision(const char *url, const char *sha256_hex, fr_provision_result *o
         result = FR_ERR;
     }
 
-    remove_tree(temporary);
+    fr_remove_tree(temporary);
     if (result != FR_OK) {
         out->root[0] = '\0';
         return FR_ERR;
