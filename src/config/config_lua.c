@@ -764,6 +764,7 @@ int fr_lua_resolver_call(const char *coordinate, const cJSON *block, char **out_
 #define FR_LUA_MAX_CHUNK_TOOLCHAINS 8
 static char *chunk_toolchains[FR_LUA_MAX_CHUNK_TOOLCHAINS];
 static size_t chunk_toolchain_count;
+static size_t chunk_publisher_count;
 
 static void chunk_toolchains_clear(void) {
     for (size_t index = 0; index < chunk_toolchain_count; index++) free(chunk_toolchains[index]);
@@ -775,6 +776,7 @@ static void chunk_state_clear(void) {
     chunk_toolchains_clear();
     chunk_declared_resolver = 0;
     chunk_declared_other = 0;
+    chunk_publisher_count = 0;
 }
 
 static int chunk_declares_toolchain(const char *name, size_t length) {
@@ -901,6 +903,28 @@ static int protected_task_run(lua_State *state) {
     lua_setfield(state, -2, "dependencies");
     lua_setfield(state, -2, "toolchain");
 
+    if (context->publish != NULL) {
+        lua_newtable(state);
+        lua_pushstring(state, context->publish->name);
+        lua_setfield(state, -2, "name");
+
+        lua_newtable(state);
+        const cJSON *member = context->publish->block != NULL
+            ? context->publish->block->child : NULL;
+        while (member != NULL) {
+            if (strcmp(member->string, "from") != 0) {
+                fr_error push_err;
+                if (fr_lua_push_json(state, member, &push_err) != FR_OK) {
+                    return luaL_error(state, "%s", push_err.message);
+                }
+                lua_setfield(state, -2, member->string);
+            }
+            member = member->next;
+        }
+        lua_setfield(state, -2, "config");
+        lua_setfield(state, -2, "publish");
+    }
+
     /* lua_call, not lua_pcall: see protected_language_apply above. */
     lua_call(state, 1, 0);
     return 0;
@@ -954,6 +978,10 @@ static int lua_declare_task(lua_State *state) {
        plugin" would be false for a plugin that is one and simply declares it
        below. Naming the order is true in both cases and is also the fix. */
     if (chunk_toolchain_count == 0) {
+        if (chunk_publisher_count > 0) {
+            return luaL_error(state, "a publisher declares publishers, not tasks: its publish"
+                                     " function is the task, and daukle.exec is available there");
+        }
         if (fr_lua_verbs_env_declared_exec()) {
             return luaL_error(state, "daukle.exec is available only to a task whose toolchain is"
                                      " declared above it; this chunk declares none yet");
@@ -1063,6 +1091,27 @@ static int lua_declare_task(lua_State *state) {
     if (fr_registry_add_task(registering_into, &plugin, &err) != FR_OK) {
         return luaL_error(state, "%s", err.message);
     }
+    return 0;
+}
+
+static int lua_declare_publisher(lua_State *state) {
+    if (chunk_declared_resolver) {
+        return luaL_error(state, "a resolver chunk declares only a resolver");
+    }
+    chunk_declared_other = 1;
+    luaL_checktype(state, 1, LUA_TTABLE);
+
+    fr_lua_plugin_slot *slot = NULL;
+    if (take_slot(state, "daukle.task/publish:", "publish", &slot) != 0 || slot == NULL) {
+        return luaL_error(state, "a publisher could not be declared");
+    }
+
+    fr_task_plugin plugin = { slot->capability, NULL, NULL, 0, lua_task_run, slot };
+    fr_error err;
+    if (fr_registry_add_task(registering_into, &plugin, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    chunk_publisher_count++;
     return 0;
 }
 
@@ -1377,6 +1426,8 @@ void fr_lua_verbs_install_registration(lua_State *state) {
     lua_setfield(state, -2, "toolchain");
     lua_pushcfunction(state, lua_declare_task);
     lua_setfield(state, -2, "task");
+    lua_pushcfunction(state, lua_declare_publisher);
+    lua_setfield(state, -2, "publisher");
     lua_pushcfunction(state, lua_declare_resolver);
     lua_setfield(state, -2, "resolver");
     lua_pushcfunction(state, lua_declare_plugin);

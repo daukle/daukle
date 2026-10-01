@@ -245,6 +245,74 @@ TEST a_task_block_refuses_a_key_it_does_not_define(void) {
     PASS();
 }
 
+TEST a_publish_block_carries_its_from_and_its_block(void) {
+    cJSON *root = cJSON_Parse(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"},"
+        "\"publish\":{\"github\":{\"from\":\"gradle\",\"tokenEnv\":\"GITHUB_TOKEN\"}}}");
+    fr_manifest manifest; fr_error err;
+    int status = fr_manifest_from_document(root, "daukle.toml", &manifest, &err);
+
+    int count_ok = status == FR_OK && manifest.publish_count == 1;
+    int fields_ok = count_ok
+        && strcmp(manifest.publishes[0].name, "github") == 0
+        && strcmp(manifest.publishes[0].from, "gradle") == 0
+        && manifest.publishes[0].block != NULL;
+    if (status == FR_OK) fr_manifest_free(&manifest);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(count_ok);
+    ASSERT(fields_ok);
+    PASS();
+}
+
+TEST a_publish_block_without_from_is_refused(void) {
+    cJSON *root = cJSON_Parse(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"},"
+        "\"publish\":{\"github\":{\"tokenEnv\":\"GITHUB_TOKEN\"}}}");
+    fr_manifest manifest; fr_error err;
+    int status = fr_manifest_from_document(root, "daukle.toml", &manifest, &err);
+    char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+    if (status == FR_OK) fr_manifest_free(&manifest);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "needs a \"from\"") != NULL);
+    PASS();
+}
+
+TEST a_publish_from_naming_no_toolchain_is_refused(void) {
+    cJSON *root = cJSON_Parse(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"},"
+        "\"publish\":{\"github\":{\"from\":\"maven\"}}}");
+    fr_manifest manifest; fr_error err;
+    int status = fr_manifest_from_document(root, "daukle.toml", &manifest, &err);
+    char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+    if (status == FR_OK) fr_manifest_free(&manifest);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "declares no toolchain \"maven\"") != NULL);
+    PASS();
+}
+
+TEST a_toolchain_named_publish_is_refused(void) {
+    cJSON *root = cJSON_Parse(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"publish\":\"1.0\"}}");
+    fr_manifest manifest; fr_error err;
+    int status = fr_manifest_from_document(root, "daukle.toml", &manifest, &err);
+    char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+    if (status == FR_OK) fr_manifest_free(&manifest);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT(strstr(message, "toolchains.publish may not be named \"publish\"") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -267,5 +335,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_toolchains_table_that_is_not_a_table_is_rejected);
     RUN_TEST(a_tasks_table_is_read);
     RUN_TEST(a_task_block_refuses_a_key_it_does_not_define);
+    RUN_TEST(a_publish_block_carries_its_from_and_its_block);
+    RUN_TEST(a_publish_block_without_from_is_refused);
+    RUN_TEST(a_publish_from_naming_no_toolchain_is_refused);
+    RUN_TEST(a_toolchain_named_publish_is_refused);
     GREATEST_MAIN_END();
 }

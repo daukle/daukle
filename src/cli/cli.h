@@ -13,6 +13,7 @@ typedef enum {
     FR_CLI_VERSION,
     FR_CLI_TASK,
     FR_CLI_TASKS,
+    FR_CLI_PUBLISH,
     FR_CLI_USAGE
 } fr_cli_command;
 
@@ -37,6 +38,8 @@ typedef struct {
        no positional manifest path, because two bare words cannot be told
        apart from a task and a path. */
     const char *task_name;
+    /* The destination "daukle publish" names, or NULL for every declared one. */
+    const char *publish_name;
 } fr_cli_options;
 
 void fr_cli_parse(int argc, char **argv, fr_cli_options *out);

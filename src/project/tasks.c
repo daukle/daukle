@@ -11,7 +11,7 @@
 #define FR_TASK_CAPABILITY_PREFIX "daukle.task/"
 
 static const char *RESERVED_COMMANDS[] = {
-    "sync", "check", "add", "config", "plugin", "clean", "tasks"
+    "sync", "check", "add", "config", "plugin", "clean", "tasks", "publish"
 };
 
 int fr_tasks_name_is_reserved(const char *name) {
@@ -63,6 +63,31 @@ static const fr_toolchain *toolchain_for(const fr_manifest *manifest, const char
         }
     }
     return NULL;
+}
+
+static const char PUBLISH_PREFIX[] = "publish";
+
+static int prefix_is_publish(const char *name, size_t prefix) {
+    return strlen(PUBLISH_PREFIX) == prefix && strncmp(PUBLISH_PREFIX, name, prefix) == 0;
+}
+
+static const fr_publish_target *publish_target_for(const fr_manifest *manifest, const char *name,
+                                                   size_t prefix) {
+    const char *destination = name + prefix + 1;
+    for (size_t index = 0; index < manifest->publish_count; index++) {
+        if (strcmp(manifest->publishes[index].name, destination) == 0) {
+            return &manifest->publishes[index];
+        }
+    }
+    return NULL;
+}
+
+/* The destination's "from" is validated when the manifest is read, so this returns NULL only
+   for a manifest built another way; a caller that gets NULL skips the task rather than handing
+   a run a toolchain-less node. */
+static const fr_toolchain *toolchain_of_destination(const fr_manifest *manifest,
+                                                    const fr_publish_target *publish) {
+    return toolchain_for(manifest, publish->from, strlen(publish->from));
 }
 
 const fr_task_node *fr_tasks_find(const fr_task_set *set, const char *name) {
@@ -136,9 +161,17 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
         }
 
         const fr_toolchain *toolchain = NULL;
+        const fr_publish_target *publish = NULL;
         if (prefix > 0) {
-            toolchain = toolchain_for(manifest, name, prefix);
-            if (toolchain == NULL) continue;
+            if (prefix_is_publish(name, prefix)) {
+                publish = publish_target_for(manifest, name, prefix);
+                if (publish == NULL) continue;
+                toolchain = toolchain_of_destination(manifest, publish);
+                if (toolchain == NULL) continue;
+            } else {
+                toolchain = toolchain_for(manifest, name, prefix);
+                if (toolchain == NULL) continue;
+            }
         }
 
         fr_task_node node;
@@ -149,6 +182,7 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
         node.depends_on_count = plugin->depends_on_count;
         node.plugin = plugin;
         node.toolchain = toolchain;
+        node.publish = publish;
         if (append(out, &node, err) != FR_OK) {
             fr_tasks_set_free(out);
             return FR_ERR;
@@ -408,6 +442,11 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
         const fr_task_node *node = plan->nodes[index];
         if (node->plugin == NULL || node->plugin->run == NULL) continue;
 
+        if (node->publish != NULL) {
+            fprintf(stderr, "daukle publish: %s (from %s)\n", node->publish->name,
+                    node->publish->from);
+        }
+
         char *derived_dir = NULL;
         if (fr_derived_dir(session->manifest_dir, node->toolchain->name, &derived_dir, err) != FR_OK) {
             return FR_ERR;
@@ -446,6 +485,7 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
         fr_task_run_context context;
         context.name = node->name;
         context.toolchain = node->toolchain;
+        context.publish = node->publish;
         context.project = session->manifest.self.project;
         context.version = version;
         context.root = FR_DERIVED_ROOT_RELATIVE;
@@ -463,6 +503,33 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
             fr_error_set(err, "task \"%s\": %s", node->name, original);
             return FR_ERR;
         }
+    }
+    return FR_OK;
+}
+
+int fr_tasks_publish_goal(const char *destination, char *out, size_t out_size) {
+    int written = snprintf(out, out_size, "%s:%s", PUBLISH_PREFIX, destination);
+    return written > 0 && (size_t) written < out_size;
+}
+
+int fr_tasks_check_publish(const fr_task_set *set, const fr_manifest *manifest,
+                           const char *only, fr_error *err) {
+    for (size_t index = 0; index < manifest->publish_count; index++) {
+        const fr_publish_target *target = &manifest->publishes[index];
+        if (only != NULL && strcmp(only, target->name) != 0) continue;
+        char goal[160];
+        if (!fr_tasks_publish_goal(target->name, goal, sizeof goal)) {
+            fr_error_set(err, "the publish destination \"%s\" is too long", target->name);
+            return FR_ERR;
+        }
+        if (fr_tasks_find(set, goal) == NULL) {
+            fr_error_set(err, "no plugin declares a publisher named \"%s\", which [publish.%s]"
+                              " needs", target->name, target->name);
+            return FR_ERR;
+        }
+        fr_task_plan plan;
+        if (fr_tasks_plan(set, goal, &plan, err) != FR_OK) return FR_ERR;
+        fr_tasks_plan_free(&plan);
     }
     return FR_OK;
 }

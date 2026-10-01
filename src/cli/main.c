@@ -625,6 +625,97 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
     return 0;
 }
 
+static int run_publish(const char *only, int use_cache, int verbose) {
+    fr_error err;
+    char *resolved = NULL;
+    if (resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    fr_session session;
+    int opened = fr_session_open(resolved, use_cache, &session, &err);
+    free(resolved);
+    if (opened != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    fr_task_set set;
+    if (fr_tasks_collect(session.registry, &session.manifest, &set, &err) != FR_OK) {
+        fr_session_close(&session);
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    int matched = 0;
+    for (size_t index = 0; index < session.manifest.publish_count; index++) {
+        if (only == NULL || strcmp(only, session.manifest.publishes[index].name) == 0) matched++;
+    }
+    if (matched == 0) {
+        fr_tasks_set_free(&set);
+        if (only == NULL) {
+            fprintf(stderr, "daukle: this project declares no publish destinations\n");
+        } else {
+            fprintf(stderr, "daukle: this project declares no publish destination \"%s\"\n", only);
+        }
+        fr_session_close(&session);
+        return 2;
+    }
+
+    if (fr_tasks_check_publish(&set, &session.manifest, only, &err) != FR_OK) {
+        fr_tasks_set_free(&set);
+        fr_session_close(&session);
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    fr_sync_report report;
+    if (fr_sync_session(&session, 1, &report, &err) != FR_OK) {
+        fr_sync_report_free(&report);
+        fr_tasks_set_free(&set);
+        fr_session_close(&session);
+        report_error(&err, verbose);
+        return 1;
+    }
+    fr_sync_report_free(&report);
+
+    for (size_t index = 0; index < session.manifest.publish_count; index++) {
+        const fr_publish_target *target = &session.manifest.publishes[index];
+        if (only != NULL && strcmp(only, target->name) != 0) continue;
+
+        char goal[160];
+        if (!fr_tasks_publish_goal(target->name, goal, sizeof goal)) {
+            fr_error_set(&err, "the publish destination \"%s\" is too long", target->name);
+            fr_tasks_set_free(&set);
+            fr_session_close(&session);
+            report_error(&err, verbose);
+            return 1;
+        }
+
+        fr_task_plan plan;
+        if (fr_tasks_plan(&set, goal, &plan, &err) != FR_OK) {
+            fr_tasks_set_free(&set);
+            fr_session_close(&session);
+            report_error(&err, verbose);
+            return 1;
+        }
+        int status = fr_tasks_run(&plan, &session, &err);
+        fr_tasks_plan_free(&plan);
+        if (status != FR_OK) {
+            fr_tasks_set_free(&set);
+            fr_session_close(&session);
+            report_error(&err, verbose);
+            return 1;
+        }
+        printf("daukle: %s\n", goal);
+    }
+
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    return 0;
+}
+
 #define FR_TASKS_JOINER_CAPACITY 32
 
 /* label reads in the direction that kind actually runs: FR_TASK_JOIN_PART_OF
@@ -724,6 +815,8 @@ int main(int argc, char **argv) {
             return run_task(options.task_name, options.use_cache, options.verbose);
         case FR_CLI_TASKS:
             return list_tasks(options.use_cache, options.verbose);
+        case FR_CLI_PUBLISH:
+            return run_publish(options.publish_name, options.use_cache, options.verbose);
         case FR_CLI_USAGE:
             break;
     }
@@ -736,7 +829,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "usage: daukle [--version | sync [manifest] | check [manifest]"
                     " | add <project>@<range> --to <consumer> [--modules a,b]"
                     " | config print | plugin update [label] | clean [manifest]"
-                    " | tasks | <task>]"
+                    " | tasks | publish [name] | <task>]"
                     " [--no-cache] [--verbose]\n");
     return 2;
 }

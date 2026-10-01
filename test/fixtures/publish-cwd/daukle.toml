@@ -1,0 +1,15 @@
+schema = 1
+project = "forebay/publish-cwd"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+runner = "./plugins/runner.lua"
+publisher = "./plugins/publisher.lua"
+
+[toolchains.runner]
+version = "1"
+
+[publish.somewhere]
+from = "runner"

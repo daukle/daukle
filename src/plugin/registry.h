@@ -41,6 +41,9 @@ typedef struct {
 typedef struct {
     const char *name;
     const fr_toolchain *toolchain;
+    /* The destination when this task is a publish step, NULL for every other task.
+       toolchain stays non-NULL either way: a destination names one. */
+    const fr_publish_target *publish;
     const char *project;
     const char *version;
     const char *root;

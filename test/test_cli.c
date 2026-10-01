@@ -281,6 +281,32 @@ TEST every_built_in_command_word_is_also_a_reserved_task_name(void) {
     PASS();
 }
 
+TEST publish_with_no_word_means_every_destination(void) {
+    const char *argv[] = { "daukle", "publish" };
+    fr_cli_options options;
+    fr_cli_parse(2, (char **) argv, &options);
+    ASSERT_EQ(FR_CLI_PUBLISH, options.command);
+    ASSERT(options.publish_name == NULL);
+    PASS();
+}
+
+TEST publish_with_a_word_names_one_destination(void) {
+    const char *argv[] = { "daukle", "publish", "github" };
+    fr_cli_options options;
+    fr_cli_parse(3, (char **) argv, &options);
+    ASSERT_EQ(FR_CLI_PUBLISH, options.command);
+    ASSERT_STR_EQ("github", options.publish_name);
+    PASS();
+}
+
+TEST publish_with_two_words_is_usage(void) {
+    const char *argv[] = { "daukle", "publish", "github", "extra" };
+    fr_cli_options options;
+    fr_cli_parse(4, (char **) argv, &options);
+    ASSERT_EQ(FR_CLI_USAGE, options.command);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -314,5 +340,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_task_takes_no_second_word);
     RUN_TEST(tasks_is_a_command_not_a_task);
     RUN_TEST(every_built_in_command_word_is_also_a_reserved_task_name);
+    RUN_TEST(publish_with_no_word_means_every_destination);
+    RUN_TEST(publish_with_a_word_names_one_destination);
+    RUN_TEST(publish_with_two_words_is_usage);
     GREATEST_MAIN_END();
 }

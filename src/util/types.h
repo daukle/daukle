@@ -55,6 +55,15 @@ typedef struct {
     size_t dependency_count;
 } fr_toolchain;
 
+/* A publish destination. block is the [publish.<name>] table, borrowed from the
+   manifest document; from names a toolchain the same manifest declares, which is
+   what gives a publish task a toolchain and therefore a working directory. */
+typedef struct {
+    char *name;
+    char *from;
+    const struct cJSON *block;
+} fr_publish_target;
+
 /* part_of is NULL when the task joins no aggregator. A manifest block carries
    edges only: it never carries a body, because a body is Lua and a manifest
    is data. */
@@ -89,6 +98,8 @@ typedef struct {
     size_t toolchain_count;
     fr_task *tasks;
     size_t task_count;
+    fr_publish_target *publishes;
+    size_t publish_count;
     struct cJSON *document;
 } fr_manifest;
 

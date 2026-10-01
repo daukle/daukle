@@ -21,6 +21,7 @@ typedef struct {
     const char *extra_part_of;
     const fr_task_plugin *plugin;
     const fr_toolchain *toolchain;
+    const fr_publish_target *publish;  /* NULL unless the name carries the "publish:" prefix */
 } fr_task_node;
 
 typedef struct {
@@ -87,5 +88,15 @@ void fr_tasks_unknown_message(const char *goal, size_t plugin_count, char *out, 
    whose run raises stops the run: tasks already run stay run, and nothing is
    undone. */
 int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *err);
+
+/* Spells the task name a publish destination runs under. Non-zero when it fit. */
+int fr_tasks_publish_goal(const char *destination, char *out, size_t out_size);
+
+/* Fails naming the first destination no publisher declares, or whose plan cannot be
+   built. only names one destination, or is NULL for every declared one. Every selected
+   destination is planned here, before anything runs: the first upload must not happen on
+   a run whose third destination was never going to resolve. */
+int fr_tasks_check_publish(const fr_task_set *set, const fr_manifest *manifest,
+                           const char *only, fr_error *err);
 
 #endif

@@ -513,6 +513,60 @@ TEST a_task_runs_its_child_in_the_derived_directory(void) {
     PASS();
 }
 
+/* The publisher plugin declares no toolchain at all; the "runner" toolchain
+   comes from a second plugin in the same manifest. That split is the point:
+   a publisher gets exec without being, or needing, a toolchain itself, and
+   the child still lands in the directory the destination's "from" derives. */
+TEST a_publisher_runs_its_child_in_the_from_toolchains_directory(void) {
+    char directory[1024];
+    snprintf(directory, sizeof directory, "%s", self_path);
+    char *last = strrchr(directory, '/');
+    char *last_back = strrchr(directory, '\\');
+    if (last_back != NULL && (last == NULL || last_back > last)) last = last_back;
+    if (last != NULL) *last = '\0';
+
+    fr_error err;
+    fr_session session;
+    ASSERT_EQ(FR_OK, fr_session_open("test/fixtures/publish-cwd/daukle.toml", 1, &session, &err));
+
+    fr_sync_report report;
+    ASSERT_EQ(FR_OK, fr_sync_session(&session, 1, &report, &err));
+    fr_sync_report_free(&report);
+
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "publish:somewhere", &plan, &err));
+
+    const char *original_path = getenv("PATH");
+    char saved_path[4096];
+    snprintf(saved_path, sizeof saved_path, "%s", original_path == NULL ? "" : original_path);
+    char path_value[4096];
+#ifdef _WIN32
+    snprintf(path_value, sizeof path_value, "%s;%s", directory, saved_path);
+#else
+    snprintf(path_value, sizeof path_value, "%s:%s", directory, saved_path);
+#endif
+    put_environment("PATH", path_value);
+    put_environment("DAUKLE_TEST_CHILD", last == NULL ? self_path : last + 1);
+
+    const char *marker = "test/fixtures/publish-cwd/build/daukle/runner/ran-here.txt";
+    remove(marker);
+
+    int status = fr_tasks_run(&plan, &session, &err);
+    int ran_here = file_exists(marker);
+
+    put_environment("PATH", saved_path);
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    remove(marker);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(ran_here);
+    PASS();
+}
+
 /* plugin-deps-e2e declares one root plugin ("dependent") that requires one dependency
    ("provider", replaced by a path override so nothing is fetched over the network): the report
    therefore carries two rows, and "this project declares N plugins" must still say 1, not 2, since
@@ -598,6 +652,7 @@ int main(int argc, char **argv) {
     RUN_TEST(no_cache_bypasses_both_the_read_and_the_write);
     RUN_TEST(the_same_manifest_in_two_formats_writes_the_same_file);
     RUN_TEST(a_task_runs_its_child_in_the_derived_directory);
+    RUN_TEST(a_publisher_runs_its_child_in_the_from_toolchains_directory);
     RUN_TEST(an_unknown_goal_names_the_plugin_count);
     RUN_TEST(check_runs_no_task);
     RUN_TEST(a_required_modules_return_value_reaches_the_registry);
