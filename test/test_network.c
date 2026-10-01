@@ -1,6 +1,8 @@
 #include "greatest.h"
 #include "net/http.h"
 
+#include "support.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -10,8 +12,15 @@
    codeload.github.com at the same moment. Retrying keeps the assertion on every
    platform while absorbing that, and a real outage still fails after the last
    attempt, so red here still means something. Attempts are deliberately few: the
-   point is to survive a blip, not to wait out a sustained failure. */
+   point is to survive a blip, not to wait out a sustained failure.
+
+   The wait between attempts is the part that was missing until 2026-10-01, and
+   its absence was measured rather than argued: github returned 500 three times
+   in 56 milliseconds on an ubuntu runner, which is one attempt wearing a loop,
+   and a re-run minutes later was green. A retry with no wait survives a blip
+   only if the blip is shorter than three round trips. */
 #define FR_NETWORK_ATTEMPTS 3
+#define FR_NETWORK_RETRY_SECONDS 2
 
 TEST fetches_a_real_release_asset(void) {
     if (getenv("DAUKLE_NETWORK_TESTS") == NULL) SKIPm("DAUKLE_NETWORK_TESTS is not set");
@@ -27,6 +36,7 @@ TEST fetches_a_real_release_asset(void) {
         if (status == FR_OK) break;
         fprintf(stderr, "network attempt %d of %d failed: %s\n", attempt, FR_NETWORK_ATTEMPTS,
                 err.message);
+        if (attempt < FR_NETWORK_ATTEMPTS) fr_test_sleep_seconds(FR_NETWORK_RETRY_SECONDS);
     }
     /* err lives on this frame and greatest keeps the message POINTER, so the
        last attempt's reason is copied somewhere that outlives the failure. */

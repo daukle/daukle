@@ -418,3 +418,15 @@ void fr_test_sleep_past_mtime_resolution(void) {
     nanosleep(&duration, NULL);
 #endif
 }
+
+void fr_test_sleep_seconds(int seconds) {
+    if (seconds <= 0) return;
+#ifdef _WIN32
+    Sleep((DWORD) seconds * 1000);
+#else
+    struct timespec duration;
+    duration.tv_sec = seconds;
+    duration.tv_nsec = 0;
+    nanosleep(&duration, NULL);
+#endif
+}
