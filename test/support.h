@@ -35,6 +35,11 @@ long long fr_test_file_mtime(const char *path);
    the two writes landed in one tick. */
 void fr_test_sleep_past_mtime_resolution(void);
 
+/* Sleeps for whole seconds, for a caller backing off between attempts at
+   something outside this machine. Separate from the mtime sleep above so
+   that changing one cannot silently retune the other. */
+void fr_test_sleep_seconds(int seconds);
+
 /* Writes one ustar member into buffer at offset and returns the offset after
    it, so a test states what it is testing instead of spelling out a header.
    This is daukle's own idea of a tar and a reader tested only against it would
