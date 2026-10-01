@@ -436,8 +436,8 @@ TEST the_same_manifest_in_two_formats_writes_the_same_file(void) {
    only way to observe cwd: a run that lost the default would write into
    daukle's own working directory and the assertion below would fail. That is
    the whole point of this test, and the residual it closes. */
-static int run_as_task_child(void) {
-    FILE *marker = fopen("ran-here.txt", "w");
+static int run_as_task_child(const char *marker_name) {
+    FILE *marker = fopen(marker_name, "w");
     if (marker == NULL) return 1;
     fputs("ok", marker);
     fclose(marker);
@@ -567,6 +567,129 @@ TEST a_publisher_runs_its_child_in_the_from_toolchains_directory(void) {
     PASS();
 }
 
+static void record_published_goal(const char *goal, void *state) {
+    char *order = state;
+    size_t used = strlen(order);
+    snprintf(order + used, 256 - used, "%s;", goal);
+}
+
+/* Puts this binary's own directory on PATH and names the binary as the child a
+   fixture's plugin should exec, which is the only route a plugin has to it:
+   daukle.tool searches PATH and refuses a name holding a separator. The caller
+   restores saved_path. */
+static void point_fixtures_at_this_binary(char *saved_path, size_t size) {
+    char directory[1024];
+    snprintf(directory, sizeof directory, "%s", self_path);
+    char *last = strrchr(directory, '/');
+    char *last_back = strrchr(directory, '\\');
+    if (last_back != NULL && (last == NULL || last_back > last)) last = last_back;
+    if (last != NULL) *last = '\0';
+
+    const char *original_path = getenv("PATH");
+    snprintf(saved_path, size, "%s", original_path == NULL ? "" : original_path);
+    char path_value[4096];
+#ifdef _WIN32
+    snprintf(path_value, sizeof path_value, "%s;%s", directory, saved_path);
+#else
+    snprintf(path_value, sizeof path_value, "%s:%s", directory, saved_path);
+#endif
+    put_environment("PATH", path_value);
+
+    const char *base_name = strrchr(self_path, '/');
+    const char *base_back = strrchr(self_path, '\\');
+    if (base_back != NULL && (base_name == NULL || base_back > base_name)) base_name = base_back;
+    put_environment("DAUKLE_TEST_CHILD", base_name == NULL ? self_path : base_name + 1);
+}
+
+/* The other half of the Critical's gap, and the half no unit test can reach:
+   that daukle really does run EVERY selected destination, in the order the
+   manifest declares them. It is a test at all only because the loop was moved
+   out of main.c, which has no test binary, into fr_tasks_run_publish beside the
+   check that guards it. Both markers and the recorded order are asserted: a
+   loop that ran the first destination twice would satisfy either one alone. */
+TEST every_destination_runs_in_the_order_the_manifest_declares(void) {
+    fr_error err;
+    fr_session session;
+    ASSERT_EQ(FR_OK, fr_session_open("test/fixtures/publish-two/daukle.toml", 1, &session, &err));
+
+    fr_sync_report report;
+    ASSERT_EQ(FR_OK, fr_sync_session(&session, 1, &report, &err));
+    fr_sync_report_free(&report);
+
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
+
+    char saved_path[4096];
+    point_fixtures_at_this_binary(saved_path, sizeof saved_path);
+
+    const char *alpha_marker = "test/fixtures/publish-two/build/daukle/runner/alpha-ran.txt";
+    const char *beta_marker = "test/fixtures/publish-two/build/daukle/runner/beta-ran.txt";
+    remove(alpha_marker);
+    remove(beta_marker);
+
+    static char order[256];
+    order[0] = '\0';
+    int checked = fr_tasks_check_publish(&set, &session.manifest, NULL, &err);
+    int status = fr_tasks_run_publish(&set, &session, NULL, record_published_goal, order, &err);
+    int alpha_ran = file_exists(alpha_marker);
+    int beta_ran = file_exists(beta_marker);
+
+    put_environment("PATH", saved_path);
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    remove(alpha_marker);
+    remove(beta_marker);
+
+    ASSERT_EQ(FR_OK, checked);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(alpha_ran);
+    ASSERT(beta_ran);
+    ASSERT_STR_EQ("publish:alpha;publish:beta;", order);
+    PASS();
+}
+
+/* The filter the same loop carries, which "daukle publish beta" reaches. It is
+   asserted here because moving the loop into core moved this line with it, and
+   a line that changed layers without gaining a test has only moved. */
+TEST naming_one_destination_runs_only_that_one(void) {
+    fr_error err;
+    fr_session session;
+    ASSERT_EQ(FR_OK, fr_session_open("test/fixtures/publish-two/daukle.toml", 1, &session, &err));
+
+    fr_sync_report report;
+    ASSERT_EQ(FR_OK, fr_sync_session(&session, 1, &report, &err));
+    fr_sync_report_free(&report);
+
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
+
+    char saved_path[4096];
+    point_fixtures_at_this_binary(saved_path, sizeof saved_path);
+
+    const char *alpha_marker = "test/fixtures/publish-two/build/daukle/runner/alpha-ran.txt";
+    const char *beta_marker = "test/fixtures/publish-two/build/daukle/runner/beta-ran.txt";
+    remove(alpha_marker);
+    remove(beta_marker);
+
+    static char order[256];
+    order[0] = '\0';
+    int status = fr_tasks_run_publish(&set, &session, "beta", record_published_goal, order, &err);
+    int alpha_ran = file_exists(alpha_marker);
+    int beta_ran = file_exists(beta_marker);
+
+    put_environment("PATH", saved_path);
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    remove(alpha_marker);
+    remove(beta_marker);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(beta_ran);
+    ASSERT(!alpha_ran);
+    ASSERT_STR_EQ("publish:beta;", order);
+    PASS();
+}
+
 /* plugin-deps-e2e declares one root plugin ("dependent") that requires one dependency
    ("provider", replaced by a path override so nothing is fetched over the network): the report
    therefore carries two rows, and "this project declares N plugins" must still say 1, not 2, since
@@ -642,7 +765,9 @@ GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
     self_path = argv[0];
-    if (argc == 2 && strcmp(argv[1], "--task-child") == 0) return run_as_task_child();
+    if (argc >= 2 && strcmp(argv[1], "--task-child") == 0) {
+        return run_as_task_child(argc >= 3 ? argv[2] : "ran-here.txt");
+    }
     GREATEST_MAIN_BEGIN();
     RUN_TEST(reproduces_both_real_consumers);
     RUN_TEST(the_second_run_changes_nothing);
@@ -653,6 +778,8 @@ int main(int argc, char **argv) {
     RUN_TEST(the_same_manifest_in_two_formats_writes_the_same_file);
     RUN_TEST(a_task_runs_its_child_in_the_derived_directory);
     RUN_TEST(a_publisher_runs_its_child_in_the_from_toolchains_directory);
+    RUN_TEST(every_destination_runs_in_the_order_the_manifest_declares);
+    RUN_TEST(naming_one_destination_runs_only_that_one);
     RUN_TEST(an_unknown_goal_names_the_plugin_count);
     RUN_TEST(check_runs_no_task);
     RUN_TEST(a_required_modules_return_value_reaches_the_registry);

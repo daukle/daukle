@@ -533,3 +533,26 @@ int fr_tasks_check_publish(const fr_task_set *set, const fr_manifest *manifest,
     }
     return FR_OK;
 }
+
+int fr_tasks_run_publish(const fr_task_set *set, const fr_session *session, const char *only,
+                         fr_publish_done_fn done, void *done_state, fr_error *err) {
+    for (size_t index = 0; index < session->manifest.publish_count; index++) {
+        const fr_publish_target *target = &session->manifest.publishes[index];
+        if (only != NULL && strcmp(only, target->name) != 0) continue;
+
+        char goal[160];
+        if (!fr_tasks_publish_goal(target->name, goal, sizeof goal)) {
+            fr_error_set(err, "the publish destination \"%s\" is too long", target->name);
+            return FR_ERR;
+        }
+
+        fr_task_plan plan;
+        if (fr_tasks_plan(set, goal, &plan, err) != FR_OK) return FR_ERR;
+        int status = fr_tasks_run(&plan, session, err);
+        fr_tasks_plan_free(&plan);
+        if (status != FR_OK) return FR_ERR;
+
+        if (done != NULL) done(goal, done_state);
+    }
+    return FR_OK;
+}

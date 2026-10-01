@@ -625,6 +625,11 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
     return 0;
 }
 
+static void confirm_published(const char *goal, void *state) {
+    (void) state;
+    printf("daukle: %s\n", goal);
+}
+
 static int run_publish(const char *only, int use_cache, int verbose) {
     fr_error err;
     char *resolved = NULL;
@@ -680,35 +685,11 @@ static int run_publish(const char *only, int use_cache, int verbose) {
     }
     fr_sync_report_free(&report);
 
-    for (size_t index = 0; index < session.manifest.publish_count; index++) {
-        const fr_publish_target *target = &session.manifest.publishes[index];
-        if (only != NULL && strcmp(only, target->name) != 0) continue;
-
-        char goal[160];
-        if (!fr_tasks_publish_goal(target->name, goal, sizeof goal)) {
-            fr_error_set(&err, "the publish destination \"%s\" is too long", target->name);
-            fr_tasks_set_free(&set);
-            fr_session_close(&session);
-            report_error(&err, verbose);
-            return 1;
-        }
-
-        fr_task_plan plan;
-        if (fr_tasks_plan(&set, goal, &plan, &err) != FR_OK) {
-            fr_tasks_set_free(&set);
-            fr_session_close(&session);
-            report_error(&err, verbose);
-            return 1;
-        }
-        int status = fr_tasks_run(&plan, &session, &err);
-        fr_tasks_plan_free(&plan);
-        if (status != FR_OK) {
-            fr_tasks_set_free(&set);
-            fr_session_close(&session);
-            report_error(&err, verbose);
-            return 1;
-        }
-        printf("daukle: %s\n", goal);
+    if (fr_tasks_run_publish(&set, &session, only, confirm_published, NULL, &err) != FR_OK) {
+        fr_tasks_set_free(&set);
+        fr_session_close(&session);
+        report_error(&err, verbose);
+        return 1;
     }
 
     fr_tasks_set_free(&set);

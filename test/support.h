@@ -13,6 +13,13 @@ int fr_test_get_working_directory(char *buffer, size_t size);
 int fr_test_set_working_directory(const char *path);
 void fr_test_prepend_to_path_dir_of(const char *argv_zero);
 
+/* Sends stderr to path until the end call puts it back, so a test can read a
+   trace daukle only ever writes there. The descriptor is duplicated and restored
+   rather than reopened by name, because the console has no portable name to
+   reopen it by. Returns 0 on success, and leaves stderr untouched otherwise. */
+int fr_test_capture_stderr_begin(const char *path);
+void fr_test_capture_stderr_end(void);
+
 /* Writes one breadcrumb to stderr when DAUKLE_TEST_TRACE is set, for a failure
    that reproduces only on a CI runner. stderr because a test that hangs is
    killed, and a killed process loses whatever stdout still held. */

@@ -813,6 +813,91 @@ TEST a_destination_whose_plan_cannot_be_built_is_refused(void) {
     PASS();
 }
 
+/* The one Critical the whole-branch review found lived exactly here: a
+   destination used to be planned only once the destination before it had
+   already uploaded, so a broken second one surfaced after the first had
+   published, against a guarantee with no rollback behind it. Every other case
+   in this file names ONE destination and passes against that bug unchanged,
+   which is why this one names two and breaks only the later.
+
+   The break is a CYCLE rather than a dangling dependency, and that distinction
+   is the test: fr_tasks_plan runs check_every_edge over the whole set before it
+   walks anything, so a missing task is refused whichever goal is planned and
+   cannot be made to belong to one destination. A cycle is found by the walk, so
+   it belongs to the goal that reaches it and to no other. */
+TEST a_later_destinations_broken_plan_is_refused_before_any_of_them_runs(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin alpha = { "daukle.task/publish:alpha", NULL, NULL, 0, never_runs, NULL };
+    fr_task_plugin beta = { "daukle.task/publish:beta", NULL, NULL, 0, never_runs, NULL };
+    fr_task_plugin one = { "daukle.task/gradle:one", NULL, NULL, 0, never_runs, NULL };
+    fr_task_plugin two = { "daukle.task/gradle:two", NULL, NULL, 0, never_runs, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &alpha, &err);
+    fr_registry_add_task(registry, &beta, &err);
+    fr_registry_add_task(registry, &one, &err);
+    fr_registry_add_task(registry, &two, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"},"
+        "\"publish\":{\"alpha\":{\"from\":\"gradle\"},\"beta\":{\"from\":\"gradle\"}},"
+        "\"tasks\":{\"publish:beta\":{\"dependsOn\":[\"gradle:one\"]},"
+        "\"gradle:one\":{\"dependsOn\":[\"gradle:two\"]},"
+        "\"gradle:two\":{\"dependsOn\":[\"gradle:one\"]}}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+
+    int both = fr_tasks_check_publish(&set, &manifest, NULL, &err);
+    static char message[256];
+    snprintf(message, sizeof message, "%s", both == FR_OK ? "(accepted)" : err.message);
+    int alpha_alone = fr_tasks_check_publish(&set, &manifest, "alpha", &err);
+    static char alpha_message[256];
+    snprintf(alpha_message, sizeof alpha_message, "%s",
+             alpha_alone == FR_OK ? "" : err.message);
+
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+
+    ASSERT_EQm(message, FR_ERR, both);
+    ASSERTm(message, strstr(message, "depend on each other in a cycle") != NULL);
+    /* Without this the case could pass for a reason true of alpha as well, and
+       would then be a test of two destinations in name only. */
+    ASSERT_EQm(alpha_message, FR_OK, alpha_alone);
+    PASS();
+}
+
+TEST two_destinations_that_both_plan_pass_the_check(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin alpha = { "daukle.task/publish:alpha", NULL, NULL, 0, never_runs, NULL };
+    fr_task_plugin beta = { "daukle.task/publish:beta", NULL, NULL, 0, never_runs, NULL };
+    fr_task_plugin build = { "daukle.task/gradle:build", NULL, NULL, 0, never_runs, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &alpha, &err);
+    fr_registry_add_task(registry, &beta, &err);
+    fr_registry_add_task(registry, &build, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"gradle\":\"8.10\"},"
+        "\"publish\":{\"alpha\":{\"from\":\"gradle\"},\"beta\":{\"from\":\"gradle\"}},"
+        "\"tasks\":{\"publish:alpha\":{\"dependsOn\":[\"gradle:build\"]},"
+        "\"publish:beta\":{\"dependsOn\":[\"gradle:build\"]}}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+
+    int status = fr_tasks_check_publish(&set, &manifest, NULL, &err);
+    static char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+
+    ASSERT_EQm(message, FR_OK, status);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -849,5 +934,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_destination_with_no_publisher_is_named);
     RUN_TEST(a_destination_with_a_publisher_passes_the_check);
     RUN_TEST(a_destination_whose_plan_cannot_be_built_is_refused);
+    RUN_TEST(a_later_destinations_broken_plan_is_refused_before_any_of_them_runs);
+    RUN_TEST(two_destinations_that_both_plan_pass_the_check);
     GREATEST_MAIN_END();
 }
