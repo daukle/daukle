@@ -7,6 +7,7 @@
 #include "net/http.h"
 #include "plugin/registry.h"
 #include "project/derived.h"
+#include "project/region.h"
 #include "provision/provision.h"
 #include "support.h"
 #include "exec/toolreport.h"
@@ -218,6 +219,79 @@ TEST exec_passes_an_env_addition_to_the_child(void) {
 
     ASSERT_EQm(message, FR_OK, status);
     ASSERTm(message, strstr(seen, "DAUKLE_PLUGIN_TOKEN=from-the-plugin") != NULL);
+    PASS();
+}
+
+/* The third half of D-17, and the only one whose regression leaks a credential.
+   DAUKLE_PLUGIN_TOKEN is named in argv so the child can echo it back and prove
+   the environment really arrived; DAUKLE_HIDDEN_NAME is named nowhere else, so
+   its presence in the trace could only have come from the environment table.
+   The trace is asserted present before it is asserted clean, because a capture
+   that stayed empty reads exactly like one that leaked nothing. */
+TEST verbose_exec_traces_the_command_without_its_environment(void) {
+    char trace_path[1024];
+    snprintf(trace_path, sizeof trace_path, "%s/daukle-verbose-trace-%d.txt",
+             fr_test_temp_base(), fr_test_process_id());
+
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    int captured = fr_test_capture_stderr_begin(trace_path);
+    int status = FR_ERR;
+    if (captured == 0) {
+        fr_lua_verbs_set_verbose(1);
+        status = fr_lua_run_in_env(state,
+            "local t = daukle.tool('test_lua_verbs')\n"
+            "out = daukle.exec(t, { '--exec-env', 'DAUKLE_PLUGIN_TOKEN' },"
+            " { capture = true, env = { DAUKLE_PLUGIN_TOKEN = 'a-real-looking-secret',"
+            " DAUKLE_HIDDEN_NAME = 'another-secret' } }).stdout",
+            "=t", env, &err);
+        fr_lua_verbs_set_verbose(0);
+        fr_test_capture_stderr_end();
+    }
+
+    static char child_output[512];
+    child_output[0] = '\0';
+    if (status == FR_OK) {
+        lua_getfield(state, env, "out");
+        snprintf(child_output, sizeof child_output, "%s",
+                 lua_tostring(state, -1) ? lua_tostring(state, -1) : "");
+    }
+
+    /* The trace is kept on its own, never joined to the child's output: the
+       child echoes the secret by design, so a combined buffer would fail the
+       absence assertions on its own contents. */
+    char *read = NULL;
+    fr_error read_err;
+    static char trace[2048];
+    snprintf(trace, sizeof trace, "(unread)");
+    if (captured == 0 && fr_file_read_text(trace_path, &read, &read_err) == FR_OK) {
+        snprintf(trace, sizeof trace, "%s", read);
+    }
+    static char seen[512];
+    snprintf(seen, sizeof seen, "status=%d err=%s", status,
+             status == FR_OK ? "" : err.message);
+
+    free(read);
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    remove(trace_path);
+
+    ASSERT_EQ(0, captured);
+    ASSERT_EQm(seen, FR_OK, status);
+    ASSERTm(child_output, strstr(child_output, "DAUKLE_PLUGIN_TOKEN=a-real-looking-secret") != NULL);
+    ASSERTm(trace, strstr(trace, "exec test_lua_verbs") != NULL);
+    ASSERTm(trace, strstr(trace, "--exec-env") != NULL);
+    ASSERTm(trace, strstr(trace, "a-real-looking-secret") == NULL);
+    ASSERTm(trace, strstr(trace, "DAUKLE_HIDDEN_NAME") == NULL);
+    ASSERTm(trace, strstr(trace, "another-secret") == NULL);
     PASS();
 }
 
@@ -1954,6 +2028,7 @@ int main(int argc, char **argv) {
     RUN_TEST(exec_raises_on_a_nonzero_exit_by_default);
     RUN_TEST(exec_returns_the_code_when_check_is_false);
     RUN_TEST(exec_passes_an_env_addition_to_the_child);
+    RUN_TEST(verbose_exec_traces_the_command_without_its_environment);
     RUN_TEST(exec_refuses_an_option_key_it_does_not_know);
     RUN_TEST(exec_refuses_anything_that_is_not_a_tool_handle);
     RUN_TEST(tool_names_what_it_could_not_find);

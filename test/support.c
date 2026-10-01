@@ -9,6 +9,7 @@
 
 #ifdef _WIN32
 #include <direct.h>
+#include <io.h>
 #include <process.h>
 #include <sys/stat.h>
 #include <windows.h>
@@ -181,6 +182,43 @@ void fr_test_prepend_to_path_dir_of(const char *argv_zero) {
 
     fr_test_set_env("PATH", new_path);
     free(new_path);
+}
+
+static int g_saved_stderr = -1;
+
+int fr_test_capture_stderr_begin(const char *path) {
+    if (g_saved_stderr >= 0) return -1;
+    fflush(stderr);
+#ifdef _WIN32
+    g_saved_stderr = _dup(_fileno(stderr));
+#else
+    g_saved_stderr = dup(fileno(stderr));
+#endif
+    if (g_saved_stderr < 0) return -1;
+    if (freopen(path, "w", stderr) == NULL) {
+#ifdef _WIN32
+        _close(g_saved_stderr);
+#else
+        close(g_saved_stderr);
+#endif
+        g_saved_stderr = -1;
+        return -1;
+    }
+    return 0;
+}
+
+void fr_test_capture_stderr_end(void) {
+    if (g_saved_stderr < 0) return;
+    fflush(stderr);
+#ifdef _WIN32
+    _dup2(g_saved_stderr, _fileno(stderr));
+    _close(g_saved_stderr);
+#else
+    dup2(g_saved_stderr, fileno(stderr));
+    close(g_saved_stderr);
+#endif
+    g_saved_stderr = -1;
+    clearerr(stderr);
 }
 
 void fr_test_mark(const char *format, ...) {
