@@ -1,9 +1,9 @@
 #include "lua/lua_verbs.h"
 
 #include "cache/cache.h"
-#include "config/config_json.h"
 #include "config/config_lua.h"
 #include "config/jsonedit.h"
+#include "config/jsonx.h"
 #include "exec/exec.h"
 #include "exec/tool.h"
 #include "exec/toolreport.h"
@@ -262,7 +262,7 @@ static int verb_json_parse(lua_State *state) {
 
     cJSON *document = NULL;
     fr_error err;
-    if (fr_config_json_parse(text, &document, &err) != FR_OK) {
+    if (fr_json_parse(text, &document, &err) != FR_OK) {
         return luaL_error(state, "daukle.json_parse: %s", err.message);
     }
 

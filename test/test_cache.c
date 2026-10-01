@@ -132,8 +132,8 @@ TEST round_trips_a_written_manifest(void) {
 
     /* Proves the successful path leaves no ".tmp" sibling behind: it must
        have been renamed into place, not merely written and abandoned. */
-    ASSERT_EQ(0, fr_test_count_files(root, "daukle.json.tmp"));
-    ASSERT_EQ(1, fr_test_count_files(root, "daukle.json"));
+    ASSERT_EQ(0, fr_test_count_files(root, "manifest.tmp"));
+    ASSERT_EQ(1, fr_test_count_files(root, "manifest"));
 
     fr_test_remove_tree(root);
     clear_cache_dir();
@@ -163,7 +163,7 @@ TEST keeps_two_artifacts_of_one_project_and_version_apart(void) {
     free(upstream);
     free(fork);
 
-    ASSERT_EQ(2, fr_test_count_files(root, "daukle.json"));
+    ASSERT_EQ(2, fr_test_count_files(root, "manifest"));
 
     fr_test_remove_tree(root);
     clear_cache_dir();

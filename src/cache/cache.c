@@ -44,6 +44,13 @@ static int has_trailing_dot_component(const char *text) {
     return slash != NULL && slash != text && slash[-1] == '.';
 }
 
+/* The cache stores a manifest as the source returned it and does not parse it,
+   so the name may not claim a format. It was "daukle.json" until 2026-10-01,
+   while a github source had already defaulted to fetching daukle.toml, so every
+   cached toml manifest on disk sat under a .json name. Renaming it invalidates
+   caches written before that date, which is a refetch rather than a failure. */
+#define CACHED_MANIFEST_NAME "manifest"
+
 int fr_cache_component_is_safe(const char *text, int allow_one_slash) {
     if (text == NULL || text[0] == '\0') return 0;
     if (text[0] == '/' || text[0] == '\\') return 0;
@@ -147,13 +154,14 @@ int fr_cache_path(const char *project, const char *version, const char *artifact
     artifact_component(artifact, artifact_id);
 
     size_t length = strlen(root) + 1 + strlen(project) + 1 + strlen(version) + 1
-                  + strlen(artifact_id) + 1 + strlen("daukle.json") + 1;
+                  + strlen(artifact_id) + 1 + strlen(CACHED_MANIFEST_NAME) + 1;
     char *path = malloc(length);
     if (path == NULL) {
         fr_error_set(err, "out of memory building cache path");
         return FR_ERR;
     }
-    snprintf(path, length, "%s/%s/%s/%s/daukle.json", root, project, version, artifact_id);
+    snprintf(path, length, "%s/%s/%s/%s/%s", root, project, version, artifact_id,
+             CACHED_MANIFEST_NAME);
 
     *out_path = path;
     return FR_OK;

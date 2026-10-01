@@ -195,7 +195,7 @@ static int github_stub_get(const char *url, const fr_http_header *headers, size_
 }
 
 static int github_cache_entry_exists(void) {
-    return fr_test_count_files(e2e_cache_root(), "daukle.json") > 0;
+    return fr_test_count_files(e2e_cache_root(), "manifest") > 0;
 }
 
 TEST github_source_matches_path_source(void) {

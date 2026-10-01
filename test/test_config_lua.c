@@ -249,6 +249,20 @@ TEST a_language_plugin_that_raises_an_error_produces_a_clean_failure(void) {
     PASS();
 }
 
+/* The guard this drives had no case at all until 2026-10-01, and was found by
+   mutating it during D-36's file split: a plugin whose apply returns anything
+   but a string reaches lua_tostring, which answers NULL for a table and for
+   nil. Without the refusal the NULL goes on to strlen. */
+TEST a_language_plugin_that_returns_a_non_string_is_refused(void) {
+    fr_error err;
+    fr_sync_report report;
+    ASSERT_EQ(FR_ERR, fr_sync("test/fixtures/lua-plugin-nonstring/daukle.toml", 1, 0,
+                              &report, &err));
+    ASSERT(strstr(err.message, "expected a string") != NULL);
+    ASSERT(strstr(err.message, "table") != NULL);
+    PASS();
+}
+
 /* Same proof for lua_source_load's protected frame: the source plugin's load
    raises before fr_resolve_consumer ever reaches the language plugin. */
 TEST a_source_plugin_that_raises_an_error_produces_a_clean_failure(void) {
@@ -2481,6 +2495,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_lua_root_manifest_loads_the_plugins_it_declares);
     RUN_TEST(a_plugin_name_too_long_for_the_capability_buffer_is_rejected);
     RUN_TEST(a_language_plugin_that_raises_an_error_produces_a_clean_failure);
+    RUN_TEST(a_language_plugin_that_returns_a_non_string_is_refused);
     RUN_TEST(a_source_plugin_that_raises_an_error_produces_a_clean_failure);
     RUN_TEST(a_low_instruction_limit_stops_a_script_that_would_otherwise_finish);
     RUN_TEST(a_low_memory_limit_fails_a_script_that_would_otherwise_finish);

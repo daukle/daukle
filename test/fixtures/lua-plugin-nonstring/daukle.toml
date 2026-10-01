@@ -1,0 +1,14 @@
+schema = 1
+project = "forebay/plugin-nonstring"
+version = "1.0.0"
+
+[modules]
+[sources]
+
+[[consumers]]
+id = "text"
+language = "nonstring"
+file = "deps.txt"
+configuration = "deps"
+
+[consumers.dependencies]

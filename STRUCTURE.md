@@ -72,7 +72,7 @@ the client tier's rules.
 | the three plugin tables, source, language and config | `src/plugin/registry.c` | a plugin. It holds `fr_source_plugin`, `fr_language_plugin` and `fr_config_plugin` |
 | the five plugins that were built in | `plugins/*.lua` | staged here until the repositories in spec section 6 exist. Not fixtures: they are the content those repositories will carry, and `cmake/check_agnostic.cmake` holds every fixture copy byte identical to them |
 | finding the manifest and choosing its format | `src/config/config.c` | a parser. It dispatches to a registered `fr_config_plugin` |
-| reading json text into the document model | `src/config/config_json.c` | a manifest format, nor a registered `fr_config_plugin`. It is reachable only through the `daukle.json_parse` verb |
+| reading json text into the document model | `fr_json_parse` in `src/config/jsonx.c` | a manifest format, nor a registered `fr_config_plugin`. It is reachable only through the `daukle.json_parse` verb. It lived in a `config_json.c` until 2026-10-01, whose name asserted the opposite |
 | reading a toml manifest | `src/config/config_toml.c` | the whole config table. `src/config/config_lua.c` is the overlay beside it, registered the same way |
 | rewriting a marked region of a file in place | `src/project/region.c` | a JSON editor. `src/config/jsonedit.c` is, for files that are JSON |
 | rewriting a toml manifest in place | `src/config/tomledit.c` | a toml parser. It splices spans, as `src/config/jsonedit.c` does for json |
@@ -81,7 +81,7 @@ the client tier's rules.
 | the generation pass: resolving each declared toolchain, building what its `generate` receives, and validating what it returns | `src/project/generate.c`, tested by `test/test_generate.c` | what happens on disk, which is `src/project/derived.c` |
 | the task graph: collecting a plugin-declared task together with the manifest task blocks that add edges to it, planning a goal's transitive closure in dependency order, running that plan, and, for a publish, both halves of the destination sweep: `fr_tasks_check_publish` plans every selected destination before any of them runs, and `fr_tasks_run_publish` then runs them in the order the manifest declares. The two live together because they are one guarantee, and the command layer that held the second of them has no test binary | `src/project/tasks.c`, `src/project/tasks.h`, tested by `test/test_tasks.c` and, end to end, `test/test_e2e.c` | starting a process itself. `fr_tasks_run` ensures a run-bearing task's derived directory exists and calls its plugin's `run`; that callback is what calls `daukle.exec`, not `src/project/tasks.c` |
 | HTTP, per platform | `src/net/http.c` over `src/net/http_curl.c` and `src/net/http_winhttp.c` | two implementations to keep in step. One interface, one backend per platform |
-| where the cache lives on disk, and the atomic-replace guarantee everything under it is written through | `src/cache/cache.c` | any particular key shape. `fr_plugin_fetch` keys on a url hash and `src/provision/provision.c` keys on a content digest, each laying out its own directory shape beneath the root `src/cache/cache.c` hands back |
+| where the cache lives on disk, the format-neutral name a cached manifest is stored under, and the atomic-replace guarantee everything under it is written through | `src/cache/cache.c` | any particular key shape. `fr_plugin_fetch` keys on a url hash and `src/provision/provision.c` keys on a content digest, each laying out its own directory shape beneath the root `src/cache/cache.c` hands back |
 | version ranges and ordering | `src/util/semver.c` | date or tag ordering |
 | URL building and escaping | `src/net/url.c` | HTTP |
 | growable strings | `src/util/strbuf.c` | a general container library |
@@ -169,7 +169,7 @@ than a mock, so redirect and transport behaviour is exercised as it will be in u
 tests themselves.
 
 Most modules have a dedicated test file; the rest are covered through the tests of the module that
-drives them, such as `src/config/config_json.c` through `test_lua_verbs.c`'s `json_parse` tests.
+drives them, such as `fr_json_parse` through `test_lua_verbs.c`'s `json_parse` tests.
 
 **daukle no longer tests what npm, Gradle or C output looks like.** `test_lang_npm.c`,
 `test_lang_gradle.c`, `test_lang_c.c` and `test_source_github.c` were deleted with the modules they
@@ -219,7 +219,7 @@ is TOML with an optional Lua overlay: `src/config/config.c` finds the manifest a
 `src/config/config_lua.c` are the only two registered formats, chosen the same way, with neither named in
 `src/config/config.c` itself. TOML is the format a manifest is authored in going forward, and it is also the
 asset name the `daukle/github` plugin fetches by default from a release. JSON is no longer a manifest
-format at all: `src/config/config_json.c` registers nothing and survives only so a plugin can read its own data
+format at all: `fr_json_parse` registers nothing and survives only so a plugin can read its own data
 file through `daukle.json_parse`, such as npm recovering its ledger from a `package.json`.
 
 Task **F-7** in `spisor/docs/TASKS.md` is unaffected by this work: it says both of the phase-2

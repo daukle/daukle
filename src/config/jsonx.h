@@ -7,6 +7,21 @@
 
 #include "cJSON.h"
 
+/* Reads json text into daukle's internal document model for a plugin holding
+   its own data file, such as npm recovering its ledger from a package.json.
+   json is deliberately NOT a manifest format: toml and lua are the whole config
+   table, so this is reachable only through daukle.json_parse and never by
+   finding a daukle.json on disk. It lived in a file called config_json.c until
+   2026-10-01, whose name asserted the opposite.
+
+   Sets *out only on success, and the caller then owns it and must
+   cJSON_Delete it.
+
+   The message names a byte offset rather than a line because a byte offset is
+   the only position cJSON reports, and it leaves the origin to the caller,
+   which is the plugin's own chunk name and line. */
+int fr_json_parse(const char *text, cJSON **out, fr_error *err);
+
 int fr_json_read_file(const char *path, cJSON **out, fr_error *err);
 int fr_json_string(const cJSON *object, const char *key, const char *path, const char **out, fr_error *err);
 int fr_json_object(const cJSON *object, const char *key, const char *path, const cJSON **out, fr_error *err);
