@@ -2453,8 +2453,21 @@ TEST a_publish_callback_reads_its_destination(void) {
 
 GREATEST_MAIN_DEFS();
 
+/* Most cases in this file assert before their cleanup, so a single failure used
+   to leave the lua runtime open and every later case failed against it: three
+   separate root causes once hid behind nine failures. Shutting down here makes
+   that impossible whatever order a case asserts in, because the call is
+   idempotent and a no-op when nothing is open. It does NOT excuse the ordering,
+   which still leaks the registry of whichever case failed; it stops one failure
+   from reporting as dozens. */
+static void close_any_leaked_runtime(void *udata) {
+    (void) udata;
+    fr_lua_runtime_shutdown();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
+    GREATEST_SET_TEARDOWN_CB(close_any_leaked_runtime, NULL);
     RUN_TEST(a_script_beside_a_toml_manifest_changes_it);
     RUN_TEST(a_failing_script_names_its_file);
     RUN_TEST(daukle_log_routes_through_the_caller_supplied_sink);
