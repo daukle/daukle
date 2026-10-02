@@ -276,6 +276,20 @@ TEST a_member_count_past_the_limit_is_refused_by_name(void) {
     PASS();
 }
 
+/* Nothing else reads the default's VALUE: every bound test overrides it, so
+   the number could be lowered back under a real toolchain and the suite would
+   stay green. The measurement is in unpack.c's note. */
+TEST the_expansion_ceiling_admits_the_largest_archive_daukle_provisions(void) {
+    static char message[256];
+    size_t largest_provisioned = 1452525828u;
+    int fits = FR_UNPACK_DEFAULTS.max_total_bytes >= largest_provisioned;
+    snprintf(message, sizeof message,
+             "the ceiling is %zu bytes and the largest archive expands to %zu",
+             FR_UNPACK_DEFAULTS.max_total_bytes, largest_provisioned);
+    ASSERT_EQm(message, 1, fits);
+    PASS();
+}
+
 TEST a_total_size_past_the_limit_is_refused_by_name(void) {
     static char message[512];
     /* The decompression bomb. A digest pin proves the bytes are the ones
@@ -806,6 +820,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_tree_is_written_with_its_directories);
     RUN_TEST(a_member_count_past_the_limit_is_refused_by_name);
     RUN_TEST(a_total_size_past_the_limit_is_refused_by_name);
+    RUN_TEST(the_expansion_ceiling_admits_the_largest_archive_daukle_provisions);
     RUN_TEST(a_path_longer_than_the_limit_is_refused_rather_than_truncated);
     RUN_TEST(a_duplicate_member_name_is_refused);
     RUN_TEST(a_deeply_nested_member_past_the_legacy_path_limit_is_written);

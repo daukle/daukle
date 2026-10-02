@@ -25,8 +25,15 @@
 #define NATIVE_SEPARATOR '/'
 #endif
 
+/* @implNote max_total_bytes was 1 GiB and refused the largest archive daukle
+   actually provisions: xpack clang 21.1.8-1 for win32-x64 expands to 1.353 GiB
+   over 9881 members, measured from its published central directory. The other
+   three rows of that toolchain fit (linux 0.679, macos 0.317 and 0.307 GiB),
+   so the bound was red on one platform only. 2 GiB is the next power of two
+   above the measured largest, and a bound raised to fit a real archive should
+   be raised against a measurement rather than to a round number. D-54. */
 const fr_unpack_limits FR_UNPACK_DEFAULTS = {
-    .max_total_bytes = 1024u * 1024u * 1024u,
+    .max_total_bytes = 2u * 1024u * 1024u * 1024u,
     .max_members = 262144u,
     .max_member_bytes = 256u * 1024u * 1024u,
     .max_path_length = 1024u,
