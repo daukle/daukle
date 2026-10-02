@@ -7,6 +7,7 @@
 #include "util/error.h"
 #include "support.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -63,6 +64,57 @@ static int cwd_recording_run(void *state, const fr_task_run_context *context, fr
     if (published != NULL) snprintf(recorded_cwd, sizeof recorded_cwd, "%s", published);
     fr_lua_set_task_cwd(NULL);
     return FR_OK;
+}
+
+/* Writes a marker beside the manifest, so a manifest task's child can say
+   whether the plugin task it depends on had already run when it started. */
+static int marker_run(void *state, const fr_task_run_context *context, fr_error *err) {
+    (void) state; (void) context;
+    char full[512];
+    snprintf(full, sizeof full, "%s/prior.txt", scratch);
+    FILE *file = fopen(full, "wb");
+    if (file == NULL) {
+        fr_error_set(err, "cannot create \"%s\"", full);
+        return FR_ERR;
+    }
+    fclose(file);
+    return FR_OK;
+}
+
+static const char *const CREDENTIALS[] = { "DAUKLE_TOKEN", "GITHUB_TOKEN" };
+
+/* The child half of the escape-hatch tests. Spawned as this binary under its
+   own bare name, so "tool" is a real search-path resolution rather than a
+   path the test handed over, and it writes to a RELATIVE path, so where the
+   file lands is what says which working directory daukle started it in.
+
+   Each value goes on its own line and nothing else does: a credential that
+   leaked would otherwise be asserted absent from a buffer holding the whole
+   diagnostic that printed it. */
+static int run_as_task_child(int argc, char **argv) {
+    FILE *out = fopen(argv[2], "wb");
+    if (out == NULL) return 70;
+    for (int index = 4; index < argc; index++) fprintf(out, "[%s]\n", argv[index]);
+    for (size_t index = 0; index < sizeof CREDENTIALS / sizeof CREDENTIALS[0]; index++) {
+        const char *value = getenv(CREDENTIALS[index]);
+        fprintf(out, "%s=%s\n", CREDENTIALS[index], value == NULL ? "<unset>" : value);
+    }
+    const char *ordinary = getenv("DAUKLE_TEST_ORDINARY");
+    fprintf(out, "DAUKLE_TEST_ORDINARY=%s\n", ordinary == NULL ? "<unset>" : ordinary);
+    fprintf(out, "prior=%s\n", path_exists("prior.txt") ? "yes" : "no");
+    fclose(out);
+    return atoi(argv[3]);
+}
+
+static int read_child_output(const char *relative, char *out, size_t size) {
+    char full[600];
+    snprintf(full, sizeof full, "%s/%s", scratch, relative);
+    FILE *file = fopen(full, "rb");
+    if (file == NULL) return 0;
+    size_t read = fread(out, 1, size - 1, file);
+    out[read] = '\0';
+    fclose(file);
+    return 1;
 }
 
 static void make_scratch(const char *label) {
@@ -898,9 +950,218 @@ TEST two_destinations_that_both_plan_pass_the_check(void) {
     PASS();
 }
 
+/* The plan every escape-hatch test below runs: collect, plan the one goal,
+   and run it against a session rooted at the scratch directory. */
+static int run_goal(fr_registry *registry, fr_manifest *manifest, const char *goal,
+                    fr_error *err) {
+    fr_task_set set;
+    if (fr_tasks_collect(registry, manifest, &set, err) != FR_OK) return FR_ERR;
+
+    fr_task_plan plan;
+    if (fr_tasks_plan(&set, goal, &plan, err) != FR_OK) {
+        fr_tasks_set_free(&set);
+        return FR_ERR;
+    }
+
+    fr_session session;
+    memset(&session, 0, sizeof session);
+    session.registry = registry;
+    session.manifest = *manifest;
+    session.manifest_dir = scratch;
+
+    int status = fr_tasks_run(&plan, &session, err);
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    return status;
+}
+
+/* One argument holds a space and one holds a quote, and each is asserted to
+   have arrived whole: an argument a shell would have split or unquoted is the
+   only thing that tells "argv" and "a command string" apart. */
+TEST a_manifest_task_runs_the_program_it_names(void) {
+    make_scratch("hatch");
+    fr_test_set_env("DAUKLE_TOKEN", "secret-daukle");
+    fr_test_set_env("GITHUB_TOKEN", "secret-github");
+    fr_test_set_env("DAUKLE_TEST_ORDINARY", "inherited");
+
+    fr_registry *registry = fr_registry_create();
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"tasks\":{\"hatch\":{\"run\":{\"tool\":\"test_tasks\",\"args\":"
+        "[\"--task-child\",\"out.txt\",\"0\",\"one two\",\"a\\\"b\"]}}}}");
+
+    fr_error err;
+    int status = run_goal(registry, &manifest, "hatch", &err);
+    char output[512];
+    int read = read_child_output("out.txt", output, sizeof output);
+
+    fr_test_set_env("DAUKLE_TOKEN", NULL);
+    fr_test_set_env("GITHUB_TOKEN", NULL);
+    fr_test_set_env("DAUKLE_TEST_ORDINARY", NULL);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_test_remove_tree(scratch);
+
+    ASSERT_EQ_FMT(FR_OK, status, "%d");
+    ASSERT(read);
+    ASSERT(strstr(output, "[one two]\n") != NULL);
+    ASSERT(strstr(output, "[a\"b]\n") != NULL);
+    ASSERT(strstr(output, "DAUKLE_TOKEN=<unset>\n") != NULL);
+    ASSERT(strstr(output, "GITHUB_TOKEN=<unset>\n") != NULL);
+    /* Without this the two above would also pass on a child that inherited
+       no environment at all, which is not what daukle promises. */
+    ASSERT(strstr(output, "DAUKLE_TEST_ORDINARY=inherited\n") != NULL);
+    ASSERT(strstr(output, "prior=no\n") != NULL);
+    PASS();
+}
+
+TEST a_failing_program_stops_the_plan_and_leaves_what_ran_run(void) {
+    make_scratch("hatchfail");
+    char log[128];
+    log[0] = '\0';
+
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin one = { "daukle.task/a:one", NULL, NULL, 0, counting_run, log };
+    fr_error err;
+    fr_registry_add_task(registry, &one, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"a\":\">=1.0\"},"
+        "\"tasks\":{\"hatch\":{\"dependsOn\":[\"a:one\"],\"run\":{\"tool\":\"test_tasks\","
+        "\"args\":[\"--task-child\",\"out.txt\",\"3\"]}}}}");
+
+    int status = run_goal(registry, &manifest, "hatch", &err);
+    char message[sizeof err.message];
+    snprintf(message, sizeof message, "%s", err.message);
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_test_remove_tree(scratch);
+
+    ASSERT_EQ_FMT(FR_ERR, status, "%d");
+    ASSERT(strstr(message, "task \"hatch\"") != NULL);
+    ASSERT(strstr(message, "exited with code 3") != NULL);
+    ASSERT_STR_EQ("a:one;", log);
+    PASS();
+}
+
+/* The child reports whether the marker the plugin task writes was already
+   there, so this fails if the two merely both ran. */
+TEST depends_on_orders_a_manifest_run_after_a_plugin_task(void) {
+    make_scratch("hatchorder");
+
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin one = { "daukle.task/a:one", NULL, NULL, 0, marker_run, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &one, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"a\":\">=1.0\"},"
+        "\"tasks\":{\"hatch\":{\"dependsOn\":[\"a:one\"],\"run\":{\"tool\":\"test_tasks\","
+        "\"args\":[\"--task-child\",\"out.txt\",\"0\"]}}}}");
+
+    int status = run_goal(registry, &manifest, "hatch", &err);
+    char output[512];
+    int read = read_child_output("out.txt", output, sizeof output);
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_test_remove_tree(scratch);
+
+    ASSERT_EQ_FMT(FR_OK, status, "%d");
+    ASSERT(read);
+    ASSERT(strstr(output, "prior=yes\n") != NULL);
+    PASS();
+}
+
+/* The escaping half aims at a sibling that EXISTS, so an implementation with
+   no containment at all would succeed rather than fail for the unrelated
+   reason that the directory is not there. */
+TEST a_run_cwd_is_relative_to_the_project_and_cannot_leave_it(void) {
+    make_scratch("hatchcwd");
+    char inside[600];
+    snprintf(inside, sizeof inside, "%s/sub", scratch);
+    fr_test_make_directory(inside);
+
+    char outside_name[128];
+    snprintf(outside_name, sizeof outside_name, "daukle_test_tasks_outside_%d",
+             fr_test_process_id());
+    char outside[600];
+    snprintf(outside, sizeof outside, "%s/%s", fr_test_temp_base(), outside_name);
+    fr_test_remove_tree(outside);
+    fr_test_make_directory(outside);
+
+    char text[700];
+    snprintf(text, sizeof text,
+             "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+             "\"tasks\":{\"hatch\":{\"run\":{\"tool\":\"test_tasks\",\"cwd\":\"sub\","
+             "\"args\":[\"--task-child\",\"out.txt\",\"0\"]}},"
+             "\"escape\":{\"run\":{\"tool\":\"test_tasks\",\"cwd\":\"../%s\","
+             "\"args\":[\"--task-child\",\"out.txt\",\"0\"]}}}}", outside_name);
+
+    fr_registry *registry = fr_registry_create();
+    fr_manifest manifest = manifest_of(text);
+
+    fr_error err;
+    int status = run_goal(registry, &manifest, "hatch", &err);
+    char in_subdirectory[600];
+    snprintf(in_subdirectory, sizeof in_subdirectory, "%s/out.txt", inside);
+    char at_root[600];
+    snprintf(at_root, sizeof at_root, "%s/out.txt", scratch);
+    int landed_in_subdirectory = path_exists(in_subdirectory);
+    int landed_at_root = path_exists(at_root);
+
+    fr_error escape_err;
+    int escape_status = run_goal(registry, &manifest, "escape", &escape_err);
+    char escape_message[sizeof escape_err.message];
+    snprintf(escape_message, sizeof escape_message, "%s", escape_err.message);
+    char outside_output[600];
+    snprintf(outside_output, sizeof outside_output, "%s/out.txt", outside);
+    int landed_outside = path_exists(outside_output);
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_test_remove_tree(scratch);
+    fr_test_remove_tree(outside);
+
+    ASSERT_EQ_FMT(FR_OK, status, "%d");
+    ASSERT(landed_in_subdirectory);
+    ASSERT_FALSE(landed_at_root);
+    ASSERT_EQ_FMT(FR_ERR, escape_status, "%d");
+    ASSERT(strstr(escape_message, "outside the project directory") != NULL);
+    ASSERT_FALSE(landed_outside);
+    PASS();
+}
+
+/* A manifest block naming a declared task adds edges to it and creates no
+   second node, so a run here would be read, stored and never reached. */
+TEST a_manifest_block_adding_edges_may_not_also_carry_a_run(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin one = { "daukle.task/a:one", NULL, NULL, 0, never_runs, NULL };
+    fr_error err;
+    fr_registry_add_task(registry, &one, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"a\":\">=1.0\"},"
+        "\"tasks\":{\"a:one\":{\"run\":{\"tool\":\"git\"}}}}");
+
+    fr_task_set set;
+    ASSERT_EQ(FR_ERR, fr_tasks_collect(registry, &manifest, &set, &err));
+    ASSERT(strstr(err.message, "may not carry a run") != NULL);
+
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
+    if (argc >= 4 && strcmp(argv[1], "--task-child") == 0) return run_as_task_child(argc, argv);
+    fr_test_prepend_to_path_dir_of(argv[0]);
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_declared_task_needs_its_toolchain_declared);
     RUN_TEST(a_bare_task_always_exists);
@@ -936,5 +1197,10 @@ int main(int argc, char **argv) {
     RUN_TEST(a_destination_whose_plan_cannot_be_built_is_refused);
     RUN_TEST(a_later_destinations_broken_plan_is_refused_before_any_of_them_runs);
     RUN_TEST(two_destinations_that_both_plan_pass_the_check);
+    RUN_TEST(a_manifest_task_runs_the_program_it_names);
+    RUN_TEST(a_failing_program_stops_the_plan_and_leaves_what_ran_run);
+    RUN_TEST(depends_on_orders_a_manifest_run_after_a_plugin_task);
+    RUN_TEST(a_run_cwd_is_relative_to_the_project_and_cannot_leave_it);
+    RUN_TEST(a_manifest_block_adding_edges_may_not_also_carry_a_run);
     GREATEST_MAIN_END();
 }

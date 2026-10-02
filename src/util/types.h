@@ -64,14 +64,27 @@ typedef struct {
     const struct cJSON *block;
 } fr_publish_target;
 
-/* part_of is NULL when the task joins no aggregator. A manifest block carries
-   edges only: it never carries a body, because a body is Lua and a manifest
-   is data. */
+/* The project-level escape hatch: a program a manifest task runs itself. tool
+   is a bare name resolved on the host's search path, args is handed over as
+   argv with no shell between, and cwd is relative to the project directory and
+   NULL for the project directory itself. This is the one command daukle starts
+   that is not pinned by digest, which D-53's section 2 takes as its cost. */
+typedef struct {
+    char *tool;
+    char **args;
+    size_t arg_count;
+    char *cwd;
+} fr_task_command;
+
+/* part_of is NULL when the task joins no aggregator. run is NULL unless the
+   block carries the escape hatch: a manifest block otherwise carries edges
+   only, because a body is Lua and a manifest is data. */
 typedef struct {
     char *name;
     char *part_of;
     char **depends_on;
     size_t depends_on_count;
+    fr_task_command *run;
 } fr_task;
 
 /* path is relative to the toolchain's derived directory and uses forward

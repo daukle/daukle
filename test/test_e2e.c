@@ -513,6 +513,57 @@ TEST a_task_runs_its_child_in_the_derived_directory(void) {
     PASS();
 }
 
+/* The hatch read from a real toml rather than a json document built in a
+   test: an inline table is the shape a manifest actually writes `run` in, and
+   nothing else in the suite parses one. The project declares no plugin at
+   all, which is the shape D-53 exists for, and the marker lands beside the
+   manifest because a manifest task's default working directory is the project
+   itself. */
+TEST a_manifest_task_runs_a_program_from_a_real_manifest(void) {
+    char directory[1024];
+    snprintf(directory, sizeof directory, "%s", self_path);
+    char *last = strrchr(directory, '/');
+    char *last_back = strrchr(directory, '\\');
+    if (last_back != NULL && (last == NULL || last_back > last)) last = last_back;
+    if (last != NULL) *last = '\0';
+
+    fr_error err;
+    fr_session session;
+    ASSERT_EQ(FR_OK, fr_session_open("test/fixtures/task-run/daukle.toml", 1, &session, &err));
+
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "hatch", &plan, &err));
+
+    const char *original_path = getenv("PATH");
+    char saved_path[4096];
+    snprintf(saved_path, sizeof saved_path, "%s", original_path == NULL ? "" : original_path);
+    char path_value[4096];
+#ifdef _WIN32
+    snprintf(path_value, sizeof path_value, "%s;%s", directory, saved_path);
+#else
+    snprintf(path_value, sizeof path_value, "%s:%s", directory, saved_path);
+#endif
+    put_environment("PATH", path_value);
+
+    const char *marker = "test/fixtures/task-run/ran-here.txt";
+    remove(marker);
+
+    int status = fr_tasks_run(&plan, &session, &err);
+    int ran_beside_the_manifest = file_exists(marker);
+
+    put_environment("PATH", saved_path);
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    remove(marker);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(ran_beside_the_manifest);
+    PASS();
+}
+
 /* The publisher plugin declares no toolchain at all; the "runner" toolchain
    comes from a second plugin in the same manifest. That split is the point:
    a publisher gets exec without being, or needing, a toolchain itself, and
@@ -777,6 +828,7 @@ int main(int argc, char **argv) {
     RUN_TEST(no_cache_bypasses_both_the_read_and_the_write);
     RUN_TEST(the_same_manifest_in_two_formats_writes_the_same_file);
     RUN_TEST(a_task_runs_its_child_in_the_derived_directory);
+    RUN_TEST(a_manifest_task_runs_a_program_from_a_real_manifest);
     RUN_TEST(a_publisher_runs_its_child_in_the_from_toolchains_directory);
     RUN_TEST(every_destination_runs_in_the_order_the_manifest_declares);
     RUN_TEST(naming_one_destination_runs_only_that_one);

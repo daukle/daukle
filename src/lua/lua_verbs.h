@@ -63,6 +63,12 @@ int fr_lua_verbs_env_is_declared(const char *name);
    returns how many; the strings are static. */
 size_t fr_lua_verbs_env_to_scrub(const char **out, size_t limit);
 
+/* Every core credential, regardless of what any chunk declared, for a caller
+   that runs outside one. A manifest task's run is such a caller, and asking
+   fr_lua_verbs_env_to_scrub there would read whichever plugin chunk happened
+   to set the declared list last. */
+size_t fr_lua_verbs_core_credentials(const char **out, size_t limit);
+
 int fr_lua_verbs_is_known(const char *name);
 
 /* Whether the environment most recently built by fr_lua_verbs_push_env included

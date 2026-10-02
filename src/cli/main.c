@@ -740,8 +740,10 @@ static int list_tasks(int use_cache, int verbose) {
         if (index > 0) printf("\n");
         const fr_task_node *node = &set.nodes[index];
         printf("%s%s\n", node->name, node->plugin == NULL ? " (from the manifest)" : "");
-        printf("  runs: %s\n", (node->plugin != NULL && node->plugin->run != NULL)
-                                   ? "a program" : "nothing of its own");
+        int runs_something = node->run != NULL
+                             || (node->plugin != NULL && node->plugin->run != NULL);
+        printf("  runs: %s\n", runs_something ? "a program" : "nothing of its own");
+        if (node->run != NULL) printf("  program: %s\n", node->run->tool);
         for (size_t edge = 0; edge < node->depends_on_count; edge++) {
             printf("  after: %s\n", node->depends_on[edge]);
         }

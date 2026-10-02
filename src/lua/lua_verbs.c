@@ -123,6 +123,16 @@ int fr_lua_verbs_env_is_declared(const char *name) {
     return 0;
 }
 
+size_t fr_lua_verbs_core_credentials(const char **out, size_t limit) {
+    size_t written = 0;
+    for (size_t index = 0; index < sizeof CORE_CREDENTIALS / sizeof CORE_CREDENTIALS[0]
+                           && written < limit; index++) {
+        out[written] = CORE_CREDENTIALS[index];
+        written++;
+    }
+    return written;
+}
+
 size_t fr_lua_verbs_env_to_scrub(const char **out, size_t limit) {
     size_t written = 0;
     for (size_t index = 0; index < sizeof CORE_CREDENTIALS / sizeof CORE_CREDENTIALS[0]
@@ -405,16 +415,6 @@ void fr_lua_verbs_set_verbose(int enabled) {
     g_verbose = enabled;
 }
 
-/* A tool is named, not pathed: fr_lua_sandbox_climbs_out catches a leading
-   separator, a drive letter and ".." anywhere, the same rule a relative
-   include path is held to, and the interior-separator check on top of it is
-   this verb's own, since an include path may legitimately nest into a
-   subdirectory and a tool name never may. */
-static int tool_name_is_valid(const char *name) {
-    if (fr_lua_sandbox_climbs_out(name)) return 0;
-    return strpbrk(name, "/\\") == NULL;
-}
-
 /* Reads the "as" field of the options table at table_index without honoring
    a metatable, for the same reason raw_getfield in config_lua.c does:
    __index is a base global reachable in this sandbox. The value stays on the
@@ -446,8 +446,8 @@ static int verb_tool(lua_State *state) {
             return luaL_error(state, "daukle.tool option \"as\" may not hold a control character");
         }
     }
-    if (!tool_name_is_valid(name)) {
-        return luaL_error(state, "\"%s\" is not a tool name: a tool is named, not pathed", name);
+    if (!fr_tool_name_is_valid(name)) {
+        return luaL_error(state, FR_TOOL_NOT_A_NAME_REFUSAL, name);
     }
     /* Checked before resolving, both so the cheap answer comes first and so
        the message can report a length without echoing an unbounded name. */

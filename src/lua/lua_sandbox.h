@@ -33,6 +33,14 @@ int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_pa
 int fr_lua_sandbox_resolve_dir(lua_State *state, const char *relative, char **out_path,
                                fr_error *err);
 
+/* The same containment, against a base directory named outright rather than
+   one a lua state was installed with, for a caller with no runtime at all: a
+   manifest task's run has a cwd and no plugin behind it. base_dir is
+   canonicalised here, so a caller cannot weaken the check by passing a path
+   that only looks like the project directory. The caller owns *out_path. */
+int fr_lua_sandbox_resolve_dir_in(const char *base_dir, const char *relative, char **out_path,
+                                  fr_error *err);
+
 /* True if relative_path could escape a base directory it was joined onto: a
    leading separator, a drive letter, or a ".." component anywhere (which also
    rejects a legitimate file named "a..b.lua"; a simple, auditable rule beats a

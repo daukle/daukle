@@ -17,6 +17,13 @@ static const char *const BATCH_EXTENSIONS[] = { ".bat", ".cmd" };
 static const char *const EXTENSIONS[] = { "" };
 #endif
 
+int fr_tool_name_is_valid(const char *name) {
+    if (name[0] == '\0') return 0;
+    if (name[1] == ':') return 0;
+    if (strstr(name, "..") != NULL) return 0;
+    return strpbrk(name, "/\\") == NULL;
+}
+
 static int ends_with_ignoring_case(const char *text, const char *suffix) {
     size_t text_length = strlen(text);
     size_t suffix_length = strlen(suffix);

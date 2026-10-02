@@ -1,6 +1,7 @@
 #include "config/manifest.h"
 
 #include "config/jsonx.h"
+#include "exec/tool.h"
 #include "plugin/plugins.h"
 #include "project/region.h"
 #include "util/error.h"
@@ -409,6 +410,104 @@ static int check_publish_targets(const fr_manifest *out, const char *file_path, 
     return FR_OK;
 }
 
+static void task_command_free(fr_task_command *command) {
+    if (command == NULL) return;
+    free(command->tool);
+    for (size_t index = 0; index < command->arg_count; index++) free(command->args[index]);
+    free(command->args);
+    free(command->cwd);
+    free(command);
+}
+
+static const char *const RUN_KEYS[] = { "tool", "args", "cwd" };
+
+static int run_key_is_known(const char *key) {
+    for (size_t index = 0; index < sizeof RUN_KEYS / sizeof RUN_KEYS[0]; index++) {
+        if (strcmp(RUN_KEYS[index], key) == 0) return 1;
+    }
+    return 0;
+}
+
+static int read_run_args(const cJSON *args, const char *path, fr_task_command *out,
+                         fr_error *err) {
+    if (!fr_json_is_array_or_empty_table(args)) {
+        fr_error_set(err, "%s.run.args must be an array", path);
+        return FR_ERR;
+    }
+    int size = cJSON_GetArraySize(args);
+    if (size > 0) {
+        out->args = calloc((size_t) size, sizeof *out->args);
+        if (out->args == NULL) {
+            fr_error_set(err, "out of memory reading %s.run.args", path);
+            return FR_ERR;
+        }
+    }
+    const cJSON *item = NULL;
+    cJSON_ArrayForEach(item, args) {
+        if (!cJSON_IsString(item)) {
+            fr_error_set(err, "%s.run.args must hold strings", path);
+            return FR_ERR;
+        }
+        out->args[out->arg_count] = duplicate(item->valuestring);
+        if (out->args[out->arg_count] == NULL) {
+            fr_error_set(err, "out of memory reading %s.run.args", path);
+            return FR_ERR;
+        }
+        out->arg_count++;
+    }
+    return FR_OK;
+}
+
+/* The escape hatch D-53 specifies. Every key is refused by name, which the
+   task block itself already does and which is what makes adding one here
+   safe: a key accepted and ignored is the defect D-44 and D-49 were raised
+   for. */
+static int read_run(const cJSON *entry, const char *path, fr_task_command *out, fr_error *err) {
+    if (!cJSON_IsObject(entry)) {
+        fr_error_set(err, "%s.run must be a table", path);
+        return FR_ERR;
+    }
+    for (const cJSON *member = entry->child; member != NULL; member = member->next) {
+        if (!run_key_is_known(member->string)) {
+            fr_error_set(err, "%s.run: \"%s\" is not a key run defines; only tool, args and cwd"
+                              " are", path, member->string);
+            return FR_ERR;
+        }
+    }
+
+    const cJSON *tool = cJSON_GetObjectItemCaseSensitive(entry, "tool");
+    if (tool == NULL || !cJSON_IsString(tool)) {
+        fr_error_set(err, "%s.run.tool must be a string naming a program", path);
+        return FR_ERR;
+    }
+    if (!fr_tool_name_is_valid(tool->valuestring)) {
+        fr_error_set(err, FR_TOOL_NOT_A_NAME_REFUSAL, tool->valuestring);
+        return FR_ERR;
+    }
+    out->tool = duplicate(tool->valuestring);
+    if (out->tool == NULL) {
+        fr_error_set(err, "out of memory reading %s.run.tool", path);
+        return FR_ERR;
+    }
+
+    const cJSON *cwd = cJSON_GetObjectItemCaseSensitive(entry, "cwd");
+    if (cwd != NULL) {
+        if (!cJSON_IsString(cwd)) {
+            fr_error_set(err, "%s.run.cwd must be a string", path);
+            return FR_ERR;
+        }
+        out->cwd = duplicate(cwd->valuestring);
+        if (out->cwd == NULL) {
+            fr_error_set(err, "out of memory reading %s.run.cwd", path);
+            return FR_ERR;
+        }
+    }
+
+    const cJSON *args = cJSON_GetObjectItemCaseSensitive(entry, "args");
+    if (args == NULL) return FR_OK;
+    return read_run_args(args, path, out, err);
+}
+
 static int read_task(const cJSON *entry, const char *name, fr_task *out, fr_error *err) {
     memset(out, 0, sizeof *out);
     char path[320];
@@ -426,12 +525,23 @@ static int read_task(const cJSON *entry, const char *name, fr_task *out, fr_erro
 
     const cJSON *member = entry->child;
     while (member != NULL) {
-        if (strcmp(member->string, "dependsOn") != 0 && strcmp(member->string, "partOf") != 0) {
-            fr_error_set(err, "%s: \"%s\" is not a key a task block defines; only dependsOn and partOf are",
-                         path, member->string);
+        if (strcmp(member->string, "dependsOn") != 0 && strcmp(member->string, "partOf") != 0
+            && strcmp(member->string, "run") != 0) {
+            fr_error_set(err, "%s: \"%s\" is not a key a task block defines; only dependsOn,"
+                              " partOf and run are", path, member->string);
             return FR_ERR;
         }
         member = member->next;
+    }
+
+    const cJSON *run = cJSON_GetObjectItemCaseSensitive(entry, "run");
+    if (run != NULL) {
+        out->run = calloc(1, sizeof *out->run);
+        if (out->run == NULL) {
+            fr_error_set(err, "out of memory reading %s.run", path);
+            return FR_ERR;
+        }
+        if (read_run(run, path, out->run, err) != FR_OK) return FR_ERR;
     }
 
     const cJSON *part_of = cJSON_GetObjectItemCaseSensitive(entry, "partOf");
@@ -688,6 +798,7 @@ void fr_manifest_free(fr_manifest *manifest) {
         free(task->part_of);
         for (size_t d = 0; d < task->depends_on_count; d++) free(task->depends_on[d]);
         free(task->depends_on);
+        task_command_free(task->run);
     }
     free(manifest->tasks);
     manifest->sources = NULL;

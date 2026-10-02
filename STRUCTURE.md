@@ -79,7 +79,8 @@ the client tier's rules.
 | the whole write pass over a manifest | `src/project/sync.c` | per-language. It drives the language plugins |
 | the derived directory: its path, the ledger of what daukle generated, write-if-changed, the sweep, and clean | `src/project/derived.c`, tested by `test/test_derived.c` | the generation pass, which is `src/project/generate.c`. It is handed a file set and decides only what happens on disk |
 | the generation pass: resolving each declared toolchain, building what its `generate` receives, and validating what it returns | `src/project/generate.c`, tested by `test/test_generate.c` | what happens on disk, which is `src/project/derived.c` |
-| the task graph: collecting a plugin-declared task together with the manifest task blocks that add edges to it, planning a goal's transitive closure in dependency order, running that plan, and, for a publish, both halves of the destination sweep: `fr_tasks_check_publish` plans every selected destination before any of them runs, and `fr_tasks_run_publish` then runs them in the order the manifest declares. The two live together because they are one guarantee, and the command layer that held the second of them has no test binary | `src/project/tasks.c`, `src/project/tasks.h`, tested by `test/test_tasks.c` and, end to end, `test/test_e2e.c` | starting a process itself. `fr_tasks_run` ensures a run-bearing task's derived directory exists and calls its plugin's `run`; that callback is what calls `daukle.exec`, not `src/project/tasks.c` |
+| the task graph: collecting a plugin-declared task together with the manifest task blocks that add edges to it, planning a goal's transitive closure in dependency order, running that plan, and, for a publish, both halves of the destination sweep: `fr_tasks_check_publish` plans every selected destination before any of them runs, and `fr_tasks_run_publish` then runs them in the order the manifest declares. The two live together because they are one guarantee, and the command layer that held the second of them has no test binary | `src/project/tasks.c`, `src/project/tasks.h`, tested by `test/test_tasks.c` and, end to end, `test/test_e2e.c` | starting a plugin's process itself. `fr_tasks_run` ensures a run-bearing task's derived directory exists and calls its plugin's `run`; that callback is what calls `daukle.exec`, not `src/project/tasks.c`. The ONE process the task layer starts on its own is a manifest task's `run`, which is `src/project/task_command.c` |
+| the project-level escape hatch: resolving the bare tool a manifest task names, bounding its working directory to the project, scrubbing the core credentials a manifest never declares, and turning a non-zero exit into the task's failure | `src/project/task_command.c`, tested by `test/test_tasks.c` | deciding whether the key is well formed, which `read_run` in `src/config/manifest.c` does before anything reaches here |
 | HTTP, per platform | `src/net/http.c` over `src/net/http_curl.c` and `src/net/http_winhttp.c` | two implementations to keep in step. One interface, one backend per platform |
 | where the cache lives on disk, the format-neutral name a cached manifest is stored under, and the atomic-replace guarantee everything under it is written through | `src/cache/cache.c` | any particular key shape. `fr_plugin_fetch` keys on a url hash and `src/provision/provision.c` keys on a content digest, each laying out its own directory shape beneath the root `src/cache/cache.c` hands back |
 | version ranges and ordering | `src/util/semver.c` | date or tag ordering |
@@ -280,6 +281,13 @@ differently from "this project has no plugins at all". `daukle tasks` lists ever
 `fr_tasks_collect` gathers, from a plugin or from a manifest `[tasks]` block alike, tagging the
 manifest ones `(from the manifest)`; for each task it also prints `pulls in` (what runs before it) and
 `needed by` (what runs after it), the two directions `fr_tasks_joiners` computes.
+
+A manifest task may also carry `run = { tool = "...", args = [...] }`, which is the project-level
+escape hatch `D-53` specifies: a bare program name resolved the way `daukle.tool` resolves one,
+argv as a list, and no shell. It is the one command daukle starts that no digest pins, which that
+spec's section 2 takes as the hatch's cost rather than claiming otherwise. A manifest block naming
+a task a plugin already declared may not carry one: that block adds edges to the declared task and
+creates no second node, so the run would be read and never reached.
 
 `daukle plugin update` reads a lua-rooted manifest as readily as a toml one. It used to refuse an
 overlay format outright, on the grounds that reading a lua manifest means executing it and executing

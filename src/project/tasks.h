@@ -22,6 +22,7 @@ typedef struct {
     const fr_task_plugin *plugin;
     const fr_toolchain *toolchain;
     const fr_publish_target *publish;  /* NULL unless the name carries the "publish:" prefix */
+    const fr_task_command *run;  /* NULL unless the manifest block carries the escape hatch */
 } fr_task_node;
 
 typedef struct {

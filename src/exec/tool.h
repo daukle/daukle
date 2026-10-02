@@ -12,6 +12,16 @@
    because starting one needs cmd.exe and that is the shell section 4.1 bans. */
 int fr_tool_resolve(const char *name, char **out_path, fr_error *err);
 
+/* Whether name is a tool name rather than a path: no separator, no drive
+   letter and no ".." anywhere, so it can only ever name something the search
+   path already holds. It lives here rather than beside either caller because
+   daukle.tool and a manifest task's run must refuse the same names; two
+   copies of this rule would be two rules. */
+int fr_tool_name_is_valid(const char *name);
+
+/* The sentence both of those refuse with, taking the name. */
+#define FR_TOOL_NOT_A_NAME_REFUSAL "\"%s\" is not a tool name: a tool is named, not pathed"
+
 /* The refusal a batch file gets, taking the name asked for and the path it
    came to. Shared with a provisioned root's member, which is refused for the
    identical reason, so the two can never drift into saying different things

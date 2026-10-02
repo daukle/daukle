@@ -245,6 +245,80 @@ TEST a_task_block_refuses_a_key_it_does_not_define(void) {
     PASS();
 }
 
+TEST a_task_run_is_read_with_its_tool_args_and_cwd(void) {
+    const char *text =
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"tasks\":{\"changelog\":{\"dependsOn\":[\"build\"],"
+        "\"run\":{\"tool\":\"git\",\"args\":[\"log\",\"--oneline\"],\"cwd\":\"docs\"}},"
+        "\"plain\":{\"partOf\":\"build\"}}}";
+    fr_manifest manifest; fr_error err;
+    cJSON *root = cJSON_Parse(text);
+    ASSERT_EQ(FR_OK, fr_manifest_from_document(root, "daukle.toml", &manifest, &err));
+
+    ASSERT(manifest.tasks[0].run != NULL);
+    ASSERT_STR_EQ("git", manifest.tasks[0].run->tool);
+    ASSERT_EQ(2u, manifest.tasks[0].run->arg_count);
+    ASSERT_STR_EQ("--oneline", manifest.tasks[0].run->args[1]);
+    ASSERT_STR_EQ("docs", manifest.tasks[0].run->cwd);
+    ASSERT(manifest.tasks[1].run == NULL);
+    fr_manifest_free(&manifest);
+    PASS();
+}
+
+/* Adding a key to the one block that validates is only safe while it keeps
+   validating, so each of run's own keys is held to the same rule. */
+TEST a_run_block_refuses_a_key_it_does_not_define(void) {
+    const char *text =
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"tasks\":{\"changelog\":{\"run\":{\"tool\":\"git\",\"shell\":true}}}}";
+    fr_manifest manifest; fr_error err;
+    cJSON *root = cJSON_Parse(text);
+    ASSERT_EQ(FR_ERR, fr_manifest_from_document(root, "daukle.toml", &manifest, &err));
+    ASSERT(strstr(err.message, "\"shell\" is not a key run defines") != NULL);
+    PASS();
+}
+
+TEST a_run_without_a_tool_is_refused(void) {
+    const char *text =
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"tasks\":{\"changelog\":{\"run\":{\"args\":[\"log\"]}}}}";
+    fr_manifest manifest; fr_error err;
+    cJSON *root = cJSON_Parse(text);
+    ASSERT_EQ(FR_ERR, fr_manifest_from_document(root, "daukle.toml", &manifest, &err));
+    ASSERT(strstr(err.message, "run.tool must be a string") != NULL);
+    PASS();
+}
+
+/* A pathed tool would let a manifest start a file out of the project, which
+   is the one thing a bare name cannot do. */
+TEST a_pathed_run_tool_is_refused(void) {
+    /* The second is JSON for a single backslash, which is the separator a
+       Windows-shaped manifest would reach for. */
+    const char *names[] = { "./build.sh", "tools\\\\make", "..", "c:git" };
+    for (size_t index = 0; index < sizeof names / sizeof names[0]; index++) {
+        char text[320];
+        snprintf(text, sizeof text,
+                 "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+                 "\"tasks\":{\"changelog\":{\"run\":{\"tool\":\"%s\"}}}}", names[index]);
+        fr_manifest manifest; fr_error err;
+        cJSON *root = cJSON_Parse(text);
+        ASSERT_EQ(FR_ERR, fr_manifest_from_document(root, "daukle.toml", &manifest, &err));
+        ASSERT(strstr(err.message, "is not a tool name") != NULL);
+    }
+    PASS();
+}
+
+TEST run_args_must_hold_strings(void) {
+    const char *text =
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"tasks\":{\"changelog\":{\"run\":{\"tool\":\"git\",\"args\":[\"log\",7]}}}}";
+    fr_manifest manifest; fr_error err;
+    cJSON *root = cJSON_Parse(text);
+    ASSERT_EQ(FR_ERR, fr_manifest_from_document(root, "daukle.toml", &manifest, &err));
+    ASSERT(strstr(err.message, "run.args must hold strings") != NULL);
+    PASS();
+}
+
 /* A discarded key is a user believing they configured something, which is the
    whole of D-49: this manifest used to parse, sync clean, and do nothing. */
 TEST an_unknown_root_key_is_refused_by_name(void) {
@@ -377,6 +451,11 @@ int main(int argc, char **argv) {
     RUN_TEST(a_toolchains_table_that_is_not_a_table_is_rejected);
     RUN_TEST(a_tasks_table_is_read);
     RUN_TEST(a_task_block_refuses_a_key_it_does_not_define);
+    RUN_TEST(a_task_run_is_read_with_its_tool_args_and_cwd);
+    RUN_TEST(a_run_block_refuses_a_key_it_does_not_define);
+    RUN_TEST(a_run_without_a_tool_is_refused);
+    RUN_TEST(a_pathed_run_tool_is_refused);
+    RUN_TEST(run_args_must_hold_strings);
     RUN_TEST(an_unknown_root_key_is_refused_by_name);
     RUN_TEST(a_misspelled_section_names_the_one_that_was_meant);
     RUN_TEST(every_name_the_vocabulary_defines_is_still_accepted);

@@ -128,24 +128,20 @@ static int within_base_dir(const char *canonical_base, const char *canonical_tar
     return boundary == '/' || boundary == '\\';
 }
 
-static int resolve_under_base(lua_State *state, const char *relative, int as_directory,
-                              char **out_path, fr_error *err) {
+static int resolve_in_base(const char *canonical_base, const char *relative, int as_directory,
+                           char **out_path, fr_error *err) {
     if (fr_lua_sandbox_climbs_out(relative)) {
         fr_error_set(err, "\"%s\" is outside the project directory", relative);
         return FR_ERR;
     }
 
-    lua_getfield(state, LUA_REGISTRYINDEX, FR_SANDBOX_BASE_DIR);
-    const char *canonical_base = lua_tostring(state, -1);
-
     char path[512];
     int written = snprintf(path, sizeof path, "%s/%s", canonical_base, relative);
-    lua_pop(state, 1);
     if (written < 0 || (size_t) written >= sizeof path) {
         /* The path itself, not just this message, is bounded by a fixed buffer;
            echoing an over-long argument back would just overflow fr_error's own
            bound and truncate this message before "too long" is ever written. */
-        fr_error_set(err, "the include path is too long (%d characters)", (int) strlen(relative));
+        fr_error_set(err, "the path is too long (%d characters)", (int) strlen(relative));
         return FR_ERR;
     }
 
@@ -169,6 +165,17 @@ static int resolve_under_base(lua_State *state, const char *relative, int as_dir
     return FR_OK;
 }
 
+/* The base stays on the stack for the whole resolve: within_base_dir compares
+   against it after the target is canonicalised, so popping it early would
+   leave the comparison reading a slot lua is free to reuse. */
+static int resolve_under_base(lua_State *state, const char *relative, int as_directory,
+                              char **out_path, fr_error *err) {
+    lua_getfield(state, LUA_REGISTRYINDEX, FR_SANDBOX_BASE_DIR);
+    int status = resolve_in_base(lua_tostring(state, -1), relative, as_directory, out_path, err);
+    lua_pop(state, 1);
+    return status;
+}
+
 int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_path, fr_error *err) {
     return resolve_under_base(state, relative, 0, out_path, err);
 }
@@ -176,6 +183,15 @@ int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_pa
 int fr_lua_sandbox_resolve_dir(lua_State *state, const char *relative, char **out_path,
                                fr_error *err) {
     return resolve_under_base(state, relative, 1, out_path, err);
+}
+
+int fr_lua_sandbox_resolve_dir_in(const char *base_dir, const char *relative, char **out_path,
+                                  fr_error *err) {
+    char *canonical_base = NULL;
+    if (fr_lua_sandbox_canonical_dir(base_dir, &canonical_base, err) != FR_OK) return FR_ERR;
+    int status = resolve_in_base(canonical_base, relative, 1, out_path, err);
+    free(canonical_base);
+    return status;
 }
 
 static int sandbox_include(lua_State *state) {

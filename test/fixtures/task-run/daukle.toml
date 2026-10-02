@@ -1,0 +1,10 @@
+schema = 1
+project = "forebay/task-run"
+version = "1.0.0"
+
+[modules]
+
+# No plugins and no toolchains: the escape hatch is the whole project, which
+# is the shape D-53 exists for.
+[tasks.hatch]
+run = { tool = "test_e2e", args = ["--task-child", "ran-here.txt"] }

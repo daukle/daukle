@@ -2,6 +2,7 @@
 
 #include "plugin/resolve.h"
 #include "project/derived.h"
+#include "project/task_command.h"
 #include "util/error.h"
 
 #include <stdio.h>
@@ -198,6 +199,13 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
 
         fr_task_node *existing = find_mutable(out, task->name);
         if (existing != NULL) {
+            if (task->run != NULL) {
+                fr_error_set(err, "task \"%s\" may not carry a run: a plugin declares that task"
+                                  " and a manifest block naming one adds edges to it, so the run"
+                                  " would never happen", task->name);
+                fr_tasks_set_free(out);
+                return FR_ERR;
+            }
             existing->extra_depends_on = (const char *const *) task->depends_on;
             existing->extra_depends_on_count = task->depends_on_count;
             existing->extra_part_of = task->part_of;
@@ -217,6 +225,7 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
         node.part_of = task->part_of;
         node.depends_on = (const char *const *) task->depends_on;
         node.depends_on_count = task->depends_on_count;
+        node.run = task->run;
         if (append(out, &node, err) != FR_OK) {
             fr_tasks_set_free(out);
             return FR_ERR;
@@ -440,6 +449,15 @@ void fr_tasks_unknown_message(const char *goal, size_t plugin_count, char *out, 
 int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *err) {
     for (size_t index = 0; index < plan->count; index++) {
         const fr_task_node *node = plan->nodes[index];
+        /* A manifest task has no toolchain, so there is no derived directory
+           to ensure before it and the step below is skipped rather than given
+           a default. D-53 section 4. */
+        if (node->run != NULL) {
+            if (fr_task_command_run(node->run, session->manifest_dir, node->name, err) != FR_OK) {
+                return FR_ERR;
+            }
+            continue;
+        }
         if (node->plugin == NULL || node->plugin->run == NULL) continue;
 
         if (node->publish != NULL) {
