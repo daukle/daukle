@@ -155,6 +155,19 @@ So `verb_exec` refuses again at the call itself, for the whole of any plugin chu
 (`fr_lua_plugin_exec_is_refused` in `src/config/config_lua.c`), since no plugin kind that may exec exists yet.
 The two together are what make the refusal fail closed.
 
+**A plugin may not name another plugin it did not declare a dependency on.** Three routes reach
+across that boundary and all three are now refused. Declaring a task `other:x` is refused by
+`lua_declare_task` unless the chunk declared a toolchain `other` above it. Resolving
+`daukle.require("other:lib/x")` is refused by `require_across_plugins` (`src/lua/lua_modules.c`)
+unless `other` is an alias in the chunk's own `requires`. Pointing a `dependsOn` or a `partOf` at
+`other:x` is refused by `edge_owner_is_declared` (`src/config/config_declare.c`) under the same two
+conditions, which is the route that was open until 2026-10-02.
+
+**A bare edge name is deliberately not checked**, and the rule is about qualified names only. A bare
+`partOf = "build"` carries no owner, and the task model's section 4 requires that: the plugin
+providing `build` must not have to be named by the toolchain joining it, or every aggregator would
+have to list every toolchain that will ever exist.
+
 **The cache key includes the artifact, and that is load bearing.** Two manifests can name one project
 id and one version and resolve them from different repositories. Keyed by project and version alone,
 the cache serves one for the other and emits silently wrong coordinates.

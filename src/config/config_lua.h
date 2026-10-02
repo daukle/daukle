@@ -38,6 +38,14 @@ int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
                        const char *const *verbs, size_t verb_count, fr_plugin_source *source,
                        fr_plugin_deps *deps, fr_error *err);
 
+/* The aliases this chunk's daukle.plugin{} declared under "requires", which is
+   what a colon-qualified dependsOn or partOf is checked against: a plugin may
+   name a task of a toolchain it declares itself or of a plugin it requires,
+   and nothing else. Armed around fr_lua_plugin_load and disarmed with
+   (NULL, 0) after it, exactly as fr_lua_verbs_set_declared_env is, because
+   requires is borrowed from a declaration the loader frees. */
+void fr_lua_declare_set_required_aliases(const fr_plugin_requirement *requires, size_t count);
+
 /* The registry the runtime is currently loading plugins into, or NULL when no
    load phase is open. */
 fr_registry *fr_lua_registering_registry(void);

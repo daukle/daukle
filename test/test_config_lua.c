@@ -974,6 +974,108 @@ TEST an_aggregator_needs_no_run(void) {
     PASS();
 }
 
+/* A plugin may not point an edge at a task belonging to a plugin it never
+   declared a dependency on. Core already refused DECLARING such a task and
+   resolving such a module; dependsOn and partOf were the third route and the
+   only unguarded one, and the task model's section 4 already asserted the rule
+   it never enforced. */
+TEST a_task_cannot_depend_on_a_plugin_its_chunk_does_not_require(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *chunk =
+        "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n"
+        "daukle.task{ name = 'cmake:build', dependsOn = { 'java:compile' },"
+        " run = function() end }\n";
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", NULL, 0, NULL, NULL, &err);
+    if (status != FR_OK) snprintf(message, sizeof message, "%s", err.message);
+    const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/cmake:build");
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "daukle.task/cmake:build") != NULL);
+    ASSERTm(message, strstr(message, "java:compile") != NULL);
+    ASSERTm(message, strstr(message, "requires no \"java\"") != NULL);
+    ASSERTm("a refused task must not reach the registry", task == NULL);
+    PASS();
+}
+
+TEST a_task_cannot_be_part_of_a_plugin_its_chunk_does_not_require(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *chunk =
+        "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n"
+        "daukle.task{ name = 'cmake:build', partOf = 'java:verify', run = function() end }\n";
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", NULL, 0, NULL, NULL, &err);
+    if (status != FR_OK) snprintf(message, sizeof message, "%s", err.message);
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "is part of \"java:verify\"") != NULL);
+    ASSERTm(message, strstr(message, "requires no \"java\"") != NULL);
+    PASS();
+}
+
+/* The other direction, without which the refusal above could be a rule that
+   forbids every qualified edge and still passes its own test. */
+TEST a_task_may_depend_on_a_plugin_its_chunk_requires(void) {
+    fr_plugin_requirement requires[1];
+    memset(requires, 0, sizeof requires);
+    requires[0].alias = (char *) "java";
+
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *chunk =
+        "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n"
+        "daukle.task{ name = 'cmake:build', dependsOn = { 'java:compile' },"
+        " run = function() end }\n";
+    fr_lua_declare_set_required_aliases(requires, 1);
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", NULL, 0, NULL, NULL, &err);
+    fr_lua_declare_set_required_aliases(NULL, 0);
+
+    const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/cmake:build");
+    int edge_kept = task != NULL && task->depends_on_count == 1
+                    && strcmp(task->depends_on[0], "java:compile") == 0;
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERTm("the declared edge must survive the check", edge_kept);
+    PASS();
+}
+
+/* A bare name carries no owner, so there is nothing to check and the check must
+   not invent one. This is the aggregator of the task model's section 4: a
+   toolchain joins "build" without naming, or being able to name, whichever
+   plugin provides it. */
+TEST a_bare_part_of_is_not_checked_for_an_owner(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *chunk =
+        "daukle.toolchain{ name = 'cmake', generate = function() return {} end }\n"
+        "daukle.task{ name = 'cmake:build', partOf = 'build', run = function() end }\n";
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "cmake.lua", NULL, 0, NULL, NULL, &err);
+    const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/cmake:build");
+    int joined = task != NULL && task->part_of != NULL && strcmp(task->part_of, "build") == 0;
+
+    fr_lua_runtime_shutdown();
+    fr_registry_destroy(registry);
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERTm("a bare partOf must still join its aggregator", joined);
+    PASS();
+}
+
 /* Guards the ordering hazard directly: chunk_toolchains_clear() must run
    between loads, so a toolchain declared by one plugin's chunk can never
    authorize a task named by a later, unrelated chunk. */
@@ -2608,6 +2710,10 @@ int main(int argc, char **argv) {
     RUN_TEST(a_task_without_a_toolchain_may_not_keep_provision);
     RUN_TEST(a_task_beside_a_toolchain_still_keeps_provision);
     RUN_TEST(an_aggregator_needs_no_run);
+    RUN_TEST(a_task_cannot_depend_on_a_plugin_its_chunk_does_not_require);
+    RUN_TEST(a_task_cannot_be_part_of_a_plugin_its_chunk_does_not_require);
+    RUN_TEST(a_task_may_depend_on_a_plugin_its_chunk_requires);
+    RUN_TEST(a_bare_part_of_is_not_checked_for_an_owner);
     RUN_TEST(a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain);
     RUN_TEST(the_same_chunk_reordered_is_the_difference_between_refused_and_accepted);
     RUN_TEST(exec_for_a_task_above_its_toolchain_is_refused_naming_the_order);
