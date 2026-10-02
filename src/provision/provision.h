@@ -33,4 +33,21 @@ int fr_provision_root_path(const char *sha256_hex, char *out, size_t out_size, f
 int fr_provision(const char *url, const char *sha256_hex, const fr_http_header *headers,
                  size_t header_count, fr_provision_result *out, fr_error *err);
 
+typedef struct {
+    char path[1024];
+    int was_cached;
+} fr_artifact_result;
+
+/* Fetches a single pinned file, verifies it and KEEPS it, without unpacking and
+   without asking what it holds. It exists because unpacking can change what an
+   archive means: a multi-release jar resolves its versioned classes as a file
+   on a classpath and silently serves its base classes as the same content in a
+   directory, so a dependency has to stay the file it was published as. D-52.
+   @implNote the cache hit is decided by the FILE and not by its directory,
+   because two urls serving one digest differ only in the name they suggest and
+   the second must still resolve rather than find the first's name sitting
+   alone. The pin is mandatory on the same grounds as fr_provision's. */
+int fr_artifact(const char *url, const char *sha256_hex, const fr_http_header *headers,
+                size_t header_count, fr_artifact_result *out, fr_error *err);
+
 #endif

@@ -80,6 +80,12 @@ int fr_lua_verbs_env_declared_tool(void);
    caller that decides which plugin kinds may fetch a toolchain at all. */
 int fr_lua_verbs_env_declared_provision(void);
 
+/* Whether the environment just pushed installed daukle.artifact, read by the
+   same caller and restricted to the same plugin kinds: fetching a pinned file
+   onto disk and naming it to a tool is provision's class of power, and a
+   capability is easier to widen later than to narrow. */
+int fr_lua_verbs_env_declared_artifact(void);
+
 /* A known name that this version does not implement, such as publish. */
 int fr_lua_verbs_is_reserved(const char *name);
 

@@ -113,6 +113,23 @@ void fr_toolreport_provisioned(const char *label, const char *url, const char *d
     record(ROW_PROVISIONED, shown_label, url, digest, cached);
 }
 
+/* An artifact is reported as an acquisition like a provisioned tree, and
+   deliberately NOT through fr_toolreport_provisioned: that one tells a cached
+   row that its symlinks were not examined, which for a file that is never
+   unpacked would be a true-sounding sentence about a tree that does not exist.
+   D-52. */
+void fr_toolreport_artifact(const char *label, const char *url, const char *digest, int cached) {
+    if (already_reported(ROW_PROVISIONED, digest)) return;
+
+    /* Sized like fr_toolreport_row.url, since a whole-url fallback becomes it. */
+    char last_component[1024];
+    url_last_component(url, last_component, sizeof last_component);
+    const char *shown_label = effective_label(label, last_component);
+    fprintf(stderr, "artifact %s (%s)\n  %s\n  sha256 %s\n", shown_label,
+            cached ? "cached" : "downloaded", url, digest);
+    record(ROW_PROVISIONED, shown_label, url, digest, cached);
+}
+
 static fr_toolreport_row *provisioned_row_for(const char *digest) {
     for (size_t index = 0; index < g_row_count; index++) {
         if (g_kinds[index] == ROW_PROVISIONED && strcmp(g_rows[index].digest, digest) == 0) {

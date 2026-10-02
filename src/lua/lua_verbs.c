@@ -34,7 +34,7 @@ static const char *BASE[] = {
 
 static const char *KNOWN_VERBS[] = {
     "fetch", "read", "cache", "env", "region", "json_set", "json_parse", "parse", "exec", "tool",
-    "provision", "publish"
+    "provision", "artifact", "publish"
 };
 
 /* daukle.publish is spec section 10's next reserved name: a fourth table and
@@ -137,6 +137,7 @@ size_t fr_lua_verbs_env_to_scrub(const char **out, size_t limit) {
 static int env_declared_exec;
 static int env_declared_tool;
 static int env_declared_provision;
+static int env_declared_artifact;
 
 int fr_lua_verbs_env_declared_exec(void) {
     return env_declared_exec;
@@ -148,6 +149,10 @@ int fr_lua_verbs_env_declared_tool(void) {
 
 int fr_lua_verbs_env_declared_provision(void) {
     return env_declared_provision;
+}
+
+int fr_lua_verbs_env_declared_artifact(void) {
+    return env_declared_artifact;
 }
 
 static int verb_env(lua_State *state) {
@@ -491,16 +496,16 @@ static int provision_field_is_known(const char *key) {
    user believing they pinned something. The message names whichever key the
    walk reached and never a fixed one, because lua_next's order over a plugin's
    table is unspecified, so with two unknown keys either may be the one seen. */
-static int refuse_an_unknown_provision_field(lua_State *state) {
+static int refuse_an_unknown_provision_field(lua_State *state, const char *verb) {
     lua_pushnil(state);
     while (lua_next(state, 1) != 0) {
         if (lua_type(state, -2) != LUA_TSTRING) {
-            return luaL_error(state, "daukle.provision takes named fields only");
+            return luaL_error(state, "%s takes named fields only", verb);
         }
         const char *key = lua_tostring(state, -2);
         if (!provision_field_is_known(key)) {
-            return luaL_error(state, "daukle.provision does not take \"%s\"; it takes url, sha256"
-                                     ", as and headers", key);
+            return luaL_error(state, "%s does not take \"%s\"; it takes url, sha256"
+                                     ", as and headers", verb, key);
         }
         lua_pop(state, 1);
     }
@@ -638,7 +643,7 @@ static int verb_provision(lua_State *state) {
                                  " loading; call it from a task or publish callback");
     }
     luaL_checktype(state, 1, LUA_TTABLE);
-    refuse_an_unknown_provision_field(state);
+    refuse_an_unknown_provision_field(state, "daukle.provision");
 
     const char *url = provision_field(state, "url");
     if (url == NULL) return luaL_error(state, "daukle.provision needs a url string");
@@ -677,6 +682,58 @@ static int verb_provision(lua_State *state) {
     snprintf(handle->root, sizeof handle->root, "%s", result.root);
     luaL_getmetatable(state, FR_PROVISION_HANDLE);
     lua_setmetatable(state, -2);
+    return 1;
+}
+
+/* Returns a path string and not a handle, which is the opposite of root:tool and
+   is deliberate: a tool handle is opaque so that daukle.exec can refuse an
+   arbitrary string, and an artifact is never executed, only named to a tool as
+   an argument. This widens what a plugin may NAME, exactly as root:path did,
+   and not what it may RUN. */
+static int verb_artifact(lua_State *state) {
+    if (fr_lua_generation_is_running()) {
+        return luaL_error(state, "daukle.artifact is not available while generating; "
+                                 "generation is a pure function of the manifest");
+    }
+    if (fr_lua_plugin_exec_is_refused()) {
+        return luaL_error(state, "daukle.artifact is not available while a plugin chunk is"
+                                 " loading; call it from a task or publish callback");
+    }
+    luaL_checktype(state, 1, LUA_TTABLE);
+    refuse_an_unknown_provision_field(state, "daukle.artifact");
+
+    const char *url = provision_field(state, "url");
+    if (url == NULL) return luaL_error(state, "daukle.artifact needs a url string");
+
+    const char *digest = provision_field(state, "sha256");
+    if (digest == NULL) {
+        return luaL_error(state, "daukle.artifact needs a sha256 string: there is no unpinned"
+                                 " form of it and no flag that relaxes one");
+    }
+
+    const char *label = provision_field(state, "as");
+    if (label == NULL && !lua_isnil(state, -1)) {
+        return luaL_error(state, "daukle.artifact field \"as\" must be a string");
+    }
+    if (label != NULL && !fr_toolreport_label_is_safe(label)) {
+        return luaL_error(state, "daukle.artifact field \"as\" may not hold a control character");
+    }
+
+    fr_http_header headers[FR_PROVISION_MAX_HEADERS];
+    memset(headers, 0, sizeof headers);
+    size_t header_count = read_provision_headers(state, headers);
+
+    fr_artifact_result result;
+    fr_error err;
+    int fetched = fr_artifact(url, digest, header_count > 0 ? headers : NULL, header_count,
+                              &result, &err);
+    free_provision_headers(headers, header_count);
+    if (fetched != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    fr_toolreport_artifact(label, url, digest, result.was_cached);
+
+    lua_pushstring(state, result.path);
     return 1;
 }
 
@@ -745,6 +802,46 @@ static int root_path(lua_State *state) {
     if (absolute == NULL) {
         return luaL_error(state, "\"%s\" is in the provisioned root but its absolute path could"
                                  " not be resolved", member);
+    }
+    lua_pushstring(state, absolute);
+    free(absolute);
+    return 1;
+}
+
+/* Names a DIRECTORY, and with no argument the root itself. It exists because a
+   classpath entry is often a directory (a distribution's lib, or an unpacked
+   tree) and nothing could name one: the only route was to name a file inside it
+   and strip the member off the returned string, which is separator dependent and
+   relies on a member a plugin merely expects to be there. Kept separate from
+   root:path so each verb refuses the other's shape and a mistyped name fails
+   loudly instead of resolving to something plausible. */
+static int root_dir(lua_State *state) {
+    fr_lua_root *root = luaL_testudata(state, 1, FR_PROVISION_HANDLE);
+    if (root == NULL) {
+        return luaL_error(state, "dir must be called on a root from daukle.provision");
+    }
+
+    char path[FR_PROVISION_ROOT_MAX];
+    const char *member = NULL;
+    if (lua_isnoneornil(state, 2)) {
+        int written = snprintf(path, sizeof path, "%s", root->root);
+        if (written < 0 || (size_t) written >= sizeof path) {
+            return luaL_error(state, "the provisioned root's path is too long");
+        }
+    } else {
+        member = root_member_path(state, "dir", path, sizeof path);
+    }
+
+    if (!fr_cache_directory_exists(path)) {
+        return luaL_error(state, "the provisioned root holds no directory \"%s\"",
+                          member == NULL ? "." : member);
+    }
+
+    /* A provisioned root inherits DAUKLE_CACHE_DIR verbatim and may be relative. */
+    char *absolute = fr_tool_absolute_path(path);
+    if (absolute == NULL) {
+        return luaL_error(state, "\"%s\" is in the provisioned root but its absolute path could"
+                                 " not be resolved", member == NULL ? "." : member);
     }
     lua_pushstring(state, absolute);
     free(absolute);
@@ -1036,6 +1133,9 @@ static void install_one(lua_State *state, const char *name) {
     } else if (strcmp(name, "provision") == 0) {
         env_declared_provision = 1;
         lua_pushcfunction(state, verb_provision);
+    } else if (strcmp(name, "artifact") == 0) {
+        env_declared_artifact = 1;
+        lua_pushcfunction(state, verb_artifact);
     } else if (strcmp(name, "exec") == 0) {
         env_declared_exec = 1;
         lua_pushcfunction(state, verb_exec);
@@ -1073,6 +1173,8 @@ static int protected_push_env(lua_State *state) {
     lua_setfield(state, -2, "tool");
     lua_pushcfunction(state, root_path);
     lua_setfield(state, -2, "path");
+    lua_pushcfunction(state, root_dir);
+    lua_setfield(state, -2, "dir");
     lua_setfield(state, -2, "__index");
     lua_pop(state, 1);
 
@@ -1164,6 +1266,7 @@ int fr_lua_verbs_push_env(lua_State *state, const char *const *verbs, size_t ver
     env_declared_exec = 0;
     env_declared_tool = 0;
     env_declared_provision = 0;
+    env_declared_artifact = 0;
     pending_verbs = verbs;
     pending_verb_count = verb_count;
     lua_pushcfunction(state, protected_push_env);

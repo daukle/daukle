@@ -12,10 +12,29 @@ int fr_cache_root(char *out, size_t out_size, fr_error *err);
    fr_cache_root (see it) rather than recomputing the root. */
 int fr_cache_toolchains_root(char *out, size_t out_size, fr_error *err);
 
+/* The directory a pinned artifact lives under, built on fr_cache_root (see it)
+   rather than recomputing the root. Separate from the toolchains root because
+   an artifact is a FILE a plugin names and a toolchain is a TREE it runs from,
+   so "a present entry is a complete one" is a statement about a file in one and
+   about a directory in the other. */
+int fr_cache_artifacts_root(char *out, size_t out_size, fr_error *err);
+
 /* Whether path names an existing directory. The provisioning probe and the
    rename below both ask whether a tree is already there, and two answers to
    one question are two answers that will disagree. */
 int fr_cache_directory_exists(const char *path);
+
+/* Whether path names an existing regular file, and the file counterpart of
+   fr_cache_directory_exists for the same reason: an artifact's presence is
+   what decides its cache hit, and a directory of that name is not a hit. */
+int fr_cache_file_exists(const char *path);
+
+/* Moves a finished file onto its final path, replacing whatever is there, for
+   a cache shape whose entries are files it did not write through
+   fr_cache_write_atomic (see fr_cache_root). Replacing is correct where the
+   path is content addressed, since anything already at it holds the same
+   bytes by construction. */
+int fr_cache_rename_file(const char *from, const char *to);
 
 /* Creates path and every ancestor of it, for a cache shape (see fr_cache_root)
    whose entries are directories rather than the files fr_cache_write_atomic

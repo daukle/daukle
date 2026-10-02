@@ -47,6 +47,12 @@ void fr_toolreport_used_installed(const char *name, const char *label, const cha
 void fr_toolreport_provisioned(const char *label, const char *url, const char *digest,
                                int cached);
 
+/* The same acquisition row for a pinned file that is kept rather than unpacked,
+   with no symlink clause: there is no tree to have left links out of, so the
+   sentence above would be a confident statement about something that does not
+   exist. D-52. */
+void fr_toolreport_artifact(const char *label, const char *url, const char *digest, int cached);
+
 /* Adds the links an unpack left out to the row digest already named, and
    writes them to stderr under it. Nothing is printed when count is zero, and a
    count that IS non-zero is never silent: a toolchain missing the links it

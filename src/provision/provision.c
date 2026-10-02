@@ -161,6 +161,94 @@ static int unpack_into(const char *archive_path, const char *tree_path, fr_unpac
     return result;
 }
 
+/* The name a url's last segment suggests, which is cosmetic: the digest
+   directory above it is the key, so a segment that cannot be used costs
+   legibility in a classpath line and a diagnostic and nothing else. */
+static void artifact_file_name(const char *url, char *out, size_t size) {
+    const char *last_slash = strrchr(url, '/');
+    const char *name = last_slash == NULL ? url : last_slash + 1;
+    size_t length = strcspn(name, "?#");
+    if (length == 0 || length + 1 > size) {
+        snprintf(out, size, "artifact");
+        return;
+    }
+    memcpy(out, name, length);
+    out[length] = '\0';
+    if (!fr_cache_component_is_safe(out, 0)) snprintf(out, size, "artifact");
+}
+
+int fr_artifact(const char *url, const char *sha256_hex, const fr_http_header *headers,
+                size_t header_count, fr_artifact_result *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+
+    if (url == NULL || url[0] == '\0') {
+        fr_error_set(err, "a pinned artifact names no file to fetch");
+        return FR_ERR;
+    }
+    if (!digest_is_well_formed(sha256_hex)) {
+        fr_error_set(err, "\"%s\" is not a sha256 pin: 64 hexadecimal characters are required",
+                     sha256_hex == NULL ? "" : sha256_hex);
+        return FR_ERR;
+    }
+
+    char artifacts[1024];
+    if (fr_cache_artifacts_root(artifacts, sizeof artifacts, err) != FR_OK) return FR_ERR;
+
+    char digest[PROVISION_DIGEST_LENGTH + 1];
+    to_lowercase_digest(sha256_hex, digest);
+
+    char name[256];
+    artifact_file_name(url, name, sizeof name);
+
+    char directory[1024];
+    int written = snprintf(directory, sizeof directory, "%s/%s", artifacts, digest);
+    if (written < 0 || (size_t) written >= sizeof directory) {
+        fr_error_set(err, "the cache directory for %s is too long", digest);
+        return FR_ERR;
+    }
+    written = snprintf(out->path, sizeof out->path, "%s/%s", directory, name);
+    if (written < 0 || (size_t) written >= sizeof out->path) {
+        out->path[0] = '\0';
+        fr_error_set(err, "the cache path for %s is too long", digest);
+        return FR_ERR;
+    }
+
+    if (fr_cache_file_exists(out->path)) {
+        out->was_cached = 1;
+        return FR_OK;
+    }
+
+    fr_cache_make_directories(artifacts);
+
+    char host[64];
+    host_component(host, sizeof host);
+
+    char temporary[1024];
+    written = snprintf(temporary, sizeof temporary, "%s/.partial-%s-%d-%u", artifacts, host,
+                       current_process_id(), next_attempt());
+    if (written < 0 || (size_t) written >= sizeof temporary) {
+        fr_error_set(err, "the temporary artifact path is too long");
+        out->path[0] = '\0';
+        return FR_ERR;
+    }
+    remove(temporary);
+
+    if (fetch_and_verify(url, sha256_hex, headers, header_count, temporary, err) != FR_OK) {
+        remove(temporary);
+        out->path[0] = '\0';
+        return FR_ERR;
+    }
+
+    fr_cache_make_directories(directory);
+    if (fr_cache_rename_file(temporary, out->path) != FR_OK) {
+        remove(temporary);
+        fr_error_set(err, "cannot move the fetched artifact for %s into the cache", digest);
+        out->path[0] = '\0';
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
 int fr_provision(const char *url, const char *sha256_hex, const fr_http_header *headers,
                  size_t header_count, fr_provision_result *out,
                  fr_error *err) {

@@ -1270,6 +1270,8 @@ TEST an_older_library_environments_raiser_survives_a_newer_one_being_built(void)
 
 #define PROVISION_PIN "1111111111111111111111111111111111111111111111111111111111111111"
 #define PROVISION_URL "http://127.0.0.1:1/toolchain.tar"
+#define ARTIFACT_PIN "2222222222222222222222222222222222222222222222222222222222222222"
+#define ARTIFACT_URL "http://127.0.0.1:1/greeting.jar"
 
 static void use_cache_directory(const char *directory, char *saved, size_t saved_size) {
     const char *previous = getenv("DAUKLE_CACHE_DIR");
@@ -1339,6 +1341,32 @@ static int prepare_provisioned_root(char *root, size_t size) {
     fr_test_make_directory(directory);
     snprintf(member, sizeof member, "%s/lib/cli.js", root);
     return write_data_member(member);
+}
+
+/* Lays the file ARTIFACT_PIN names down by hand, for the same reason
+   prepare_provisioned_root does: a cache hit is decided by the file, so the
+   unreachable url proves the hit rather than merely passing beside it. */
+static int prepare_artifact_file(char *path, size_t size) {
+    fr_error err;
+    char artifacts[1024];
+    if (fr_cache_artifacts_root(artifacts, sizeof artifacts, &err) != FR_OK) return 0;
+
+    char directory[1024];
+    snprintf(directory, sizeof directory, "%s/%s", artifacts, ARTIFACT_PIN);
+    fr_cache_make_directories(directory);
+
+    snprintf(path, size, "%s/greeting.jar", directory);
+    return write_data_member(path);
+}
+
+static lua_State *begin_artifact_env(fr_registry *registry, int *out_env) {
+    fr_error err;
+    if (fr_lua_runtime_begin(".", registry, &err) != FR_OK) return NULL;
+    lua_State *state = fr_lua_runtime_state();
+    const char *verbs[] = { "artifact" };
+    if (fr_lua_verbs_push_env(state, verbs, 1, &err) != FR_OK) return NULL;
+    *out_env = lua_gettop(state);
+    return state;
 }
 
 static lua_State *begin_provision_env(fr_registry *registry, int *out_env) {
@@ -1720,6 +1748,294 @@ TEST a_root_handle_is_absolute_from_a_relative_cache_directory(void) {
     ASSERT(failed_to_start);
     ASSERTm(message, strstr(message, "bin") != NULL);
     ASSERTm(message, strstr(message, working_directory) != NULL);
+    PASS();
+}
+
+/* The headline case for daukle.artifact. A dependency has to stay the file it
+   was published as, because an exploded jar is not a jar: a multi-release one
+   serves its base classes from a directory and its versioned classes from a
+   file, with no diagnostic either way. D-52. */
+TEST an_artifact_names_a_pinned_file_it_did_not_unpack(void) {
+    static char message[1024];
+    char cache[1024];
+    char saved_cache[1024];
+    char expected[1024];
+    use_private_provision_cache("artifact-named", cache, sizeof cache, saved_cache,
+                                sizeof saved_cache);
+    int prepared = prepare_artifact_file(expected, sizeof expected);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_artifact_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int named = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "named = daukle.artifact{ url = '" ARTIFACT_URL "', sha256 = '" ARTIFACT_PIN "' }\n"
+               "kind = type(named)\n", "=t", env, &err) == FR_OK;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    char named_value[1024];
+    char named_kind[64];
+    named_value[0] = '\0';
+    named_kind[0] = '\0';
+    if (named) {
+        lua_getfield(state, env, "named");
+        const char *text = lua_tostring(state, -1);
+        snprintf(named_value, sizeof named_value, "%s", text != NULL ? text : "");
+        lua_pop(state, 1);
+        lua_getfield(state, env, "kind");
+        const char *kind = lua_tostring(state, -1);
+        snprintf(named_kind, sizeof named_kind, "%s", kind != NULL ? kind : "");
+        lua_pop(state, 1);
+    }
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    static char named_report[1280];
+    snprintf(named_report, sizeof named_report, "kind=%s value=%s", named_kind, named_value);
+
+    ASSERT(prepared);
+    ASSERTm(message, named);
+    ASSERT_STR_EQm(named_report, "string", named_kind);
+    /* The url's last segment is kept so a classpath line reads as the artifact
+       a user declared, and the digest above it is what actually keys the file. */
+    ASSERTm(named_report, strstr(named_value, "greeting.jar") != NULL);
+    ASSERTm(named_report, strstr(named_value, ARTIFACT_PIN) != NULL);
+    PASS();
+}
+
+/* The pin is mandatory on the same grounds as daukle.provision's, and the
+   message has to say there is no flag that relaxes one: a user who reads
+   "needs a sha256" otherwise goes looking for the flag. */
+TEST artifact_refuses_a_missing_sha256(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_artifact_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int refused = state != NULL
+        && fr_lua_run_in_env(state, "daukle.artifact{ url = '" ARTIFACT_URL "' }", "=t", env,
+                             &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "sha256") != NULL);
+    ASSERTm(message, strstr(message, "unpinned") != NULL);
+    PASS();
+}
+
+/* A key daukle does not know is a key daukle must refuse, and the message names
+   the verb that refused rather than its sibling: the two share one field list
+   precisely so they cannot drift, which is what makes naming it worth pinning. */
+TEST artifact_refuses_an_unknown_key_by_name(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_artifact_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int refused = state != NULL
+        && fr_lua_run_in_env(state,
+               "daukle.artifact{ url = '" ARTIFACT_URL "', sha256 = '" ARTIFACT_PIN "',"
+               " version = '21' }", "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "daukle.artifact") != NULL);
+    ASSERTm(message, strstr(message, "version") != NULL);
+    PASS();
+}
+
+/* A plugin that did not declare the capability does not get it, which is the
+   property that makes declaring it mean anything. */
+TEST artifact_is_not_installed_without_being_declared(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int refused = state != NULL
+        && fr_lua_run_in_env(state,
+               "daukle.artifact{ url = '" ARTIFACT_URL "', sha256 = '" ARTIFACT_PIN "' }",
+               "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "artifact") != NULL);
+    PASS();
+}
+
+/* root:dir names a directory, which nothing could before: the only route to a
+   classpath entry was to name a file inside the tree and strip the member off
+   the returned string, which is separator dependent. */
+TEST a_root_dir_names_a_directory(void) {
+    static char message[1024];
+    char cache[1024];
+    char saved_cache[1024];
+    char root[1024];
+    use_private_provision_cache("dir-member", cache, sizeof cache, saved_cache,
+                                sizeof saved_cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int named = rooted
+        && fr_lua_run_in_env(state, "named = root:dir('lib')\nbare = root:dir()\n", "=t", env,
+                             &err) == FR_OK;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    char named_value[1024];
+    char bare_value[1024];
+    named_value[0] = '\0';
+    bare_value[0] = '\0';
+    if (named) {
+        lua_getfield(state, env, "named");
+        const char *text = lua_tostring(state, -1);
+        snprintf(named_value, sizeof named_value, "%s", text != NULL ? text : "");
+        lua_pop(state, 1);
+        lua_getfield(state, env, "bare");
+        const char *bare = lua_tostring(state, -1);
+        snprintf(bare_value, sizeof bare_value, "%s", bare != NULL ? bare : "");
+        lua_pop(state, 1);
+    }
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    static char named_report[2304];
+    snprintf(named_report, sizeof named_report, "named=%s bare=%s", named_value, bare_value);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERTm(message, named);
+    ASSERTm(named_report, strstr(named_value, "lib") != NULL);
+    ASSERTm(named_report, strstr(named_value, PROVISION_PIN) != NULL);
+    /* With no argument it answers the root, which is the whole point: that is
+       the classpath entry for a tree that was unpacked from one jar. */
+    ASSERTm(named_report, strstr(bare_value, PROVISION_PIN) != NULL);
+    ASSERTm(named_report, strstr(bare_value, "lib") == NULL);
+    PASS();
+}
+
+/* The two verbs stay separate so each refuses the other's shape, which is what
+   makes a mistyped name fail loudly rather than resolve to something plausible. */
+TEST a_root_dir_and_a_root_path_refuse_each_others_shape(void) {
+    static char dir_message[512];
+    static char path_message[512];
+    char cache[1024];
+    char saved_cache[1024];
+    char root[1024];
+    use_private_provision_cache("dir-vs-path", cache, sizeof cache, saved_cache,
+                                sizeof saved_cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int dir_refused_a_file = rooted
+        && fr_lua_run_in_env(state, "root:dir('lib/cli.js')", "=t", env, &err) == FR_ERR;
+    snprintf(dir_message, sizeof dir_message, "%s", err.message);
+
+    int path_refused_a_directory = rooted
+        && fr_lua_run_in_env(state, "root:path('lib')", "=t", env, &err) == FR_ERR;
+    snprintf(path_message, sizeof path_message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERTm(dir_message, dir_refused_a_file);
+    ASSERTm(dir_message, strstr(dir_message, "directory") != NULL);
+    ASSERTm(path_message, path_refused_a_directory);
+    PASS();
+}
+
+/* root:dir shares root:path's containment rules rather than carrying a second
+   copy of them, and a rule with one implementation is a rule that cannot drift. */
+TEST a_root_dir_refuses_a_member_that_climbs_out(void) {
+    static char message[512];
+    char cache[1024];
+    char saved_cache[1024];
+    char root[1024];
+    use_private_provision_cache("dir-climb", cache, sizeof cache, saved_cache, sizeof saved_cache);
+    int prepared = prepare_provisioned_root(root, sizeof root);
+
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_provision_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    int rooted = state != NULL && prepared
+        && fr_lua_run_in_env(state,
+               "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
+               "=t", env, &err) == FR_OK;
+
+    int climbed = rooted
+        && fr_lua_run_in_env(state, "root:dir('../../..')", "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    int backslashed = rooted
+        && fr_lua_run_in_env(state, "root:dir('lib\\\\nested')", "=t", env, &err) == FR_ERR;
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(cache);
+    restore_cache_directory(saved_cache);
+
+    ASSERT(prepared);
+    ASSERT(rooted);
+    ASSERTm(message, climbed);
+    ASSERTm(message, strstr(message, "climbs out") != NULL);
+    ASSERT(backslashed);
     PASS();
 }
 
@@ -2168,5 +2484,12 @@ int main(int argc, char **argv) {
     RUN_TEST(a_root_path_refuses_a_member_that_is_not_there);
     RUN_TEST(a_root_path_names_a_batch_file_that_a_root_tool_refuses);
     RUN_TEST(provision_is_refused_while_generating);
+    RUN_TEST(an_artifact_names_a_pinned_file_it_did_not_unpack);
+    RUN_TEST(artifact_refuses_a_missing_sha256);
+    RUN_TEST(artifact_refuses_an_unknown_key_by_name);
+    RUN_TEST(artifact_is_not_installed_without_being_declared);
+    RUN_TEST(a_root_dir_names_a_directory);
+    RUN_TEST(a_root_dir_and_a_root_path_refuse_each_others_shape);
+    RUN_TEST(a_root_dir_refuses_a_member_that_climbs_out);
     GREATEST_MAIN_END();
 }
