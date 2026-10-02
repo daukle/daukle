@@ -245,6 +245,48 @@ TEST a_task_block_refuses_a_key_it_does_not_define(void) {
     PASS();
 }
 
+/* A discarded key is a user believing they configured something, which is the
+   whole of D-49: this manifest used to parse, sync clean, and do nothing. */
+TEST an_unknown_root_key_is_refused_by_name(void) {
+    const char *text =
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"description\":\"ignored\"}";
+    fr_manifest manifest; fr_error err;
+    cJSON *root = cJSON_Parse(text);
+    ASSERT_EQ(FR_ERR, fr_manifest_from_document(root, "daukle.toml", &manifest, &err));
+    ASSERTm(err.message, strstr(err.message, "\"description\"") != NULL);
+    ASSERTm(err.message, strstr(err.message, "toolchains") != NULL);
+    PASS();
+}
+
+/* The mistake the defect was reported for, and the one the hint exists to
+   answer: every section name is plural and the singular reads as correct. */
+TEST a_misspelled_section_names_the_one_that_was_meant(void) {
+    const char *text =
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchain\":{\"java\":\"21\"}}";
+    fr_manifest manifest; fr_error err;
+    cJSON *root = cJSON_Parse(text);
+    ASSERT_EQ(FR_ERR, fr_manifest_from_document(root, "daukle.toml", &manifest, &err));
+    ASSERTm(err.message, strstr(err.message, "did you mean \"toolchains\"") != NULL);
+    PASS();
+}
+
+/* The other direction of the same rule, and the reason it is worth a case of
+   its own: a refusal that fired on a name the vocabulary DOES define would
+   break every manifest in the org, and the list is the only thing stopping it. */
+TEST every_name_the_vocabulary_defines_is_still_accepted(void) {
+    const char *text =
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"sources\":{},\"consumers\":[],\"toolchains\":{\"java\":\"21\"},"
+        "\"plugins\":{},\"resolvers\":{},\"publish\":{},\"tasks\":{}}";
+    fr_manifest manifest; fr_error err;
+    cJSON *root = cJSON_Parse(text);
+    ASSERT_EQ(FR_OK, fr_manifest_from_document(root, "daukle.toml", &manifest, &err));
+    fr_manifest_free(&manifest);
+    PASS();
+}
+
 TEST a_publish_block_carries_its_from_and_its_block(void) {
     cJSON *root = cJSON_Parse(
         "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
@@ -335,6 +377,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_toolchains_table_that_is_not_a_table_is_rejected);
     RUN_TEST(a_tasks_table_is_read);
     RUN_TEST(a_task_block_refuses_a_key_it_does_not_define);
+    RUN_TEST(an_unknown_root_key_is_refused_by_name);
+    RUN_TEST(a_misspelled_section_names_the_one_that_was_meant);
+    RUN_TEST(every_name_the_vocabulary_defines_is_still_accepted);
     RUN_TEST(a_publish_block_carries_its_from_and_its_block);
     RUN_TEST(a_publish_block_without_from_is_refused);
     RUN_TEST(a_publish_from_naming_no_toolchain_is_refused);
