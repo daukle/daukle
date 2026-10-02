@@ -60,6 +60,50 @@ TEST parses_the_table_form_with_a_pin(void) {
     PASS();
 }
 
+/* The key that was measured reaching nothing, and the reason D-44 exists: it
+   reads as doing something because a resolver really does read a key of that
+   name, just never from here. The message names the form that works, because a
+   list of valid keys does not tell anyone what to write instead. */
+TEST a_plugin_entry_refuses_asset_and_names_where_it_belongs(void) {
+    cJSON *document = document_from(
+        "{\"plugins\":{\"c\":{\"resolver\":\"github\",\"coordinate\":\"daukle/c@^1.0.0\","
+        "\"asset\":\"deps.lua\"}}}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERTm(err.message, strstr(err.message, "asset") != NULL);
+    ASSERTm(err.message, strstr(err.message, "resolvers") != NULL);
+    cJSON_Delete(document);
+    PASS();
+}
+
+TEST a_plugin_entry_refuses_any_key_it_does_not_define(void) {
+    cJSON *document = document_from(
+        "{\"plugins\":{\"c\":{\"path\":\"./c.lua\",\"version\":\"1.0.0\"}}}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_ERR, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERTm(err.message, strstr(err.message, "\"version\"") != NULL);
+    ASSERTm(err.message, strstr(err.message, "coordinate") != NULL);
+    cJSON_Delete(document);
+    PASS();
+}
+
+/* The failure mode of this change is not a missed refusal but one that fires on
+   a real manifest, and this is the only case that would catch it. */
+TEST a_plugin_entry_still_accepts_every_key_it_defines(void) {
+    cJSON *document = document_from(
+        "{\"plugins\":{\"c\":{\"resolver\":\"github\",\"coordinate\":\"daukle/c@^1.0.0\","
+        "\"sha256\":\"abc123\",\"requires\":{}}}}");
+    fr_plugin_entry *entries = NULL; size_t count = 0; fr_error err;
+
+    ASSERT_EQ(FR_OK, fr_plugins_parse(document, NULL, 0, &entries, &count, &err));
+    ASSERT_EQ(1, (int) count);
+    fr_plugins_free(entries, count);
+    cJSON_Delete(document);
+    PASS();
+}
+
 TEST parses_the_table_form_naming_a_resolver_and_a_coordinate(void) {
     cJSON *document = document_from(
         "{\"plugins\":{\"g\":{\"resolver\":\"maven\",\"coordinate\":\"org.example:widget\"}}}");
@@ -2849,6 +2893,9 @@ int main(int argc, char **argv) {
     GREATEST_SET_TEARDOWN_CB(close_any_leaked_runtime, NULL);
     RUN_TEST(parses_the_string_url_form);
     RUN_TEST(parses_the_table_form_with_a_pin);
+    RUN_TEST(a_plugin_entry_refuses_asset_and_names_where_it_belongs);
+    RUN_TEST(a_plugin_entry_refuses_any_key_it_does_not_define);
+    RUN_TEST(a_plugin_entry_still_accepts_every_key_it_defines);
     RUN_TEST(parses_the_table_form_naming_a_resolver_and_a_coordinate);
     RUN_TEST(a_table_entrys_requires_key_becomes_its_overrides);
     RUN_TEST(a_table_entry_without_requires_has_no_overrides);

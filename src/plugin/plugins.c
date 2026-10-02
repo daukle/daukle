@@ -116,8 +116,46 @@ static int parse_string_form(const char *label, const char *value,
 /* A table entry names exactly one of "path", "url", or "resolver" with
    "coordinate", the three forms the string form discriminates between, and any
    of them may also carry a "sha256" pin. */
+/* Every key a table entry defines. A name outside this list used to be accepted
+   and discarded, which cost a published AUTHORING.md an hour of being wrong:
+   "asset" reads as doing something because the resolver really does read a key
+   of that name, just never from here. D-44. */
+static const char *const PLUGIN_ENTRY_KEYS[] = {
+    "requires", "sha256", "path", "url", "resolver", "coordinate"
+};
+
+static int plugin_entry_key_is_known(const char *name) {
+    size_t count = sizeof PLUGIN_ENTRY_KEYS / sizeof PLUGIN_ENTRY_KEYS[0];
+    for (size_t index = 0; index < count; index++) {
+        if (strcmp(PLUGIN_ENTRY_KEYS[index], name) == 0) return 1;
+    }
+    return 0;
+}
+
+static int refuse_an_unknown_entry_key(const char *label, const cJSON *member, fr_error *err) {
+    for (const cJSON *field = member->child; field != NULL; field = field->next) {
+        if (field->string == NULL || plugin_entry_key_is_known(field->string)) continue;
+        /* "asset" is named on its own because it is the one that was measured
+           reaching nothing, and because the form that DOES work is not
+           guessable from a list of valid keys. */
+        if (strcmp(field->string, "asset") == 0) {
+            fr_error_set(err, "plugin \"%s\": \"asset\" belongs on the [resolvers.*] entry this"
+                              " plugin resolves through, not here, and naming it here reached"
+                              " nothing. Declare a second resolver carrying it", label);
+        } else {
+            fr_error_set(err, "plugin \"%s\": \"%s\" is not a key a plugin entry defines; it"
+                              " takes path, url, resolver, coordinate, sha256 and requires",
+                         label, field->string);
+        }
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
 static int parse_table_form(const char *label, const cJSON *member, fr_plugin_entry *out,
                             fr_error *err) {
+    if (refuse_an_unknown_entry_key(label, member, err) != FR_OK) return FR_ERR;
+
     /* Not validated here: plugin_deps.c is the sole reader, and validating an
        absent table would tax the common case (no requires at all) for
        nothing. */
