@@ -16,14 +16,46 @@ set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
               "daukle\\.language/[a-z]" "daukle\\.config/[a-z]" "daukle\\.toolchain/[a-z]"
               "daukle\\.task/[a-z]" "FR_SOURCE_[A-Z]" "FR_LANGUAGE_[A-Z]")
 
+# One file against one pattern, written as "<file>|<pattern>". Excluding a whole
+# file is the older remedy and the one the header above describes; it costs the
+# other nine patterns on that file, which is too much for a 700-line reader that
+# will never resolve a plugin. archive/archive.c carries "path" and "linkpath"
+# because those are pax extended-header KEYWORDS, a tar format's vocabulary that
+# predates this project. D-56.
+set(EXEMPTIONS "archive/archive.c|\"path\"")
+
 set(FINDINGS "")
 foreach(name ${CORE_FILES})
     file(READ "${SOURCE_DIR}/src/${name}" content)
     foreach(pattern ${FORBIDDEN})
-        if(content MATCHES "${pattern}")
+        list(FIND EXEMPTIONS "${name}|${pattern}" exempt_at)
+        if(exempt_at EQUAL -1 AND content MATCHES "${pattern}")
             list(APPEND FINDINGS "${name} matches ${pattern}")
         endif()
     endforeach()
+endforeach()
+
+# An exemption naming a file or a pattern that no longer exists is an exemption
+# nobody will notice has stopped applying to anything.
+foreach(exemption ${EXEMPTIONS})
+    string(REPLACE "|" ";" parts "${exemption}")
+    list(GET parts 0 exempt_file)
+    list(GET parts 1 exempt_pattern)
+    list(FIND CORE_FILES "${exempt_file}" file_at)
+    if(file_at EQUAL -1)
+        message(FATAL_ERROR "agnostic-core: the exemption for ${exempt_file} names a file that is "
+                            "not in CORE_FILES")
+    endif()
+    list(FIND FORBIDDEN "${exempt_pattern}" pattern_at)
+    if(pattern_at EQUAL -1)
+        message(FATAL_ERROR "agnostic-core: the exemption for ${exempt_file} names a pattern that "
+                            "is not forbidden")
+    endif()
+    file(READ "${SOURCE_DIR}/src/${exempt_file}" content)
+    if(NOT content MATCHES "${exempt_pattern}")
+        message(FATAL_ERROR "agnostic-core: ${exempt_file} no longer matches ${exempt_pattern}, so "
+                            "its exemption is dead and should be deleted")
+    endif()
 endforeach()
 
 if(FINDINGS)

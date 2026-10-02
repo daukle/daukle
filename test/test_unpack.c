@@ -290,6 +290,226 @@ TEST the_expansion_ceiling_admits_the_largest_archive_daukle_provisions(void) {
     PASS();
 }
 
+/* GNU tar's default posix format writes one of these before every member, so
+   refusing them refuses most modern tarballs. Every clang archive daukle
+   provisions on Linux and macOS carries them. D-56. */
+static size_t append_pax(char *buffer, size_t offset, const char *keyword, const char *value,
+                         char typeflag) {
+    char records[256];
+    /* The length field counts its OWN digits, so the total is a fixpoint:
+       widening it by a digit can widen it again. */
+    size_t body = strlen(keyword) + 1 + strlen(value) + 1;
+    size_t total = body + 2;
+    for (;;) {
+        size_t digits = 1;
+        size_t limit = 10;
+        while (total >= limit) {
+            digits++;
+            limit *= 10;
+        }
+        size_t candidate = body + 1 + digits;
+        if (candidate == total) break;
+        total = candidate;
+    }
+    int written = snprintf(records, sizeof records, "%zu %s=%s\n", total, keyword, value);
+    return fr_test_tar_append(buffer, offset, "PaxHeaders/0", typeflag, records,
+                              (size_t) written);
+}
+
+static int unpack_bytes(const char *buffer, size_t size, const char *destination,
+                        fr_unpack_report *report, fr_error *err) {
+    fr_archive *archive = NULL;
+    err->message[0] = '\0';
+    int opened = open_archive_from_bytes(buffer, size, &archive, err);
+    memset(report, 0, sizeof *report);
+    int result = opened == FR_OK
+               ? fr_unpack(archive, destination, &FR_UNPACK_DEFAULTS, report, err)
+               : FR_ERR;
+    if (archive != NULL) fr_archive_close(archive);
+    return result;
+}
+
+TEST a_pax_extended_header_is_read_rather_than_refused(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-pax-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = append_pax(buffer, 0, "mtime", "1700000000.0", 'x');
+    used = fr_test_tar_append(buffer, used, "lib/data.txt", '0', "hello", 5);
+    fr_test_tar_end(buffer, used);
+
+    fr_unpack_report report;
+    fr_error err;
+    int result = unpack_bytes(buffer, sizeof buffer, destination, &report, &err);
+
+    char written[1024];
+    snprintf(written, sizeof written, "%s/lib/data.txt", destination);
+    char *content = NULL;
+    size_t length = 0;
+    int correct = fr_file_read_bytes(written, &content, &length, &err) == FR_OK && length == 5;
+    free(content);
+    size_t files = report.files_written;
+    fr_test_remove_tree(destination);
+
+    snprintf(message, sizeof message, "result %d, files %zu, err \"%s\"", result, files,
+             err.message);
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERT_EQm(message, 1u, files);
+    ASSERTm(message, correct);
+    PASS();
+}
+
+TEST a_pax_path_renames_the_member_that_follows_it(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-paxname-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = append_pax(buffer, 0, "path", "lib/renamed.txt", 'x');
+    used = fr_test_tar_append(buffer, used, "placeholder", '0', "hello", 5);
+    /* The second member proves the override is CONSUMED: it carries no pax
+       header and must keep its own name. */
+    used = fr_test_tar_append(buffer, used, "lib/kept.txt", '0', "world", 5);
+    fr_test_tar_end(buffer, used);
+
+    fr_unpack_report report;
+    fr_error err;
+    int result = unpack_bytes(buffer, sizeof buffer, destination, &report, &err);
+
+    char renamed[1024];
+    char placeholder[1024];
+    char kept[1024];
+    snprintf(renamed, sizeof renamed, "%s/lib/renamed.txt", destination);
+    snprintf(placeholder, sizeof placeholder, "%s/placeholder", destination);
+    snprintf(kept, sizeof kept, "%s/lib/kept.txt", destination);
+    char *content = NULL;
+    size_t length = 0;
+    int renamed_present = fr_file_read_bytes(renamed, &content, &length, &err) == FR_OK;
+    free(content);
+    content = NULL;
+    int placeholder_present = fr_file_read_bytes(placeholder, &content, &length, &err) == FR_OK;
+    free(content);
+    content = NULL;
+    int kept_present = fr_file_read_bytes(kept, &content, &length, &err) == FR_OK;
+    free(content);
+    fr_test_remove_tree(destination);
+
+    snprintf(message, sizeof message, "result %d, renamed %d, placeholder %d, kept %d", result,
+             renamed_present, placeholder_present, kept_present);
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERTm(message, renamed_present);
+    ASSERT_FALSEm(message, placeholder_present);
+    ASSERTm(message, kept_present);
+    PASS();
+}
+
+TEST a_pax_path_that_escapes_is_refused_like_any_other_name(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-paxescape-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = append_pax(buffer, 0, "path", "../escaped.txt", 'x');
+    used = fr_test_tar_append(buffer, used, "innocent.txt", '0', "hello", 5);
+    fr_test_tar_end(buffer, used);
+
+    fr_unpack_report report;
+    fr_error err;
+    int result = unpack_bytes(buffer, sizeof buffer, destination, &report, &err);
+    size_t files = report.files_written;
+    fr_test_remove_tree(destination);
+
+    snprintf(message, sizeof message, "result %d, files %zu, err \"%s\"", result, files,
+             err.message);
+    ASSERT_EQm(message, FR_ERR, result);
+    ASSERT_EQm(message, 0u, files);
+    PASS();
+}
+
+TEST a_global_pax_header_naming_a_path_is_refused(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-paxglobal-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = append_pax(buffer, 0, "path", "lib/renamed.txt", 'g');
+    used = fr_test_tar_append(buffer, used, "innocent.txt", '0', "hello", 5);
+    fr_test_tar_end(buffer, used);
+
+    fr_unpack_report report;
+    fr_error err;
+    int result = unpack_bytes(buffer, sizeof buffer, destination, &report, &err);
+    fr_test_remove_tree(destination);
+
+    snprintf(message, sizeof message, "result %d, err \"%s\"", result, err.message);
+    ASSERT_EQm(message, FR_ERR, result);
+    PASS();
+}
+
+TEST a_global_pax_header_carrying_only_times_is_skipped(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-paxglobaltime-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = append_pax(buffer, 0, "mtime", "1700000000.0", 'g');
+    used = fr_test_tar_append(buffer, used, "innocent.txt", '0', "hello", 5);
+    fr_test_tar_end(buffer, used);
+
+    fr_unpack_report report;
+    fr_error err;
+    int result = unpack_bytes(buffer, sizeof buffer, destination, &report, &err);
+    size_t files = report.files_written;
+    fr_test_remove_tree(destination);
+
+    snprintf(message, sizeof message, "result %d, files %zu, err \"%s\"", result, files,
+             err.message);
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERT_EQm(message, 1u, files);
+    PASS();
+}
+
+TEST a_pax_header_record_that_does_not_parse_is_refused(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-paxjunk-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    /* No leading length, which is the one field the format cannot be walked
+       without. A reader that skipped the payload instead would pass this. */
+    size_t used = fr_test_tar_append(buffer, 0, "PaxHeaders/0", 'x', "path=lib/x.txt\n", 15);
+    used = fr_test_tar_append(buffer, used, "innocent.txt", '0', "hello", 5);
+    fr_test_tar_end(buffer, used);
+
+    fr_unpack_report report;
+    fr_error err;
+    int result = unpack_bytes(buffer, sizeof buffer, destination, &report, &err);
+    fr_test_remove_tree(destination);
+
+    snprintf(message, sizeof message, "result %d, err \"%s\"", result, err.message);
+    ASSERT_EQm(message, FR_ERR, result);
+    PASS();
+}
+
 TEST a_total_size_past_the_limit_is_refused_by_name(void) {
     static char message[512];
     /* The decompression bomb. A digest pin proves the bytes are the ones
@@ -821,6 +1041,12 @@ int main(int argc, char **argv) {
     RUN_TEST(a_member_count_past_the_limit_is_refused_by_name);
     RUN_TEST(a_total_size_past_the_limit_is_refused_by_name);
     RUN_TEST(the_expansion_ceiling_admits_the_largest_archive_daukle_provisions);
+    RUN_TEST(a_pax_extended_header_is_read_rather_than_refused);
+    RUN_TEST(a_pax_path_renames_the_member_that_follows_it);
+    RUN_TEST(a_pax_path_that_escapes_is_refused_like_any_other_name);
+    RUN_TEST(a_global_pax_header_naming_a_path_is_refused);
+    RUN_TEST(a_global_pax_header_carrying_only_times_is_skipped);
+    RUN_TEST(a_pax_header_record_that_does_not_parse_is_refused);
     RUN_TEST(a_path_longer_than_the_limit_is_refused_rather_than_truncated);
     RUN_TEST(a_duplicate_member_name_is_refused);
     RUN_TEST(a_deeply_nested_member_past_the_legacy_path_limit_is_written);

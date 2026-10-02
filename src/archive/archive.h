@@ -6,6 +6,10 @@
 #include <stddef.h>
 
 #define FR_ARCHIVE_MAX_NAME 255
+/* A pax extended header carries records for one member. Only its path and
+   linkpath are read, so a header larger than this is describing something
+   daukle would ignore and is refused rather than scanned. */
+#define FR_ARCHIVE_MAX_PAX_BYTES 8192
 
 typedef enum { FR_ARCHIVE_TAR, FR_ARCHIVE_TAR_GZ, FR_ARCHIVE_ZIP } fr_archive_kind;
 typedef enum { FR_MEMBER_FILE, FR_MEMBER_DIRECTORY, FR_MEMBER_SYMLINK } fr_member_kind;
