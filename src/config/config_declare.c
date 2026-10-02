@@ -223,6 +223,19 @@ static void chunk_toolchains_clear(void) {
     chunk_toolchain_count = 0;
 }
 
+/* Borrowed from the declaration fr_plugins_read_declaration filled, which the
+   loader keeps alive for the whole of fr_lua_plugin_load and frees after. It
+   is armed and disarmed around that call exactly as the environment allowlist
+   is, so a path that is not a plugin chunk sees an empty list rather than a
+   stale one. */
+static const fr_plugin_requirement *chunk_requires;
+static size_t chunk_requires_count;
+
+void fr_lua_declare_set_required_aliases(const fr_plugin_requirement *requires, size_t count) {
+    chunk_requires = requires;
+    chunk_requires_count = count;
+}
+
 /* resolver_callback is deliberately excluded here; see its own comment. */
 static void chunk_state_clear(void) {
     chunk_toolchains_clear();
@@ -283,6 +296,32 @@ static void copy_toolchain_prefix(const char *name, const char *colon, char *out
     if (length >= out_size) length = out_size - 1;
     memcpy(out, name, length);
     out[length] = '\0';
+}
+
+static int chunk_requires_alias(const char *name, size_t length) {
+    for (size_t index = 0; index < chunk_requires_count; index++) {
+        const char *alias = chunk_requires[index].alias;
+        if (alias != NULL && strlen(alias) == length && strncmp(alias, name, length) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* An edge naming "<owner>:<task>" points at a task this chunk did not declare,
+   so the owner must be one this plugin declared a dependency on. A bare name
+   carries no owner at all and is left alone: it is the aggregator mechanism of
+   the task model's section 4, where a toolchain joins a "build" whose provider
+   it must not have to name. Fills owner_out with the offending prefix and
+   returns 0 when the edge is foreign; the caller raises, because it has a task
+   slot to release first. */
+static int edge_owner_is_declared(const char *edge, char *owner_out, size_t owner_size) {
+    const char *colon = strchr(edge, ':');
+    if (colon == NULL) return 1;
+    size_t owner = (size_t) (colon - edge);
+    if (chunk_declares_toolchain(edge, owner) || chunk_requires_alias(edge, owner)) return 1;
+    copy_toolchain_prefix(edge, colon, owner_out, owner_size);
+    return 0;
 }
 
 
@@ -371,6 +410,16 @@ static int lua_declare_task(lua_State *state) {
             release_task_slot(slot);
             return luaL_error(state, "\"%s\" needs partOf to be a string", capability);
         }
+        char owner[64];
+        if (!edge_owner_is_declared(lua_tostring(state, -1), owner, sizeof owner)) {
+            char edge[128];
+            snprintf(edge, sizeof edge, "%s", lua_tostring(state, -1));
+            release_task_slot(slot);
+            return luaL_error(state, "\"%s\" is part of \"%s\", which belongs to \"%s\": a plugin"
+                                     " may name a task of a toolchain it declares or of a plugin"
+                                     " it requires, and this one requires no \"%s\"",
+                              capability, edge, owner, owner);
+        }
         slot->part_of = fr_dup_string(lua_tostring(state, -1));
         if (slot->part_of == NULL) {
             release_task_slot(slot);
@@ -398,6 +447,16 @@ static int lua_declare_task(lua_State *state) {
             if (!lua_isstring(state, -1)) {
                 release_task_slot(slot);
                 return luaL_error(state, "\"%s\" needs dependsOn to contain only strings", capability);
+            }
+            char owner[64];
+            if (!edge_owner_is_declared(lua_tostring(state, -1), owner, sizeof owner)) {
+                char edge[128];
+                snprintf(edge, sizeof edge, "%s", lua_tostring(state, -1));
+                release_task_slot(slot);
+                return luaL_error(state, "\"%s\" depends on \"%s\", which belongs to \"%s\": a"
+                                         " plugin may name a task of a toolchain it declares or of"
+                                         " a plugin it requires, and this one requires no \"%s\"",
+                                  capability, edge, owner, owner);
             }
             slot->depends_on[index - 1] = fr_dup_string(lua_tostring(state, -1));
             if (slot->depends_on[index - 1] == NULL) {
