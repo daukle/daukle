@@ -143,17 +143,19 @@ Neither touches `src/plugin/resolve.c`, and a change that does touch it for a ne
 signal that the seam was bypassed.
 
 **A source or a language plugin may not declare `exec`.** `lua_declare_language` and
-`lua_declare_source` in `src/config/config_lua.c` both refuse with "daukle.exec is available only to a
-toolchain plugin" when `fr_lua_verbs_env_declared_exec` (`src/lua/lua_verbs.c`) reports that the environment
-the plugin's chunk is running in included `exec`. The flag is reset at the top of every
-`fr_lua_verbs_push_env` call, so it can never carry a stale answer from a previously loaded plugin.
-Only a toolchain plugin, not yet built, may declare `exec`.
+`lua_declare_source` in `src/config/config_declare.c` both refuse with "daukle.exec is available only
+to a toolchain or publisher plugin" when `fr_lua_verbs_env_declared_exec` (`src/lua/lua_verbs.c`)
+reports that the environment the plugin's chunk is running in included `exec`. The flag is reset at
+the top of every `fr_lua_verbs_push_env` call, so it can never carry a stale answer from a previously
+loaded plugin. **A toolchain or a publisher plugin may declare `exec`, and both kinds exist**:
+`daukle/java` and `daukle/cmake` are toolchains, and `D-4` shipped publishing.
 
 That check fires when a plugin says what kind it is, which is too late on its own: a plugin that
-calls `daukle.exec` at the top of its chunk and declares afterwards has already run the program.
-So `verb_exec` refuses again at the call itself, for the whole of any plugin chunk
-(`fr_lua_plugin_exec_is_refused` in `src/config/config_lua.c`), since no plugin kind that may exec exists yet.
-The two together are what make the refusal fail closed.
+calls `daukle.exec` at the top of its chunk and declares afterwards has already run the program. So
+`verb_exec` refuses again at the call itself, for the whole of any plugin's **top-level chunk**
+(`fr_lua_plugin_exec_is_refused` in `src/config/config_lua.c`, which returns `plugin_chunk_running`).
+**The rule is temporal, not about kind**: exec is refused while a chunk is declaring and allowed
+inside the task callback that runs later. The two together are what make the refusal fail closed.
 
 **A plugin may not name another plugin it did not declare a dependency on.** Three routes reach
 across that boundary and all three are now refused. Declaring a task `other:x` is refused by
