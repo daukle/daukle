@@ -516,6 +516,51 @@ TEST a_skipped_symlink_reaches_the_report_by_name(void) {
     PASS();
 }
 
+/* D-43. Silence under a provisioned row used to mean two different things:
+   "unpacked, nothing skipped" and "came from the cache, so nobody looked".
+   Only the diagnostic can carry the difference, so only reading the
+   diagnostic can prove it: a green suite prints no messages at all. */
+TEST a_cached_provision_says_its_symlinks_were_not_examined(void) {
+    static char message[1024];
+    static char captured[1024];
+    char trace_path[1024];
+    snprintf(trace_path, sizeof trace_path, "%s/daukle-d43-report-%d.txt",
+             fr_test_temp_base(), fr_test_process_id());
+
+    fr_toolreport_reset();
+    const char *url = "https://example.invalid/toolchains/temurin-21.tar.gz";
+    const char *fresh = "6234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
+    const char *hit = "7234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
+
+    captured[0] = '\0';
+    int opened = fr_test_capture_stderr_begin(trace_path);
+    if (opened == 0) {
+        fr_toolreport_provisioned(NULL, url, fresh, 0);
+        fr_toolreport_symlinks_skipped(fresh, 0, "");
+        fr_toolreport_provisioned(NULL, url, hit, 1);
+        fr_test_capture_stderr_end();
+
+        FILE *handle = fopen(trace_path, "rb");
+        if (handle != NULL) {
+            size_t read = fread(captured, 1, sizeof captured - 1, handle);
+            captured[read] = '\0';
+            fclose(handle);
+        }
+    }
+    remove(trace_path);
+
+    const char *clause = "symlinks not examined";
+    const char *first = strstr(captured, clause);
+    int said_once = first != NULL && strstr(first + 1, clause) == NULL;
+    snprintf(message, sizeof message, "opened %d, captured <%s>", opened, captured);
+
+    ASSERT_EQm(message, 0, opened);
+    ASSERTm(message, strstr(captured, "(downloaded)") != NULL);
+    ASSERTm(message, strstr(captured, "(cached)") != NULL);
+    ASSERTm("only the cached row may disclaim an examination", said_once);
+    PASS();
+}
+
 /* fr_toolreport_reset drops the row COUNT, not the rows, so a second run in
    one process writes over the first run's storage. record() has to clear every
    field it does not set, or the new row inherits the old one's skipped links.
@@ -912,6 +957,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_label_holding_a_control_character_is_refused);
     RUN_TEST(one_line_per_distinct_tool_per_run);
     RUN_TEST(a_skipped_symlink_reaches_the_report_by_name);
+    RUN_TEST(a_cached_provision_says_its_symlinks_were_not_examined);
     RUN_TEST(a_recycled_row_does_not_inherit_the_previous_runs_skipped_links);
     RUN_TEST(a_missing_label_falls_back_to_a_fact_rather_than_to_nothing);
     RUN_TEST(the_row_keeps_the_url_and_digest_whatever_the_label_says);

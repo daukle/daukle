@@ -36,7 +36,14 @@ void fr_toolreport_used_installed(const char *name, const char *label, const cha
    Writes "provisioning <label> (cached|downloaded)" to stderr, followed by
    the url and "sha256 <digest>" on their own indented lines: the label
    always comes first and the facts always come last, so core's half of the
-   line can never be mistaken for something the label supplied. */
+   line can never be mistaken for something the label supplied.
+
+   @implNote a cached row also says the symlinks were not examined. Silence
+   below a provisioned row otherwise means two different things: "unpacked,
+   nothing was skipped" on a fresh provision, and "nothing was unpacked, so
+   nobody looked" on a cache hit. Since D-38 daukle creates no symlink on any
+   platform, so the cached tree really can lack them and the first run is the
+   only one that ever said so. D-43. */
 void fr_toolreport_provisioned(const char *label, const char *url, const char *digest,
                                int cached);
 

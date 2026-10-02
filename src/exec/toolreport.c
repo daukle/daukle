@@ -107,6 +107,9 @@ void fr_toolreport_provisioned(const char *label, const char *url, const char *d
     const char *shown_label = effective_label(label, last_component);
     fprintf(stderr, "provisioning %s (%s)\n  %s\n  sha256 %s\n", shown_label,
             cached ? "cached" : "downloaded", url, digest);
+    if (cached) {
+        fprintf(stderr, "  symlinks not examined, the tree was not unpacked this run\n");
+    }
     record(ROW_PROVISIONED, shown_label, url, digest, cached);
 }
 
