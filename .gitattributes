@@ -1,3 +1,11 @@
 # A golden archive produced by a real tar: git must not touch a byte of it,
 # and core.autocrlf here would.
 *.tar binary
+
+# A shell script with CRLF does not run: the interpreter reads the carriage return as part of
+# the first line and answers "end of file unexpected". core.autocrlf is true on the machine this
+# was written on, so a checkout reintroduced it into a file that had been committed LF, and the
+# wrapper is the half of this repository a consumer copies into their own project.
+*.sh text eol=lf
+wrapper/daukle text eol=lf
+wrapper/.daukle/wrapper.toml text eol=lf

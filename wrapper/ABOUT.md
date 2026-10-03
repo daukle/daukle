@@ -72,6 +72,20 @@ The last two are deliberately different. A cached file that fails its digest is 
 truncated download, so replacing it is right. A **fresh** download that fails its digest is the pin
 doing its job, so it is fatal.
 
+## Line endings, which bite twice
+
+**The POSIX script must reach a POSIX host with LF endings.** A shell reads the carriage return as
+part of the first line and answers `end of file unexpected`, naming a line far from the problem.
+This repository pins `wrapper/daukle`, `*.sh` and the pin file to `eol=lf` in `.gitattributes`,
+because `core.autocrlf` is on where this was written and a branch switch reintroduced CRLF into
+files that had been committed LF.
+
+**The pin file is read defensively anyway**, because you will commit these three files into your
+own repository under your own git settings and this one cannot reach them. A CR on a section
+header used to make the lookup miss and then report the host it had just been handed: "no
+published daukle for linux/x86_64. This release covers: linux/x86_64". The parser strips it, and
+`test/probe.sh` holds it to that with a deliberately CRLF pin.
+
 ## Where the binary lands
 
 In daukle's own cache, honouring `DAUKLE_CACHE_DIR`, then `XDG_CACHE_HOME`, then

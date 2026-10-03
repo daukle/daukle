@@ -82,14 +82,25 @@ check "a bad flag is the binary's error, not the wrapper's" sh -c '! echo "$1" |
 check "a non-zero exit code is propagated" test "$code" != "0"
 
 echo
-echo "=== 8. DESTRUCTIVE from here: the downloader is removed ==="
+echo "=== 8. a CRLF pin file still works ==="
+# These three files are copied into someone else's repository and checked out under their git
+# settings, so the pin can arrive CRLF whatever this repository does. A CR on the section header
+# used to make the lookup miss and report the host it had just been given.
+mkdir -p /crlf && cp -r /w/. /crlf/ && chmod +x /crlf/daukle
+sed -i 's/$//' /crlf/.daukle/wrapper.toml
+out=$(cd /crlf && DAUKLE_CACHE_DIR=/tmp/crlf-cache ./daukle --version 2>/dev/null || true)
+echo "$out"
+check "a CRLF pin is parsed" test "$out" = "daukle 0.1.0"
+
+echo
+echo "=== 9. DESTRUCTIVE from here: the downloader is removed ==="
 rm -f /usr/bin/curl /usr/bin/wget
 out=$(./daukle --version 2>/dev/null)
 echo "$out"
 check "a warm cache works with no downloader present" test "$out" = "daukle 0.1.0"
 
 echo
-echo "=== 9. no downloader and an empty cache names the packages ==="
+echo "=== 10. no downloader and an empty cache names the packages ==="
 out=$(DAUKLE_CACHE_DIR=/tmp/empty-cache ./daukle --version 2>&1 || true)
 echo "$out"
 check "message names curl and wget" sh -c 'echo "$1" | grep -q "neither curl nor wget"' _ "$out"

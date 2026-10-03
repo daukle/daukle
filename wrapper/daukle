@@ -45,7 +45,13 @@ version=$(read_pin version "$pin_file")
 [ -n "$version" ] || fail "the pin file names no version: $pin_file"
 
 # One section per host, so an unsupported host is a missing section rather than a 404 later.
+#
+# The CR strip is not optional. These three files are copied into someone else's repository and
+# checked out under their git settings, so the pin can arrive CRLF however this repository stores
+# it, and then a header comparison silently matches nothing: the symptom is "no published daukle
+# for linux/x86_64. This release covers: linux/x86_64", which names the host it just refused.
 section=$(awk -v want="[assets.\"$host\"]" '
+    { sub(/\r$/, "") }
     $0 == want { inside = 1; next }
     /^\[/ { inside = 0 }
     inside { print }
