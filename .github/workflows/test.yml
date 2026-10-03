@@ -9,6 +9,7 @@ jobs:
   test:
     uses: intisy/workflows/.github/workflows/test.yml@main
     with:
+      line_endings: true
       toolchains: cmake
       runners: '["ubuntu-latest", "windows-latest", "macos-latest"]'
       cmake_configure: '-B build -DCMAKE_BUILD_TYPE=Release'
