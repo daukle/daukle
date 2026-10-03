@@ -409,6 +409,54 @@ static int read_pax_header(fr_archive *archive, const fr_tar_header *header, fr_
     return read_pax_records(archive, payload, length, header->typeflag == 'g', err);
 }
 
+/* @implNote GNU tar's own long-name extension, which predates pax and is what
+   nodejs.org's linux tarball still uses: a header of type 'L' or 'K' whose
+   PAYLOAD is the name, with the real header following and carrying a truncated
+   one. It lands in the same two override slots a pax "path" and "linkpath" use,
+   so one mechanism applies a name and the member reader cannot tell which wrote
+   it. GNU counts the terminating NUL in the size, and writes more than one when
+   it pads, so they are trimmed rather than kept. */
+static int read_gnu_long_name(fr_archive *archive, const fr_tar_header *header, fr_error *err) {
+    const char *keyword = header->typeflag == 'L' ? "name" : "link name";
+    if (header->size > FR_ARCHIVE_MAX_PAX_BYTES) {
+        fr_error_set(err, "the archive has a GNU long %s of %llu bytes, and the limit is %d",
+                     keyword, header->size, FR_ARCHIVE_MAX_PAX_BYTES);
+        return FR_ERR;
+    }
+
+    char payload[FR_ARCHIVE_MAX_PAX_BYTES];
+    size_t length = (size_t) header->size;
+    if (length > 0 && !read_exactly(archive, (unsigned char *) payload, length)) {
+        fr_error_set(err, "the archive ends inside a GNU long %s", keyword);
+        return FR_ERR;
+    }
+
+    size_t padding = (FR_TAR_BLOCK - (length % FR_TAR_BLOCK)) % FR_TAR_BLOCK;
+    if (!skip_exactly(archive, padding)) {
+        fr_error_set(err, "the archive ends inside a GNU long %s", keyword);
+        return FR_ERR;
+    }
+    archive->offset += length + padding;
+
+    while (length > 0 && payload[length - 1] == '\0') length--;
+
+    char *destination = header->typeflag == 'L' ? archive->pax_name : archive->pax_link_target;
+    size_t capacity = header->typeflag == 'L' ? sizeof archive->pax_name
+                                              : sizeof archive->pax_link_target;
+    if (length == 0 || length >= capacity) {
+        fr_error_set(err, "the archive has a GNU long %s of %zu bytes, and the limit is %zu",
+                     keyword, length, capacity - 1);
+        return FR_ERR;
+    }
+    memcpy(destination, payload, length);
+    destination[length] = '\0';
+    return FR_OK;
+}
+
+static int is_name_extension(char typeflag) {
+    return typeflag == 'x' || typeflag == 'g' || typeflag == 'L' || typeflag == 'K';
+}
+
 static int tar_member_kind(char typeflag, fr_member_kind *out) {
     if (typeflag == '0' || typeflag == '\0') {
         *out = FR_MEMBER_FILE;
@@ -447,8 +495,12 @@ static int tar_next(fr_archive *archive, const fr_archive_member **out_member, f
             end_iteration(archive, out_member);
             return FR_OK;
         }
-        if (header.typeflag != 'x' && header.typeflag != 'g') break;
-        if (read_pax_header(archive, &header, err) != FR_OK) return FR_ERR;
+        if (!is_name_extension(header.typeflag)) break;
+        if (header.typeflag == 'x' || header.typeflag == 'g') {
+            if (read_pax_header(archive, &header, err) != FR_OK) return FR_ERR;
+        } else if (read_gnu_long_name(archive, &header, err) != FR_OK) {
+            return FR_ERR;
+        }
     }
 
     memcpy(archive->name, header.name, strlen(header.name) + 1);
