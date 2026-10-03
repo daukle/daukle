@@ -130,6 +130,14 @@ foreach(test_file ${DAUKLE_TESTS})
                          TIMEOUT 120)
 endforeach()
 
+# Only on macOS: the other two runners have nothing to check and a skip they
+# cannot explain is worse than an absent test.
+if(APPLE)
+    add_test(NAME macos_links_are_system COMMAND ${CMAKE_COMMAND}
+             -DDAUKLE=$<TARGET_FILE:daukle>
+             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_macos_links.cmake)
+endif()
+
 add_test(NAME agnostic_core COMMAND ${CMAKE_COMMAND}
          -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_agnostic.cmake)
