@@ -116,6 +116,41 @@ static int is_redirect_status(long status) {
     return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
 }
 
+/* A distribution's libcurl has that distribution's CA bundle path compiled in.
+   A statically linked one has the BUILD host's, which is why a binary built on
+   Alpine verifies on Alpine and Rocky and fails on Ubuntu and Debian with a
+   perfectly good bundle sitting on disk: the two that pass are the two with
+   /etc/ssl/cert.pem. So the static build, and only the static build, has to
+   find the host's store itself. A distro build must keep libcurl's own
+   default, which is right by construction and which this cannot improve on. */
+static const char *system_trust_store(void) {
+#ifndef DAUKLE_STATIC_CURL
+    return NULL;
+#else
+    static const char *const CANDIDATES[] = {
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/pki/tls/certs/ca-bundle.crt",
+        "/etc/ssl/ca-bundle.pem",
+        "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+        "/etc/ssl/cert.pem",
+    };
+    for (size_t index = 0; index < sizeof CANDIDATES / sizeof CANDIDATES[0]; index++) {
+        if (access(CANDIDATES[index], R_OK) == 0) return CANDIDATES[index];
+    }
+    return NULL;
+#endif
+}
+
+/* libcurl's own wording is "Problem with the SSL CA cert (path? access
+   rights?)", and on a bare image the answer is neither: the host has no trust
+   anchors at all, which three of the six measured images did not.
+   CURLE_PEER_FAILED_VERIFICATION is deliberately NOT here: it is also what a
+   forged or expired certificate returns, and "install ca-certificates" is the
+   wrong thing to tell someone being intercepted. */
+static int no_usable_trust_store(CURLcode result) {
+    return result == CURLE_SSL_CACERT_BADFILE;
+}
+
 /* CURLOPT_PROTOCOLS_STR arrived in 7.85.0 and deprecated the bitmask form in
    the same release, so under -Werror each spelling is an error against the
    other's headers. Ubuntu 22.04 ships 7.81.0, and without this guard the
@@ -190,6 +225,8 @@ static fetch_outcome fetch_once(const char *current_url, const char *original_ur
         curl_easy_setopt(handle, CURLOPT_LOW_SPEED_TIME, FR_HTTP_STALL_SECONDS);
     }
     restrict_to_http_schemes(handle);
+    const char *trust_store = system_trust_store();
+    if (trust_store != NULL) curl_easy_setopt(handle, CURLOPT_CAINFO, trust_store);
     if (list != NULL) curl_easy_setopt(handle, CURLOPT_HTTPHEADER, list);
 
     CURLcode result = curl_easy_perform(handle);
@@ -199,7 +236,11 @@ static fetch_outcome fetch_once(const char *current_url, const char *original_ur
         goto cleanup;
     }
     if (result != CURLE_OK) {
-        fr_error_set(err, "%s failed: %s", current_url, curl_easy_strerror(result));
+        fr_error_set(err, "%s failed: %s%s", current_url, curl_easy_strerror(result),
+                     no_usable_trust_store(result)
+                         ? ". No readable CA certificate bundle was found on this host:"
+                           " install ca-certificates"
+                         : "");
         goto cleanup;
     }
 

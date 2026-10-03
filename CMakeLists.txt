@@ -1,6 +1,25 @@
 cmake_minimum_required(VERSION 3.20)
 project(daukle C)
 
+# A published daukle must run where nothing is installed, and libcurl.so.4 is
+# absent from every bare Linux image including the one it was built on. OFF
+# everywhere but a release build, where it is what makes the artifact a
+# download rather than a download and a package manager.
+option(DAUKLE_STATIC "Link the daukle executable with no shared library dependencies" OFF)
+
+if(DAUKLE_STATIC AND APPLE)
+    message(FATAL_ERROR
+            "DAUKLE_STATIC is not available on macOS: there is no static libSystem, so a fully "
+            "static binary cannot be produced. A macOS release links the system libcurl, which "
+            "unlike Linux is present on every host.")
+endif()
+
+if(DAUKLE_STATIC AND MSVC)
+    # The dynamic CRT puts VCRUNTIME140.dll in the import table, and that ships
+    # with the Visual C++ redistributable rather than with Windows.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 # Stated rather than inherited: OFF means -std=c11, which puts glibc into
@@ -59,6 +78,17 @@ target_link_libraries(daukle_core PUBLIC daukle_vendor)
 
 if(WIN32)
     target_link_libraries(daukle_core PUBLIC winhttp)
+elseif(DAUKLE_STATIC)
+    # pkg-config is the only thing that knows libcurl's static dependency
+    # closure, and FindCURL resolves the shared object even when asked for the
+    # static one: it reports success and the link then fails with "attempted
+    # static link of dynamic object".
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBCURL REQUIRED libcurl)
+    target_include_directories(daukle_core PUBLIC ${LIBCURL_STATIC_INCLUDE_DIRS})
+    target_link_directories(daukle_core PUBLIC ${LIBCURL_STATIC_LIBRARY_DIRS})
+    target_link_libraries(daukle_core PUBLIC ${LIBCURL_STATIC_LIBRARIES})
+    target_compile_definitions(daukle_core PRIVATE DAUKLE_STATIC_CURL)
 else()
     find_package(CURL REQUIRED)
     target_link_libraries(daukle_core PUBLIC CURL::libcurl)
@@ -67,6 +97,9 @@ endif()
 add_executable(daukle src/cli/main.c)
 target_link_libraries(daukle PRIVATE daukle_core)
 target_compile_options(daukle PRIVATE ${DAUKLE_WARNING_FLAGS})
+if(DAUKLE_STATIC AND NOT WIN32)
+    target_link_options(daukle PRIVATE -static)
+endif()
 
 enable_testing()
 add_library(daukle_test_support STATIC test/support.c test/http_server.c)
