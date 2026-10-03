@@ -71,7 +71,7 @@ static int already_reported(row_kind kind, const char *key) {
 /* Cleared whole rather than field by field: fr_toolreport_reset drops the row
    count and leaves the storage, so this writes over a previous run's row, and a
    field left out here would be inherited rather than set. That is not only a
-   stale number. fr_toolreport_symlinks_skipped refuses a row that already
+   stale number. fr_toolreport_links refuses a row that already
    carries a count, so an inherited one SUPPRESSES the next run's real report,
    which is the silent degradation this module exists to prevent. */
 static void record(row_kind kind, const char *label, const char *url, const char *digest,
@@ -139,17 +139,26 @@ static fr_toolreport_row *provisioned_row_for(const char *digest) {
     return NULL;
 }
 
-void fr_toolreport_symlinks_skipped(const char *digest, size_t count, const char *first_name) {
-    if (count == 0 || digest == NULL) return;
+void fr_toolreport_links(const char *digest, size_t copied, size_t unresolved,
+                         const char *first_unresolved) {
+    if ((copied == 0 && unresolved == 0) || digest == NULL) return;
 
     fr_toolreport_row *row = provisioned_row_for(digest);
-    if (row == NULL || row->symlinks_skipped != 0) return;
+    if (row == NULL || row->symlinks_copied != 0 || row->symlinks_unresolved != 0) return;
 
-    row->symlinks_skipped = count;
-    snprintf(row->first_symlink_skipped, sizeof row->first_symlink_skipped, "%s",
-             first_name == NULL ? "" : first_name);
-    fprintf(stderr, "  %zu symlink%s not created, first %s\n", count, count == 1 ? "" : "s",
-            row->first_symlink_skipped);
+    row->symlinks_copied = copied;
+    row->symlinks_unresolved = unresolved;
+    snprintf(row->first_symlink_unresolved, sizeof row->first_symlink_unresolved, "%s",
+             first_unresolved == NULL ? "" : first_unresolved);
+
+    if (copied > 0) {
+        fprintf(stderr, "  %zu symlink%s copied, this filesystem has none\n", copied,
+                copied == 1 ? "" : "s");
+    }
+    if (unresolved > 0) {
+        fprintf(stderr, "  %zu symlink%s unresolved, first %s\n", unresolved,
+                unresolved == 1 ? "" : "s", row->first_symlink_unresolved);
+    }
 }
 
 size_t fr_toolreport_row_count(void) {

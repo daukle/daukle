@@ -485,34 +485,44 @@ TEST one_line_per_distinct_tool_per_run(void) {
 /* Spec 7.4 requires a skipped link to be named, and D-6 forbids a silent
    degradation: the count fr_unpack fills has to reach the row, or a toolchain
    arrives missing links it shipped with and nothing says so. */
-TEST a_skipped_symlink_reaches_the_report_by_name(void) {
+/* Was a_skipped_symlink_reaches_the_report_by_name until 2026-10-03. Since
+   D-57 a link is never merely skipped, so the row carries the two outcomes
+   that are left and they are kept apart: copied says the tree is complete and
+   larger, unresolved says a link is absent. A row that collapsed them could
+   not tell a degraded toolchain from an intact one, which is what this module
+   exists to make visible. */
+TEST what_an_unpack_did_with_the_links_reaches_the_report(void) {
     static char message[512];
     fr_toolreport_reset();
 
     const char *url = "https://example.invalid/toolchains/temurin-21.tar.gz";
-    const char *digest = "4234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
+    const char *degraded = "4234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
     const char *quiet = "5234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
 
-    fr_toolreport_provisioned(NULL, url, digest, 0);
-    fr_toolreport_symlinks_skipped(digest, 3, "bin/java");
+    fr_toolreport_provisioned(NULL, url, degraded, 0);
+    fr_toolreport_links(degraded, 7, 3, "bin/java");
 
     fr_toolreport_provisioned(NULL, url, quiet, 0);
-    fr_toolreport_symlinks_skipped(quiet, 0, "");
+    fr_toolreport_links(quiet, 0, 0, "");
 
-    const fr_toolreport_row *skipped = fr_toolreport_row_at(0);
+    const fr_toolreport_row *row = fr_toolreport_row_at(0);
     const fr_toolreport_row *clean = fr_toolreport_row_at(1);
-    snprintf(message, sizeof message, "skipped %zu \"%s\", clean %zu \"%s\"",
-             skipped == NULL ? 0u : skipped->symlinks_skipped,
-             skipped == NULL ? "" : skipped->first_symlink_skipped,
-             clean == NULL ? 0u : clean->symlinks_skipped,
-             clean == NULL ? "" : clean->first_symlink_skipped);
+    snprintf(message, sizeof message, "copied %zu unresolved %zu \"%s\", clean %zu/%zu \"%s\"",
+             row == NULL ? 0u : row->symlinks_copied,
+             row == NULL ? 0u : row->symlinks_unresolved,
+             row == NULL ? "" : row->first_symlink_unresolved,
+             clean == NULL ? 0u : clean->symlinks_copied,
+             clean == NULL ? 0u : clean->symlinks_unresolved,
+             clean == NULL ? "" : clean->first_symlink_unresolved);
 
-    ASSERTm(message, skipped != NULL);
+    ASSERTm(message, row != NULL);
     ASSERTm(message, clean != NULL);
-    ASSERT_EQm(message, 3u, skipped->symlinks_skipped);
-    ASSERTm(message, strcmp(skipped->first_symlink_skipped, "bin/java") == 0);
-    ASSERT_EQm(message, 0u, clean->symlinks_skipped);
-    ASSERTm(message, clean->first_symlink_skipped[0] == '\0');
+    ASSERT_EQm(message, 7u, row->symlinks_copied);
+    ASSERT_EQm(message, 3u, row->symlinks_unresolved);
+    ASSERTm(message, strcmp(row->first_symlink_unresolved, "bin/java") == 0);
+    ASSERT_EQm(message, 0u, clean->symlinks_copied);
+    ASSERT_EQm(message, 0u, clean->symlinks_unresolved);
+    ASSERTm(message, clean->first_symlink_unresolved[0] == '\0');
     PASS();
 }
 
@@ -536,7 +546,7 @@ TEST a_cached_provision_says_its_symlinks_were_not_examined(void) {
     int opened = fr_test_capture_stderr_begin(trace_path);
     if (opened == 0) {
         fr_toolreport_provisioned(NULL, url, fresh, 0);
-        fr_toolreport_symlinks_skipped(fresh, 0, "");
+        fr_toolreport_links(fresh, 0, 0, "");
         fr_toolreport_provisioned(NULL, url, hit, 1);
         fr_test_capture_stderr_end();
 
@@ -564,11 +574,11 @@ TEST a_cached_provision_says_its_symlinks_were_not_examined(void) {
 /* fr_toolreport_reset drops the row COUNT, not the rows, so a second run in
    one process writes over the first run's storage. record() has to clear every
    field it does not set, or the new row inherits the old one's skipped links.
-   The second half is the part that bites: fr_toolreport_symlinks_skipped
+   The second half is the part that bites: fr_toolreport_links
    refuses to write a row that already carries a count, so an inherited one
    does not merely misreport, it SUPPRESSES the real report, which is the
    silent degradation this module exists to prevent. */
-TEST a_recycled_row_does_not_inherit_the_previous_runs_skipped_links(void) {
+TEST a_recycled_row_does_not_inherit_the_previous_runs_link_counts(void) {
     static char message[512];
     fr_toolreport_reset();
 
@@ -577,20 +587,20 @@ TEST a_recycled_row_does_not_inherit_the_previous_runs_skipped_links(void) {
     const char *second = "7234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd";
 
     fr_toolreport_provisioned(NULL, url, first, 0);
-    fr_toolreport_symlinks_skipped(first, 3, "bin/java");
+    fr_toolreport_links(first, 0, 3, "bin/java");
 
     fr_toolreport_reset();
     fr_toolreport_provisioned(NULL, url, second, 0);
 
     const fr_toolreport_row *fresh = fr_toolreport_row_at(0);
-    size_t inherited = fresh == NULL ? 0u : fresh->symlinks_skipped;
+    size_t inherited = fresh == NULL ? 0u : fresh->symlinks_unresolved;
     char inherited_name[256];
     snprintf(inherited_name, sizeof inherited_name, "%s",
-             fresh == NULL ? "" : fresh->first_symlink_skipped);
+             fresh == NULL ? "" : fresh->first_symlink_unresolved);
 
-    fr_toolreport_symlinks_skipped(second, 2, "bin/javac");
+    fr_toolreport_links(second, 0, 2, "bin/javac");
     const fr_toolreport_row *after = fr_toolreport_row_at(0);
-    size_t reported = after == NULL ? 0u : after->symlinks_skipped;
+    size_t reported = after == NULL ? 0u : after->symlinks_unresolved;
 
     snprintf(message, sizeof message, "inherited %zu \"%s\", then reported %zu",
              inherited, inherited_name, reported);
@@ -956,9 +966,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_digest_that_is_not_64_hex_characters_is_refused);
     RUN_TEST(a_label_holding_a_control_character_is_refused);
     RUN_TEST(one_line_per_distinct_tool_per_run);
-    RUN_TEST(a_skipped_symlink_reaches_the_report_by_name);
+    RUN_TEST(what_an_unpack_did_with_the_links_reaches_the_report);
     RUN_TEST(a_cached_provision_says_its_symlinks_were_not_examined);
-    RUN_TEST(a_recycled_row_does_not_inherit_the_previous_runs_skipped_links);
+    RUN_TEST(a_recycled_row_does_not_inherit_the_previous_runs_link_counts);
     RUN_TEST(a_missing_label_falls_back_to_a_fact_rather_than_to_nothing);
     RUN_TEST(the_row_keeps_the_url_and_digest_whatever_the_label_says);
     RUN_TEST(an_empty_label_falls_back_to_a_fact_rather_than_to_nothing);

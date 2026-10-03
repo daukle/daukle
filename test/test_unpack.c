@@ -90,6 +90,53 @@ static int unpack_one_symlink(const char *target, fr_unpack_report *report, char
     return result;
 }
 
+/* unpack_one_symlink plus reading the link back BY ITS OWN NAME, which is the
+   only assertion that cannot pass in both modes for the wrong reason: a real
+   link and a copy both answer here, and a dropped member answers neither. */
+static int unpack_link_and_read_it(const char *target, char *out_bytes, size_t out_size,
+                                   fr_unpack_report *report, char *out_message, size_t size) {
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-link-read-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_remove_tree(destination);
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = fr_test_tar_append(buffer, 0, "lib/real", '0', "payload", 7);
+    size_t link_offset = used;
+    used = fr_test_tar_append(buffer, used, "bin/link", '2', "", 0);
+    memcpy(buffer + link_offset + 157, target, strlen(target));
+    fr_test_tar_fix_checksum(buffer, link_offset);
+    fr_test_tar_end(buffer, used);
+
+    fr_archive *archive = NULL;
+    fr_error err;
+    err.message[0] = '\0';
+    int opened = open_archive_from_bytes(buffer, sizeof buffer, &archive, &err);
+    memset(report, 0, sizeof *report);
+    int result = opened == FR_OK
+               ? fr_unpack(archive, destination, &FR_UNPACK_DEFAULTS, report, &err)
+               : FR_ERR;
+    if (archive != NULL) fr_archive_close(archive);
+
+    out_bytes[0] = '\0';
+    if (result == FR_OK) {
+        char link_path[1200];
+        snprintf(link_path, sizeof link_path, "%s/bin/link", destination);
+        char *contents = NULL;
+        fr_error read_err;
+        if (fr_file_read_text(link_path, &contents, &read_err) == FR_OK && contents != NULL) {
+            snprintf(out_bytes, out_size, "%s", contents);
+        }
+        free(contents);
+    }
+
+    snprintf(out_message, size, "%s", err.message);
+    fr_test_remove_tree(destination);
+    return result;
+}
+
 /* The prefix the module under test applies, spelled out a second time here so
    the long-path test checks its work rather than reusing it. */
 static void to_native_form(const char *joined, char *out, size_t size) {
@@ -708,13 +755,40 @@ TEST a_symlink_whose_relative_target_climbs_out_is_refused(void) {
     PASS();
 }
 
-/* The invariant the whole no-symlink design rests on: skipping a link loses a
-   NAME, never a file. A tar symlink points at a member of the same archive and
-   refuse_unsafe_link_target has already refused any that does not, so the target
-   of every skipped link is present in the tree. Asserted on the bytes rather
-   than on the member count, because a file written empty would satisfy a count.
-   Unlike the helper above this keeps the destination long enough to read it. */
-TEST the_target_of_a_skipped_link_is_present_in_the_tree(void) {
+/* The invariant D-57 replaced skipping with: a link member ends up readable at
+   its own name, whether the platform gave it a real link or the bytes were
+   copied in its place. Asserted on the BYTES rather than on a count, because a
+   file written empty would satisfy a count, and run in both modes, because
+   either one alone leaves the other as dead code on every runner this project
+   has. */
+TEST a_link_reads_as_its_target_whether_linked_or_copied(void) {
+    static char message[512];
+    for (int links_supported = 1; links_supported >= 0; links_supported--) {
+        fr_unpack_set_links_supported(links_supported);
+        fr_unpack_report report;
+        char bytes[64];
+        int status = unpack_link_and_read_it("../lib/real", bytes, sizeof bytes, &report,
+                                             message, sizeof message);
+        fr_unpack_set_links_supported(1);
+
+        ASSERT_EQm(message, FR_OK, status);
+        ASSERT_STR_EQm(message, "payload", bytes);
+        ASSERT_EQm(message, 0u, report.symlinks_unresolved);
+        /* Left to the platform in the first arm on purpose: Windows without
+           developer mode refuses CreateSymbolicLink, so this machine takes the
+           copy path even when links are "supported". Asserting a real link
+           here would pin a privilege level rather than a behaviour. The forced
+           arm is where the fallback is pinned exactly. */
+        ASSERT_EQm(message, 1u, report.symlinks_created + report.symlinks_copied);
+        if (!links_supported) {
+            ASSERT_EQm(message, 1u, report.symlinks_copied);
+            ASSERT_EQm(message, 0u, report.symlinks_created);
+        }
+    }
+    PASS();
+}
+
+TEST the_target_of_a_link_is_present_in_the_tree(void) {
     static char message[512];
     char destination[1024];
     snprintf(destination, sizeof destination, "%s/unpack-link-target-%d",
@@ -755,23 +829,187 @@ TEST the_target_of_a_skipped_link_is_present_in_the_tree(void) {
     fr_test_remove_tree(destination);
 
     ASSERT_EQm(message, FR_OK, result);
-    ASSERT_EQm(message, 1u, report.symlinks_skipped);
+    ASSERT_EQm(message, 0u, report.symlinks_unresolved);
     ASSERTm(message, target_is_intact);
     PASS();
 }
 
-/* Was a_contained_symlink_is_created_on_posix_and_named_on_windows until
-   2026-10-01, with two platform arms. There is one behaviour now: no link is
-   created anywhere and the member is counted as skipped on every platform. The
-   case is rewritten rather than deleted so the diff shows the behaviour change
-   rather than a test disappearing. See D-38. */
-TEST a_contained_symlink_is_skipped_and_named_on_every_platform(void) {
+/* Was a_contained_symlink_is_skipped_and_named_on_every_platform until
+   2026-10-03, and a_contained_symlink_is_created_on_posix_and_named_on_windows
+   before that. Rewritten rather than deleted each time, so the diff shows the
+   behaviour changing rather than a test disappearing. D-57: the member is
+   accounted for on every platform and never merely dropped, by one of the two
+   counts depending on what the platform allows. */
+/* Builds an archive of arbitrary members so a case can state the shape it is
+   about. kinds holds the tar typeflag per member and targets the link target,
+   or NULL for anything that is not a link. */
+static int unpack_members(const char *const *names, const char *const *kinds,
+                          const char *const *targets, const char *const *contents, size_t count,
+                          const fr_unpack_limits *limits, fr_unpack_report *report,
+                          char *out_message, size_t size) {
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-members-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_remove_tree(destination);
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 64];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = 0;
+    for (size_t index = 0; index < count; index++) {
+        size_t offset = used;
+        const char *body = contents[index] == NULL ? "" : contents[index];
+        used = fr_test_tar_append(buffer, used, names[index], kinds[index][0], body,
+                                  strlen(body));
+        if (targets[index] != NULL) {
+            memcpy(buffer + offset + 157, targets[index], strlen(targets[index]));
+            fr_test_tar_fix_checksum(buffer, offset);
+        }
+    }
+    fr_test_tar_end(buffer, used);
+
+    fr_archive *archive = NULL;
+    fr_error err;
+    err.message[0] = '\0';
+    int opened = open_archive_from_bytes(buffer, sizeof buffer, &archive, &err);
+    memset(report, 0, sizeof *report);
+    int result = opened == FR_OK
+               ? fr_unpack(archive, destination, limits, report, &err)
+               : FR_ERR;
+    if (archive != NULL) fr_archive_close(archive);
+    snprintf(out_message, size, "%s", err.message);
+    fr_test_remove_tree(destination);
+    return result;
+}
+
+/* 9 of the 52 links in xpack clang 21.1.8-1 point at another link, so the
+   copy fallback has to follow a chain rather than read the first target it
+   finds. Forced into the copy mode, because a platform with links resolves
+   this for free and would pass without the resolver existing at all. */
+TEST a_chain_of_links_resolves_to_the_file_at_its_end(void) {
+    static char message[512];
+    const char *names[] = { "lib/real", "bin/middle", "bin/link" };
+    const char *kinds[] = { "0", "2", "2" };
+    const char *targets[] = { NULL, "../lib/real", "middle" };
+    const char *contents[] = { "payload", NULL, NULL };
+
+    fr_unpack_set_links_supported(0);
+    fr_unpack_report report;
+    int result = unpack_members(names, kinds, targets, contents, 3, &FR_UNPACK_DEFAULTS, &report,
+                                message, sizeof message);
+    fr_unpack_set_links_supported(1);
+
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERT_EQm(message, 2u, report.symlinks_copied);
+    ASSERT_EQm(message, 0u, report.symlinks_unresolved);
+    PASS();
+}
+
+/* Measured, not invented: xpack clang 21.1.8-1 ships bin/llvm-ml64 pointing at
+   llvm-ml, which no member of that archive writes. An unpack that failed on a
+   target it cannot find would refuse the real archive outright on every
+   filesystem without links, so the link is reported and the rest of the tree
+   still lands. */
+TEST a_link_whose_target_is_absent_is_reported_and_not_fatal(void) {
+    static char message[512];
+    const char *names[] = { "bin/real", "bin/dangling" };
+    const char *kinds[] = { "0", "2" };
+    const char *targets[] = { NULL, "missing" };
+    const char *contents[] = { "payload", NULL };
+
+    fr_unpack_set_links_supported(0);
+    fr_unpack_report report;
+    int result = unpack_members(names, kinds, targets, contents, 2, &FR_UNPACK_DEFAULTS, &report,
+                                message, sizeof message);
+    fr_unpack_set_links_supported(1);
+
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERT_EQm(message, 1u, report.symlinks_unresolved);
+    ASSERT_STR_EQm(message, "bin/dangling", report.first_symlink_unresolved);
+    ASSERT_EQm(message, 1u, report.files_written);
+    PASS();
+}
+
+/* A hostile archive rather than a real one. Without the cycle guard the
+   resolver walks between the two names until the hop bound stops it, and
+   without the bound it does not stop. */
+TEST a_cycle_of_links_is_reported_rather_than_followed(void) {
+    static char message[512];
+    const char *names[] = { "bin/a", "bin/b" };
+    const char *kinds[] = { "2", "2" };
+    const char *targets[] = { "b", "a" };
+    const char *contents[] = { NULL, NULL };
+
+    fr_unpack_set_links_supported(0);
+    fr_unpack_report report;
+    int result = unpack_members(names, kinds, targets, contents, 2, &FR_UNPACK_DEFAULTS, &report,
+                                message, sizeof message);
+    fr_unpack_set_links_supported(1);
+
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERT_EQm(message, 2u, report.symlinks_unresolved);
+    ASSERT_EQm(message, 0u, report.symlinks_copied);
+    PASS();
+}
+
+/* A copy is expansion the archive never declared, so the ceiling has to count
+   it or D-54's bound is one an archive can walk past by shipping links. */
+TEST copied_link_bytes_count_against_the_expansion_ceiling(void) {
+    static char message[512];
+    const char *names[] = { "lib/real", "bin/link" };
+    const char *kinds[] = { "0", "2" };
+    const char *targets[] = { NULL, "../lib/real" };
+    const char *contents[] = { "payload", NULL };
+
+    /* Room for the file and not for its copy: 7 bytes of payload fit, the
+       second 7 do not. */
+    fr_unpack_limits tight = FR_UNPACK_DEFAULTS;
+    tight.max_total_bytes = 10;
+
+    fr_unpack_set_links_supported(0);
+    fr_unpack_report report;
+    int result = unpack_members(names, kinds, targets, contents, 2, &tight, &report, message,
+                                sizeof message);
+    fr_unpack_set_links_supported(1);
+
+    ASSERT_EQm(message, FR_ERR, result);
+    ASSERTm(message, strstr(message, "expands to more than") != NULL);
+    PASS();
+}
+
+/* The case above is satisfied by the ceiling CHECK alone and says nothing
+   about the running total, which a mutation proved: dropping the accumulate
+   reddened nothing. Two copies is the smallest shape where the total has to
+   carry: 7 for the file, 7 for the first copy, and the second only exceeds 18
+   if both were counted. */
+TEST a_second_copied_link_is_counted_on_top_of_the_first(void) {
+    static char message[512];
+    const char *names[] = { "lib/real", "bin/one", "bin/two" };
+    const char *kinds[] = { "0", "2", "2" };
+    const char *targets[] = { NULL, "../lib/real", "../lib/real" };
+    const char *contents[] = { "payload", NULL, NULL };
+
+    fr_unpack_limits tight = FR_UNPACK_DEFAULTS;
+    tight.max_total_bytes = 18;
+
+    fr_unpack_set_links_supported(0);
+    fr_unpack_report report;
+    int result = unpack_members(names, kinds, targets, contents, 3, &tight, &report, message,
+                                sizeof message);
+    fr_unpack_set_links_supported(1);
+
+    ASSERT_EQm(message, FR_ERR, result);
+    ASSERTm(message, strstr(message, "expands to more than") != NULL);
+    PASS();
+}
+
+TEST a_contained_symlink_is_accounted_for_on_every_platform(void) {
     static char message[512];
     fr_unpack_report report;
     int result = unpack_one_symlink("../lib/real", &report, message, sizeof message);
     ASSERT_EQm(message, FR_OK, result);
-    ASSERT_EQm(message, 1u, report.symlinks_skipped);
-    ASSERT_STR_EQm(message, "bin/link", report.first_symlink_skipped);
+    ASSERT_EQm(message, 0u, report.symlinks_unresolved);
+    ASSERT_EQm(message, 1u, report.symlinks_created + report.symlinks_copied);
     PASS();
 }
 
@@ -1052,8 +1290,14 @@ int main(int argc, char **argv) {
     RUN_TEST(a_deeply_nested_member_past_the_legacy_path_limit_is_written);
     RUN_TEST(a_symlink_with_an_absolute_target_is_refused);
     RUN_TEST(a_symlink_whose_relative_target_climbs_out_is_refused);
-    RUN_TEST(a_contained_symlink_is_skipped_and_named_on_every_platform);
-    RUN_TEST(the_target_of_a_skipped_link_is_present_in_the_tree);
+    RUN_TEST(a_contained_symlink_is_accounted_for_on_every_platform);
+    RUN_TEST(a_link_reads_as_its_target_whether_linked_or_copied);
+    RUN_TEST(a_chain_of_links_resolves_to_the_file_at_its_end);
+    RUN_TEST(a_link_whose_target_is_absent_is_reported_and_not_fatal);
+    RUN_TEST(a_cycle_of_links_is_reported_rather_than_followed);
+    RUN_TEST(copied_link_bytes_count_against_the_expansion_ceiling);
+    RUN_TEST(a_second_copied_link_is_counted_on_top_of_the_first);
+    RUN_TEST(the_target_of_a_link_is_present_in_the_tree);
     RUN_TEST(a_chain_of_symlinks_cannot_walk_a_later_member_out);
     RUN_TEST(a_non_file_member_counts_against_the_expansion_ceiling);
     RUN_TEST(a_tar_members_execute_bit_reaches_the_file);

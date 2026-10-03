@@ -16,8 +16,9 @@ typedef struct {
     char digest[65];
     int cached;
     int provisioned;
-    size_t symlinks_skipped;
-    char first_symlink_skipped[256];
+    size_t symlinks_copied;
+    size_t symlinks_unresolved;
+    char first_symlink_unresolved[256];
 } fr_toolreport_row;
 
 /* Refuses any control character, including every ANSI escape: a label is
@@ -53,12 +54,19 @@ void fr_toolreport_provisioned(const char *label, const char *url, const char *d
    exist. D-52. */
 void fr_toolreport_artifact(const char *label, const char *url, const char *digest, int cached);
 
-/* Adds the links an unpack left out to the row digest already named, and
-   writes them to stderr under it. Nothing is printed when count is zero, and a
-   count that IS non-zero is never silent: a toolchain missing the links it
-   shipped with is a degradation, and an unreported one is the failure mode
-   this whole module exists to prevent. */
-void fr_toolreport_symlinks_skipped(const char *digest, size_t count, const char *first_name);
+/* Adds what an unpack did with the archive's links to the row digest already
+   named, and writes it to stderr under that row. Silent when the tree came out
+   exactly as the archive declared it, which since D-57 is the ordinary case on
+   a filesystem with links.
+
+   The two counts say different things and neither implies the other. copied
+   means the tree is COMPLETE and larger than the archive, because the platform
+   refused a link and the target's bytes were written in its place. unresolved
+   means a link is simply ABSENT, which is a degradation and is never silent:
+   a toolchain missing the links it shipped with is the failure mode this whole
+   module exists to prevent. */
+void fr_toolreport_links(const char *digest, size_t copied, size_t unresolved,
+                         const char *first_unresolved);
 
 size_t fr_toolreport_row_count(void);
 const fr_toolreport_row *fr_toolreport_row_at(size_t index);
