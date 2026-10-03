@@ -15,14 +15,13 @@
 #include "project/sync.h"
 #include "project/tasks.h"
 #include "util/error.h"
+#include "util/version.h"
 
 #include "cJSON.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define DAUKLE_VERSION "0.1.0"
 
 static void print_lua_log(const char *message) {
     fprintf(stderr, "daukle: %s\n", message);
@@ -772,7 +771,7 @@ int main(int argc, char **argv) {
 
     switch (options.command) {
         case FR_CLI_VERSION:
-            printf("daukle %s\n", DAUKLE_VERSION);
+            printf("daukle %s\n", fr_self_version());
             return 0;
         case FR_CLI_SYNC:
             return run_with_resolved_manifest(options.manifest_path, 1, options.use_cache, options.verbose);

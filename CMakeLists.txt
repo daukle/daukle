@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(daukle C)
+project(daukle VERSION 0.1.0 LANGUAGES C)
 
 # A published daukle must run where nothing is installed, and libcurl.so.4 is
 # absent from every bare Linux image including the one it was built on. OFF
@@ -75,6 +75,10 @@ add_library(daukle_core STATIC ${DAUKLE_CORE_SOURCES})
 target_compile_options(daukle_core PRIVATE ${DAUKLE_WARNING_FLAGS})
 target_include_directories(daukle_core PUBLIC src vendor/cJSON)
 target_link_libraries(daukle_core PUBLIC daukle_vendor)
+# The one place the version is written: src/util/version.c is its only
+# reader, and a publish refuses a tag that disagrees with what the built
+# binary prints.
+target_compile_definitions(daukle_core PRIVATE DAUKLE_VERSION="${PROJECT_VERSION}")
 
 if(WIN32)
     target_link_libraries(daukle_core PUBLIC winhttp)
@@ -129,6 +133,11 @@ foreach(test_file ${DAUKLE_TESTS})
                          WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
                          TIMEOUT 120)
 endforeach()
+
+add_test(NAME version_matches_build COMMAND ${CMAKE_COMMAND}
+         -DDAUKLE=$<TARGET_FILE:daukle>
+         -DEXPECTED=${PROJECT_VERSION}
+         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_version.cmake)
 
 # Only on macOS: the other two runners have nothing to check and a skip they
 # cannot explain is worse than an absent test.
