@@ -557,6 +557,196 @@ TEST a_pax_header_record_that_does_not_parse_is_refused(void) {
     PASS();
 }
 
+/* GNU tar's own long-name extension, which predates pax and is what
+   nodejs.org's linux tarball still uses. The payload is the name and the
+   terminating NUL is counted in the size, which is the one detail a reader
+   that treated it like a pax payload would get wrong. */
+static size_t append_gnu_long_name(char *buffer, size_t offset, const char *name, char typeflag) {
+    return fr_test_tar_append(buffer, offset, "././@LongLink", typeflag, name, strlen(name) + 1);
+}
+
+TEST a_gnu_long_name_renames_the_member_that_follows_it(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-gnuname-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = append_gnu_long_name(buffer, 0, "lib/renamed.txt", 'L');
+    used = fr_test_tar_append(buffer, used, "placeholder", '0', "hello", 5);
+    /* The second member proves the override is CONSUMED: it carries no long
+       name header and must keep its own. */
+    used = fr_test_tar_append(buffer, used, "lib/kept.txt", '0', "world", 5);
+    fr_test_tar_end(buffer, used);
+
+    fr_unpack_report report;
+    fr_error err;
+    int result = unpack_bytes(buffer, sizeof buffer, destination, &report, &err);
+
+    char renamed[1024];
+    char placeholder[1024];
+    char kept[1024];
+    snprintf(renamed, sizeof renamed, "%s/lib/renamed.txt", destination);
+    snprintf(placeholder, sizeof placeholder, "%s/placeholder", destination);
+    snprintf(kept, sizeof kept, "%s/lib/kept.txt", destination);
+    char *content = NULL;
+    size_t length = 0;
+    int renamed_present = fr_file_read_bytes(renamed, &content, &length, &err) == FR_OK;
+    free(content);
+    content = NULL;
+    int placeholder_present = fr_file_read_bytes(placeholder, &content, &length, &err) == FR_OK;
+    free(content);
+    content = NULL;
+    int kept_present = fr_file_read_bytes(kept, &content, &length, &err) == FR_OK;
+    free(content);
+    fr_test_remove_tree(destination);
+
+    snprintf(message, sizeof message, "result %d, renamed %d, placeholder %d, kept %d", result,
+             renamed_present, placeholder_present, kept_present);
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERTm(message, renamed_present);
+    ASSERT_FALSEm(message, placeholder_present);
+    ASSERTm(message, kept_present);
+    PASS();
+}
+
+/* The name this extension exists for: longer than the 100-byte ustar field,
+   so a reader that fell back on the header's own truncated name would write a
+   different file rather than fail. */
+TEST a_gnu_long_name_past_the_legacy_field_is_written_whole(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-gnulong-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char name[160];
+    size_t at = (size_t) snprintf(name, sizeof name, "lib/");
+    while (at < 140) name[at++] = 'a';
+    memcpy(name + at, "/deep.txt", sizeof "/deep.txt");
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = append_gnu_long_name(buffer, 0, name, 'L');
+    used = fr_test_tar_append(buffer, used, "placeholder", '0', "hello", 5);
+    fr_test_tar_end(buffer, used);
+
+    fr_unpack_report report;
+    fr_error err;
+    int result = unpack_bytes(buffer, sizeof buffer, destination, &report, &err);
+
+    char written[1024];
+    snprintf(written, sizeof written, "%s/%s", destination, name);
+    char *content = NULL;
+    size_t length = 0;
+    int present = fr_file_read_bytes(written, &content, &length, &err) == FR_OK && length == 5;
+    free(content);
+    fr_test_remove_tree(destination);
+
+    snprintf(message, sizeof message, "result %d, present %d, err \"%s\"", result, present,
+             err.message);
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERTm(message, present);
+    PASS();
+}
+
+TEST a_gnu_long_name_that_escapes_is_refused_like_any_other_name(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-gnuescape-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = append_gnu_long_name(buffer, 0, "../escaped.txt", 'L');
+    used = fr_test_tar_append(buffer, used, "innocent.txt", '0', "hello", 5);
+    fr_test_tar_end(buffer, used);
+
+    fr_unpack_report report;
+    fr_error err;
+    int result = unpack_bytes(buffer, sizeof buffer, destination, &report, &err);
+    size_t files = report.files_written;
+    fr_test_remove_tree(destination);
+
+    snprintf(message, sizeof message, "result %d, files %zu, err \"%s\"", result, files,
+             err.message);
+    ASSERT_EQm(message, FR_ERR, result);
+    ASSERT_EQm(message, 0u, files);
+    /* Named, because refusing type 'L' outright refuses this case too and
+       would otherwise look like the containment rule doing its job. */
+    ASSERTm(message, strstr(err.message, "outside the destination") != NULL);
+    PASS();
+}
+
+TEST a_gnu_long_name_longer_than_the_limit_is_refused(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-gnuoversize-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_make_directory(destination);
+
+    char name[FR_ARCHIVE_MAX_NAME + 32];
+    memset(name, 'a', sizeof name - 1);
+    name[sizeof name - 1] = '\0';
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = append_gnu_long_name(buffer, 0, name, 'L');
+    used = fr_test_tar_append(buffer, used, "innocent.txt", '0', "hello", 5);
+    fr_test_tar_end(buffer, used);
+
+    fr_unpack_report report;
+    fr_error err;
+    int result = unpack_bytes(buffer, sizeof buffer, destination, &report, &err);
+    fr_test_remove_tree(destination);
+
+    snprintf(message, sizeof message, "result %d, err \"%s\"", result, err.message);
+    ASSERT_EQm(message, FR_ERR, result);
+    ASSERTm(message, strstr(err.message, "GNU long name") != NULL);
+    PASS();
+}
+
+/* 'K' is the link half of the same extension. The assertion is on the link
+   READING AS ITS TARGET, because a platform without links copies instead and
+   both answers are correct; a dropped target answers neither. */
+TEST a_gnu_long_link_name_names_the_target_of_the_link_that_follows(void) {
+    static char message[512];
+    char destination[1024];
+    snprintf(destination, sizeof destination, "%s/unpack-gnulink-%d", fr_test_temp_base(),
+             fr_test_process_id());
+    fr_test_remove_tree(destination);
+    fr_test_make_directory(destination);
+
+    char buffer[FR_TAR_BLOCK * 16];
+    memset(buffer, 0, sizeof buffer);
+    size_t used = fr_test_tar_append(buffer, 0, "lib/real", '0', "payload", 7);
+    used = append_gnu_long_name(buffer, used, "../lib/real", 'K');
+    used = fr_test_tar_append(buffer, used, "bin/link", '2', "", 0);
+    fr_test_tar_end(buffer, used);
+
+    fr_unpack_report report;
+    fr_error err;
+    int result = unpack_bytes(buffer, sizeof buffer, destination, &report, &err);
+
+    char link[1024];
+    snprintf(link, sizeof link, "%s/bin/link", destination);
+    char *content = NULL;
+    size_t length = 0;
+    int reads_as_target = fr_file_read_bytes(link, &content, &length, &err) == FR_OK
+                          && length == 7 && memcmp(content, "payload", 7) == 0;
+    free(content);
+    fr_test_remove_tree(destination);
+
+    snprintf(message, sizeof message, "result %d, reads %d, err \"%s\"", result, reads_as_target,
+             err.message);
+    ASSERT_EQm(message, FR_OK, result);
+    ASSERTm(message, reads_as_target);
+    PASS();
+}
+
 TEST a_total_size_past_the_limit_is_refused_by_name(void) {
     static char message[512];
     /* The decompression bomb. A digest pin proves the bytes are the ones
@@ -1285,6 +1475,11 @@ int main(int argc, char **argv) {
     RUN_TEST(a_global_pax_header_naming_a_path_is_refused);
     RUN_TEST(a_global_pax_header_carrying_only_times_is_skipped);
     RUN_TEST(a_pax_header_record_that_does_not_parse_is_refused);
+    RUN_TEST(a_gnu_long_name_renames_the_member_that_follows_it);
+    RUN_TEST(a_gnu_long_name_past_the_legacy_field_is_written_whole);
+    RUN_TEST(a_gnu_long_name_that_escapes_is_refused_like_any_other_name);
+    RUN_TEST(a_gnu_long_name_longer_than_the_limit_is_refused);
+    RUN_TEST(a_gnu_long_link_name_names_the_target_of_the_link_that_follows);
     RUN_TEST(a_path_longer_than_the_limit_is_refused_rather_than_truncated);
     RUN_TEST(a_duplicate_member_name_is_refused);
     RUN_TEST(a_deeply_nested_member_past_the_legacy_path_limit_is_written);
