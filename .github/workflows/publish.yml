@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build and upload; empty takes the ref the run was started from'
+        required: false
+        type: string
+        default: ''
+      dry_run:
+        description: 'Build every platform and create no release'
+        required: false
+        type: boolean
+        default: true
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    uses: intisy/workflows/.github/workflows/publish-matrix.yml@main
+    with:
+      tag: ${{ inputs.tag }}
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+      allow_untagged: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+      submodules: 'false'
+      check: 'cmake -DDAUKLE="$BINARY" -DEXPECTED="$RELEASE_TAG" -P cmake/check_version.cmake'
+      cells: >-
+        [
+          {
+            "runner": "ubuntu-latest",
+            "container": "alpine:3.21",
+            "setup": "apk add --no-cache bash build-base cmake curl-dev curl-static openssl-libs-static zlib-static nghttp2-static brotli-static zstd-static libidn2-static libunistring-static libpsl-static pkgconf git",
+            "configure": "cmake -B build -DCMAKE_BUILD_TYPE=Release -DDAUKLE_STATIC=ON",
+            "binary": "build/daukle",
+            "asset_name": "daukle-linux-x86_64"
+          },
+          {
+            "runner": "macos-latest",
+            "binary": "build/daukle",
+            "asset_name": "daukle-macos-arm64"
+          },
+          {
+            "runner": "windows-latest",
+            "configure": "cmake -B build -DCMAKE_BUILD_TYPE=Release -DDAUKLE_STATIC=ON",
+            "binary": "build/Release/daukle.exe",
+            "asset_name": "daukle-windows-x86_64.exe"
+          }
+        ]
+    secrets:
+      envPAT: ${{ secrets.PAT }}
