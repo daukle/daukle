@@ -16,5 +16,6 @@ jobs:
       cmake_build: '--build build --config Release'
       cmake_test: 'DAUKLE_NETWORK_TESTS=1 ctest --test-dir build -C Release --output-on-failure'
       apt_packages: libcurl4-openssl-dev
+      post_test: 'if [ "$(uname -s)" = Darwin ]; then otool -L build/daukle; fi'
     secrets:
       envPAT: ${{ secrets.PAT }}
