@@ -116,6 +116,21 @@ static int is_redirect_status(long status) {
     return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
 }
 
+/* CURLOPT_PROTOCOLS_STR arrived in 7.85.0 and deprecated the bitmask form in
+   the same release, so under -Werror each spelling is an error against the
+   other's headers. Ubuntu 22.04 ships 7.81.0, and without this guard the
+   oldest base daukle compiles on is Ubuntu 24.04. */
+static void restrict_to_http_schemes(CURL *handle) {
+#if LIBCURL_VERSION_NUM >= 0x075500
+    curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http,https");
+    curl_easy_setopt(handle, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+    long schemes = CURLPROTO_HTTP | CURLPROTO_HTTPS;
+    curl_easy_setopt(handle, CURLOPT_PROTOCOLS, schemes);
+    curl_easy_setopt(handle, CURLOPT_REDIR_PROTOCOLS, schemes);
+#endif
+}
+
 /* One attempt at one URL: builds the request the way the whole file needs it
    built (headers, protocol pinning, manual redirects) then hands off only
    what genuinely differs between the body fetch and the streamed-to-file
@@ -174,8 +189,7 @@ static fetch_outcome fetch_once(const char *current_url, const char *original_ur
         curl_easy_setopt(handle, CURLOPT_LOW_SPEED_LIMIT, FR_HTTP_STALL_BYTES_PER_SECOND);
         curl_easy_setopt(handle, CURLOPT_LOW_SPEED_TIME, FR_HTTP_STALL_SECONDS);
     }
-    curl_easy_setopt(handle, CURLOPT_PROTOCOLS_STR, "http,https");
-    curl_easy_setopt(handle, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+    restrict_to_http_schemes(handle);
     if (list != NULL) curl_easy_setopt(handle, CURLOPT_HTTPHEADER, list);
 
     CURLcode result = curl_easy_perform(handle);
