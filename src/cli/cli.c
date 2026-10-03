@@ -125,3 +125,16 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
         out->task_name = command;
     }
 }
+
+/* --no-cache is spelled as "every command but one" rather than as a global
+   flag, because the parser refuses it on `plugin update`: that command IS the
+   refresh, so honouring the flag would suppress the one write it exists to
+   make. The line claimed the flag was global until 2026-10-03, which was the
+   last of D-1's residuals. */
+const char *fr_cli_usage(void) {
+    return "usage: daukle [--version | sync [manifest] | check [manifest]"
+           " | add <project>@<range> --to <consumer> [--modules a,b]"
+           " | config print | plugin update [label] | clean [manifest]"
+           " | tasks | publish [name] | <task>]"
+           " [--verbose] [--no-cache, on every command but plugin update]\n";
+}

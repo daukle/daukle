@@ -160,6 +160,22 @@ TEST rejects_plugin_with_an_unknown_subcommand_naming_it(void) {
    the command's whole duration, so an accepted --no-cache would be silently
    inert. The second case pins that the flag still reaches every other command,
    because refusing it everywhere would be the easy wrong fix. */
+/* The usage line is the third place this rule is written down, after the
+   parser and the two cases below, and it was the one that got it wrong: it
+   advertised --no-cache as global while the parser refused it on one command.
+   Pinned here because main.c, where the line used to live, has no test
+   binary at all. */
+TEST the_usage_line_does_not_claim_no_cache_is_global(void) {
+    const char *usage = fr_cli_usage();
+    ASSERT(strstr(usage, "--no-cache") != NULL);
+    ASSERT(strstr(usage, "plugin update") != NULL);
+    /* The exception has to be stated beside the flag rather than merely
+       somewhere in the line, which "plugin update" alone would satisfy
+       because it is also a command the line lists. */
+    ASSERT(strstr(usage, "--no-cache, on every command but plugin update") != NULL);
+    PASS();
+}
+
 TEST rejects_no_cache_on_plugin_update_naming_the_option(void) {
     const char *argv[] = { "daukle", "plugin", "update", "--no-cache" };
     fr_cli_options options = parse(4, argv);
@@ -349,6 +365,7 @@ int main(int argc, char **argv) {
     RUN_TEST(parses_plugin_update_with_a_label);
     RUN_TEST(parses_plugin_update_without_a_label);
     RUN_TEST(rejects_plugin_with_an_unknown_subcommand_naming_it);
+    RUN_TEST(the_usage_line_does_not_claim_no_cache_is_global);
     RUN_TEST(rejects_no_cache_on_plugin_update_naming_the_option);
     RUN_TEST(keeps_no_cache_on_the_commands_that_honour_it);
     RUN_TEST(rejects_a_second_word_after_a_plugin_label);

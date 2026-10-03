@@ -49,4 +49,10 @@ typedef struct {
 
 void fr_cli_parse(int argc, char **argv, fr_cli_options *out);
 
+/* The usage line, here rather than in main.c so the one claim it makes that
+   the parser can contradict is testable: --no-cache is refused by
+   `plugin update` and accepted everywhere else, and main.c has no test
+   binary to pin that against. */
+const char *fr_cli_usage(void);
+
 #endif

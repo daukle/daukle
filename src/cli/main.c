@@ -808,10 +808,6 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    fprintf(stderr, "usage: daukle [--version | sync [manifest] | check [manifest]"
-                    " | add <project>@<range> --to <consumer> [--modules a,b]"
-                    " | config print | plugin update [label] | clean [manifest]"
-                    " | tasks | publish [name] | <task>]"
-                    " [--no-cache] [--verbose]\n");
+    fprintf(stderr, "%s", fr_cli_usage());
     return 2;
 }
