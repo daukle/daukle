@@ -34,7 +34,7 @@ static const char *BASE[] = {
 
 static const char *KNOWN_VERBS[] = {
     "fetch", "read", "cache", "env", "region", "json_set", "json_parse", "parse", "exec", "tool",
-    "provision", "artifact", "publish"
+    "provision", "artifact", "write", "publish"
 };
 
 /* daukle.publish is spec section 10's next reserved name: a fourth table and
@@ -1107,6 +1107,78 @@ static int verb_exec(lua_State *state) {
     return 1;
 }
 
+/* A plugin may write one file, into the derived directory it already owns, and
+   the name may not carry a separator at all. That is deliberately smaller than
+   "a path inside the derived directory": an argfile needs a name and nothing
+   more, and refusing separators outright means there is no traversal question
+   to get wrong, no parent to create and no symlink to re-resolve.
+
+   It exists because core already writes plugin-authored files there from a
+   generate hook, and generate cannot run a tool, so a list that must be
+   enumerated could never be written by the one hook able to write it. D-80. */
+static int verb_write(lua_State *state) {
+    if (fr_lua_generation_is_running()) {
+        return luaL_error(state, "daukle.write is not available while generating; return the"
+                                 " file from the generate hook instead");
+    }
+    if (fr_lua_plugin_exec_is_refused()) {
+        return luaL_error(state, "daukle.write is not available while a plugin chunk is"
+                                 " loading; call it from a task or publish callback");
+    }
+    luaL_checktype(state, 1, LUA_TTABLE);
+
+    lua_getfield(state, 1, "path");
+    const char *name = lua_tostring(state, -1);
+    if (name == NULL) {
+        return luaL_error(state, "daukle.write needs a \"path\" string");
+    }
+    if (name[0] == '\0') {
+        return luaL_error(state, "daukle.write's \"path\" may not be empty");
+    }
+    if (strchr(name, '/') != NULL || strchr(name, '\\') != NULL) {
+        return luaL_error(state, "daukle.write's \"path\" must be a file name with no directory"
+                                 " separator; it is written into the derived directory");
+    }
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+        return luaL_error(state, "daukle.write's \"path\" must name a file, not \"%s\"", name);
+    }
+
+    lua_getfield(state, 1, "text");
+    const char *text = lua_tostring(state, -1);
+    if (text == NULL) {
+        return luaL_error(state, "daukle.write needs a \"text\" string");
+    }
+
+    const char *directory = fr_lua_task_cwd();
+    if (directory == NULL) {
+        return luaL_error(state, "daukle.write has no derived directory to write into");
+    }
+
+    /* The task cwd is relative to the project root while the tool this file is
+       written for runs WITH the derived directory as its cwd, so a relative
+       answer would be wrong for the one caller it exists for. Resolving the
+       directory also re-checks that it is still inside the project. */
+    fr_error err;
+    char *resolved = NULL;
+    if (fr_lua_sandbox_resolve_dir(state, directory, &resolved, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    char path[512];
+    int written = snprintf(path, sizeof path, "%s/%s", resolved, name);
+    free(resolved);
+    if (written < 0 || (size_t) written >= sizeof path) {
+        return luaL_error(state, "the path is too long (%d characters)", (int) strlen(name));
+    }
+
+    if (fr_file_write_text(path, text, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    lua_pushstring(state, path);
+    return 1;
+}
+
 /* install_one handles every declared verb plus the reserved publish; a name
    that is known (fr_lua_verbs_is_known) but neither handled here nor reserved
    would be left unset, which cannot currently happen. */
@@ -1139,6 +1211,8 @@ static void install_one(lua_State *state, const char *name) {
     } else if (strcmp(name, "exec") == 0) {
         env_declared_exec = 1;
         lua_pushcfunction(state, verb_exec);
+    } else if (strcmp(name, "write") == 0) {
+        lua_pushcfunction(state, verb_write);
     } else if (fr_lua_verbs_is_reserved(name)) {
         lua_pushcfunction(state, reserved_verb);
     } else {

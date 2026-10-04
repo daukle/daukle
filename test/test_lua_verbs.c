@@ -1369,6 +1369,141 @@ static lua_State *begin_artifact_env(fr_registry *registry, int *out_env) {
     return state;
 }
 
+static lua_State *begin_write_env(fr_registry *registry, int *out_env) {
+    fr_error err;
+    if (fr_lua_runtime_begin(".", registry, &err) != FR_OK) return NULL;
+    lua_State *state = fr_lua_runtime_state();
+    const char *verbs[] = { "write" };
+    if (fr_lua_verbs_push_env(state, verbs, 1, &err) != FR_OK) return NULL;
+    *out_env = lua_gettop(state);
+    return state;
+}
+
+/* Every write test runs the same shape: declare the verb, point the task cwd
+   at a scratch directory, run one chunk, and report whether it raised. */
+static int run_write_chunk(const char *chunk, const char *directory, char *message, size_t size) {
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_write_env(registry, &env);
+
+    fr_error err;
+    err.message[0] = '\0';
+    fr_lua_set_task_cwd(directory);
+    int status = state != NULL ? fr_lua_run_in_env(state, chunk, "=t", env, &err) : FR_ERR;
+    fr_lua_set_task_cwd(NULL);
+    if (message != NULL) snprintf(message, size, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    return status;
+}
+
+TEST write_puts_a_file_in_the_derived_directory(void) {
+    char directory[] = "build-test-write";
+    fr_cache_make_directories(directory);
+
+    int wrote = run_write_chunk("daukle.write{ path = 'sources.args', text = 'one\\ntwo\\n' }",
+                                directory, NULL, 0) == FR_OK;
+
+    char path[1024];
+    snprintf(path, sizeof path, "%s/sources.args", directory);
+    char *text = NULL;
+    fr_error err;
+    int read_back = fr_file_read_text(path, &text, &err) == FR_OK;
+    int matched = read_back && strcmp(text, "one\ntwo\n") == 0;
+    free(text);
+    fr_test_remove_tree(directory);
+
+    ASSERT(wrote);
+    ASSERT(read_back);
+    ASSERT(matched);
+    PASS();
+}
+
+/* The returned path is the whole point: a caller composes "@" .. it and hands
+   that to a tool, so a verb that wrote the file and returned nothing would be
+   useless for the thing it exists for. */
+TEST write_returns_the_path_it_wrote(void) {
+    char directory[] = "build-test-write-return";
+    fr_cache_make_directories(directory);
+
+    int ok = run_write_chunk(
+        "local at = daukle.write{ path = 'a.args', text = 'x' }\n"
+        "if type(at) ~= 'string' then error('not a string', 0) end\n"
+        "if string.sub(at, -7) ~= '/a.args' then error('bad tail: ' .. at, 0) end",
+        directory, NULL, 0) == FR_OK;
+
+    fr_test_remove_tree(directory);
+    ASSERT(ok);
+    PASS();
+}
+
+TEST write_refuses_a_path_with_a_separator(void) {
+    static char message[512];
+    char directory[] = "build-test-write-sep";
+    fr_cache_make_directories(directory);
+
+    int refused = run_write_chunk("daukle.write{ path = 'nested/a.args', text = 'x' }",
+                                  directory, message, sizeof message) == FR_ERR;
+    static char backslash_message[512];
+    int backslash = run_write_chunk("daukle.write{ path = '..\\\\escape.args', text = 'x' }",
+                                    directory, backslash_message,
+                                    sizeof backslash_message) == FR_ERR;
+
+    fr_test_remove_tree(directory);
+    ASSERT(refused);
+    ASSERT(backslash);
+    ASSERTm(message, strstr(message, "no directory separator") != NULL);
+    /* Without this the backslash case passes on a Lua escape error rather than
+       on the refusal, which is a green case that tests nothing. */
+    ASSERTm(backslash_message, strstr(backslash_message, "no directory separator") != NULL);
+    PASS();
+}
+
+TEST write_refuses_a_missing_path_or_text(void) {
+    char directory[] = "build-test-write-missing";
+    fr_cache_make_directories(directory);
+
+    int no_path = run_write_chunk("daukle.write{ text = 'x' }", directory, NULL, 0) == FR_ERR;
+    int no_text = run_write_chunk("daukle.write{ path = 'a.args' }", directory, NULL, 0) == FR_ERR;
+    int empty = run_write_chunk("daukle.write{ path = '', text = 'x' }",
+                                directory, NULL, 0) == FR_ERR;
+    int dotdot = run_write_chunk("daukle.write{ path = '..', text = 'x' }",
+                                 directory, NULL, 0) == FR_ERR;
+
+    fr_test_remove_tree(directory);
+    ASSERT(no_path);
+    ASSERT(no_text);
+    ASSERT(empty);
+    ASSERT(dotdot);
+    PASS();
+}
+
+TEST write_is_not_installed_without_being_declared(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    lua_State *state = began ? fr_lua_runtime_state() : NULL;
+    const char *verbs[] = { "read" };
+    int pushed = state != NULL && fr_lua_verbs_push_env(state, verbs, 1, &err) == FR_OK;
+    int env = pushed ? lua_gettop(state) : 0;
+
+    err.message[0] = '\0';
+    int refused = pushed
+        && fr_lua_run_in_env(state, "daukle.write{ path = 'a', text = 'b' }", "=t", env, &err)
+           == FR_ERR;
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(began);
+    ASSERT(pushed);
+    ASSERT(refused);
+    PASS();
+}
+
 static lua_State *begin_provision_env(fr_registry *registry, int *out_env) {
     fr_error err;
     if (fr_lua_runtime_begin(".", registry, &err) != FR_OK) return NULL;
@@ -2491,5 +2626,10 @@ int main(int argc, char **argv) {
     RUN_TEST(a_root_dir_names_a_directory);
     RUN_TEST(a_root_dir_and_a_root_path_refuse_each_others_shape);
     RUN_TEST(a_root_dir_refuses_a_member_that_climbs_out);
+    RUN_TEST(write_puts_a_file_in_the_derived_directory);
+    RUN_TEST(write_returns_the_path_it_wrote);
+    RUN_TEST(write_refuses_a_path_with_a_separator);
+    RUN_TEST(write_refuses_a_missing_path_or_text);
+    RUN_TEST(write_is_not_installed_without_being_declared);
     GREATEST_MAIN_END();
 }
