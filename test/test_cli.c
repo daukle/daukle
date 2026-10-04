@@ -165,14 +165,158 @@ TEST rejects_plugin_with_an_unknown_subcommand_naming_it(void) {
    advertised --no-cache as global while the parser refused it on one command.
    Pinned here because main.c, where the line used to live, has no test
    binary at all. */
+/* Rendered into a buffer rather than returned as a literal, since the usage
+   became a table. The assertions are the ones that were already here: what is
+   pinned is the CLAIM, not the layout. */
+static char *rendered_usage(char *buffer, size_t size) {
+    FILE *sink = tmpfile();
+    if (sink == NULL) return NULL;
+    fr_cli_print_usage(sink);
+    rewind(sink);
+    size_t read = fread(buffer, 1, size - 1, sink);
+    buffer[read] = '\0';
+    fclose(sink);
+    return buffer;
+}
+
 TEST the_usage_line_does_not_claim_no_cache_is_global(void) {
-    const char *usage = fr_cli_usage();
+    char buffer[4096];
+    const char *usage = rendered_usage(buffer, sizeof buffer);
+    ASSERT(usage != NULL);
     ASSERT(strstr(usage, "--no-cache") != NULL);
     ASSERT(strstr(usage, "plugin update") != NULL);
     /* The exception has to be stated beside the flag rather than merely
        somewhere in the line, which "plugin update" alone would satisfy
        because it is also a command the line lists. */
     ASSERT(strstr(usage, "--no-cache, on every command but plugin update") != NULL);
+    PASS();
+}
+
+/* The point of the table. A command added to the enum without a row here fails
+   this rather than shipping undocumented, which is the whole reason the help is
+   data and not prose. */
+TEST every_command_the_parser_can_produce_is_documented(void) {
+    size_t count = 0;
+    const fr_cli_command_doc *docs = fr_cli_command_docs(&count);
+
+    for (int command = 0; command < FR_CLI_USAGE; command++) {
+        int found = 0;
+        for (size_t index = 0; index < count; index++) {
+            if ((int) docs[index].command == command) found++;
+        }
+        static char message[128];
+        snprintf(message, sizeof message, "fr_cli_command %d has %d table rows, not 1",
+                 command, found);
+        ASSERT_EQm(message, 1, found);
+    }
+
+    /* The other direction, so a row for a command that no longer exists cannot
+       sit here being counted. */
+    ASSERT_EQ((size_t) FR_CLI_USAGE, count);
+    PASS();
+}
+
+TEST every_documented_row_carries_a_synopsis_and_a_summary(void) {
+    size_t count = 0;
+    const fr_cli_command_doc *docs = fr_cli_command_docs(&count);
+    for (size_t index = 0; index < count; index++) {
+        ASSERT(docs[index].synopsis != NULL && docs[index].synopsis[0] != '\0');
+        ASSERT(docs[index].summary != NULL && docs[index].summary[0] != '\0');
+    }
+    PASS();
+}
+
+/* cli.c names the commands and tasks.c reserves them, and nothing but this
+   holds the two lists level. */
+TEST every_documented_command_word_is_reserved(void) {
+    size_t count = 0;
+    const fr_cli_command_doc *docs = fr_cli_command_docs(&count);
+    int words = 0;
+    for (size_t index = 0; index < count; index++) {
+        if (docs[index].name == NULL) continue;
+        words++;
+        static char message[128];
+        snprintf(message, sizeof message, "\"%s\" is a command word and not a reserved task name",
+                 docs[index].name);
+        ASSERT_EQm(message, 1, fr_tasks_name_is_reserved(docs[index].name));
+    }
+    /* A table that produced no words would pass the loop having checked nothing. */
+    ASSERT(words >= 8);
+    PASS();
+}
+
+TEST the_usage_names_every_command(void) {
+    char buffer[4096];
+    const char *usage = rendered_usage(buffer, sizeof buffer);
+    ASSERT(usage != NULL);
+
+    size_t count = 0;
+    const fr_cli_command_doc *docs = fr_cli_command_docs(&count);
+    for (size_t index = 0; index < count; index++) {
+        static char message[160];
+        snprintf(message, sizeof message, "the usage does not name \"%s\"", docs[index].synopsis);
+        ASSERTm(message, strstr(usage, docs[index].synopsis) != NULL);
+    }
+    PASS();
+}
+
+TEST help_with_no_word_is_the_whole_list(void) {
+    const char *argv[] = { "daukle", "help" };
+    fr_cli_options options = parse(2, argv);
+    ASSERT_EQ(FR_CLI_HELP, options.command);
+    ASSERT(options.help_topic == NULL);
+    PASS();
+}
+
+TEST the_help_flag_is_the_help_command(void) {
+    const char *argv[] = { "daukle", "--help" };
+    fr_cli_options options = parse(2, argv);
+    ASSERT_EQ(FR_CLI_HELP, options.command);
+    ASSERT(options.help_topic == NULL);
+    PASS();
+}
+
+TEST help_takes_a_command_word(void) {
+    const char *argv[] = { "daukle", "help", "sync" };
+    fr_cli_options options = parse(3, argv);
+    ASSERT_EQ(FR_CLI_HELP, options.command);
+    ASSERT_STR_EQ("sync", options.help_topic);
+    PASS();
+}
+
+/* Answering an unknown word with the whole list reads as though the question
+   was understood, so it is a usage error that names the word instead. */
+TEST help_names_a_word_that_is_no_command(void) {
+    const char *argv[] = { "daukle", "help", "frobnicate" };
+    fr_cli_options options = parse(3, argv);
+    ASSERT_EQ(FR_CLI_USAGE, options.command);
+    ASSERT_STR_EQ("frobnicate", options.help_unknown_topic);
+    ASSERT(options.help_topic == NULL);
+    PASS();
+}
+
+TEST help_for_a_command_prints_its_synopsis(void) {
+    FILE *sink = tmpfile();
+    ASSERT(sink != NULL);
+    ASSERT_EQ(1, fr_cli_print_help(sink, "plugin"));
+    rewind(sink);
+    char buffer[2048];
+    size_t read = fread(buffer, 1, sizeof buffer - 1, sink);
+    buffer[read] = '\0';
+    fclose(sink);
+    ASSERT(strstr(buffer, "plugin update [label]") != NULL);
+    ASSERT(strstr(buffer, "--no-cache") != NULL);
+    PASS();
+}
+
+TEST help_for_an_unknown_command_prints_nothing(void) {
+    FILE *sink = tmpfile();
+    ASSERT(sink != NULL);
+    ASSERT_EQ(0, fr_cli_print_help(sink, "frobnicate"));
+    rewind(sink);
+    char buffer[64];
+    ASSERT_EQ((size_t) 0, fread(buffer, 1, sizeof buffer, sink));
+    fclose(sink);
     PASS();
 }
 
@@ -383,5 +527,15 @@ int main(int argc, char **argv) {
     RUN_TEST(publish_with_no_word_means_every_destination);
     RUN_TEST(publish_with_a_word_names_one_destination);
     RUN_TEST(publish_with_two_words_is_usage);
+    RUN_TEST(every_command_the_parser_can_produce_is_documented);
+    RUN_TEST(every_documented_row_carries_a_synopsis_and_a_summary);
+    RUN_TEST(every_documented_command_word_is_reserved);
+    RUN_TEST(the_usage_names_every_command);
+    RUN_TEST(help_with_no_word_is_the_whole_list);
+    RUN_TEST(the_help_flag_is_the_help_command);
+    RUN_TEST(help_takes_a_command_word);
+    RUN_TEST(help_names_a_word_that_is_no_command);
+    RUN_TEST(help_for_a_command_prints_its_synopsis);
+    RUN_TEST(help_for_an_unknown_command_prints_nothing);
     GREATEST_MAIN_END();
 }

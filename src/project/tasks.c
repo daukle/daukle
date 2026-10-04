@@ -11,8 +11,12 @@
 
 #define FR_TASK_CAPABILITY_PREFIX "daukle.task/"
 
+/* Held equal to the words in cli.c's command table by
+   every_documented_command_word_is_reserved: a command the parser claims and
+   this list does not would make a plugin's task of that name unreachable, with
+   nothing to say why. */
 static const char *RESERVED_COMMANDS[] = {
-    "sync", "check", "add", "config", "plugin", "clean", "tasks", "publish"
+    "sync", "check", "add", "config", "plugin", "clean", "tasks", "publish", "help"
 };
 
 int fr_tasks_name_is_reserved(const char *name) {
