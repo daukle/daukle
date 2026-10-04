@@ -19,15 +19,20 @@ if(NOT DEFINED PIN OR NOT DEFINED REPO)
             "-P cmake/check_wrapper_pin.cmake")
 endif()
 
-# ctest reads this as Skipped through SKIP_RETURN_CODE. Offline is the one
-# answer that is neither pass nor fail, and it has to stay visible: a check that
-# could not reach the forge and said nothing is the silent pass this file exists
-# to delete.
-set(SKIP_EXIT 77)
+# ctest reads this as Skipped through SKIP_REGULAR_EXPRESSION, matching the
+# line each skip prints. Offline is the one answer that is neither pass nor
+# fail, and it has to stay visible: a check that could not reach the forge and
+# said nothing is the silent pass this file exists to delete.
+#
+# It is a printed line and a return() rather than an exit code because
+# cmake_language(EXIT) needs CMake 3.29 and Ubuntu 24.04 ships 3.28.3, where it
+# is not a skip but a hard error naming this file. Every runner in CI is newer,
+# which is why this went unseen until the POSIX container loop hit it.
+set(SKIPPED "check_wrapper_pin: skipped")
 
 if(NOT DEFINED ENV{DAUKLE_NETWORK_TESTS})
-    message(STATUS "check_wrapper_pin: skipped, DAUKLE_NETWORK_TESTS is not set")
-    cmake_language(EXIT ${SKIP_EXIT})
+    message(STATUS "${SKIPPED}, DAUKLE_NETWORK_TESTS is not set")
+    return()
 endif()
 
 file(READ "${PIN}" pin_text)
@@ -109,8 +114,8 @@ if(status_lines)
 endif()
 
 if(HTTP_CODE STREQUAL "")
-    message(STATUS "check_wrapper_pin: skipped, ${API} answered nothing: ${download_message}")
-    cmake_language(EXIT ${SKIP_EXIT})
+    message(STATUS "${SKIPPED}, ${API} answered nothing: ${download_message}")
+    return()
 endif()
 
 # A rate limit is a property of the runner's shared address and says nothing
@@ -123,8 +128,8 @@ endif()
 # guarantee is that a release generates the pin rather than trusting it, and a
 # run that skipped is caught by the next one.
 if(HTTP_CODE STREQUAL "403" OR HTTP_CODE STREQUAL "429")
-    message(STATUS "check_wrapper_pin: skipped, ${API} answered ${HTTP_CODE}, which is its rate limit")
-    cmake_language(EXIT ${SKIP_EXIT})
+    message(STATUS "${SKIPPED}, ${API} answered ${HTTP_CODE}, which is its rate limit")
+    return()
 endif()
 
 if(NOT HTTP_CODE STREQUAL "200")

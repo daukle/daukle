@@ -159,4 +159,5 @@ add_test(NAME wrapper_pin_matches_release COMMAND ${CMAKE_COMMAND}
          -DREPO=daukle/daukle
          -DRESPONSE=${CMAKE_CURRENT_BINARY_DIR}/wrapper-pin-latest.json
          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_wrapper_pin.cmake)
-set_tests_properties(wrapper_pin_matches_release PROPERTIES SKIP_RETURN_CODE 77)
+set_tests_properties(wrapper_pin_matches_release PROPERTIES
+                     SKIP_REGULAR_EXPRESSION "check_wrapper_pin: skipped")
