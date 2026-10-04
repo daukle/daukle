@@ -24,7 +24,11 @@ pin_file="$script_dir/.daukle/wrapper.toml"
 case "$(uname -s)" in
     Linux) host_os=linux ;;
     Darwin) host_os=macos ;;
-    *) fail "unsupported operating system $(uname -s). This wrapper knows linux, macos and windows; on Windows use daukle.ps1." ;;
+    # Git Bash, MSYS2 and Cygwin are POSIX shells on Windows, and they run the Windows binary.
+    # Refusing them and pointing at daukle.ps1 was wrong: a Windows developer driving a build from
+    # a POSIX shell is ordinary, and so is a CI job whose only shell on the Windows runner is bash.
+    MINGW* | MSYS* | CYGWIN*) host_os=windows ;;
+    *) fail "unsupported operating system $(uname -s). This wrapper knows linux, macos and windows." ;;
 esac
 
 case "$(uname -m)" in
