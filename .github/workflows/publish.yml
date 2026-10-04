@@ -29,6 +29,15 @@ jobs:
       allow_untagged: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
       submodules: 'false'
       check: 'cmake -DDAUKLE="$BINARY" -DEXPECTED="$RELEASE_TAG" -P cmake/check_version.cmake'
+      # The pin is written here because this is where the digests first exist, and the scripts
+      # ride along so `wrapper update` is a download rather than a copy out of a clone. The
+      # generator runs BEFORE the scripts are copied in: it refuses an asset no host entry names,
+      # and daukle and daukle.ps1 are not assets any host names.
+      finalize: |
+        cmake -DPIN=wrapper/.daukle/wrapper.toml -DASSET_DIR="$ASSET_DIR" \
+              -DVERSION="$RELEASE_TAG" -DOUT="$ASSET_DIR/wrapper.toml" \
+              -P cmake/write_wrapper_pin.cmake
+        cp wrapper/daukle wrapper/daukle.ps1 "$ASSET_DIR/"
       cells: >-
         [
           {
