@@ -29,6 +29,19 @@ the host's shell already does. The pin is a line of text a reviewer can read.
 **An upgrade is a one-file diff.** The version and the digests live in `.daukle/wrapper.toml` and
 nowhere else, so bumping daukle never touches a script.
 
+**`./daukle wrapper update [version]` replaces all three files** with the ones a release publishes
+(`D-68`). Without a version it takes the latest, resolved by the download itself rather than by a
+separate question to an API that the following request could disagree with. It is the only daukle
+command that does not reach daukle: it is handled in the wrapper script, because the release URL in
+`src/` fails `cmake/check_agnostic.cmake` with `core names a forge`, measured.
+
+Three properties worth knowing. **All three files or none**, since a project whose scripts and pin
+disagree is worse than one that was never updated. **The scripts are staged beside their targets
+and renamed into place**, not copied over, because a running `sh` reads its own file as it goes and
+copying over it makes the shell resume inside different bytes. And **the scripts arrive with no
+digest to check them against**, which is inherent to a bootstrap: what protects you is that they
+are short text you review before committing, and that nothing fetches them unless you ask.
+
 **The canonical pin is written by a release, not by a person** (`D-67`). Digests exist for the
 first time in the release job, once every cell has uploaded, so `cmake/write_wrapper_pin.cmake`
 runs there and the result is published as the `wrapper.toml` asset beside `daukle` and
@@ -111,7 +124,7 @@ would actually hurt.
 
 ## How this was verified
 
-`test/probe.sh` runs fifteen checks against the **real published release** inside a bare
+`test/probe.sh` runs twenty-four checks against the **real published release** inside a bare
 `ubuntu:24.04`:
 
 ```
@@ -122,6 +135,12 @@ It is not a ctest entry, because it needs Docker and the network and ctest has n
 checks that delete `curl` and `wget` run LAST: `apt-get` will not restore a binary that was
 deleted rather than uninstalled, and an earlier removal silently starves every later check, which
 cost one confusing run.
+
+**Its expectations are read out of the pin, not written into it.** They used to be literals, and
+when `D-67` moved the pin to `0.2.0` eight of the fifteen checks failed against a wrapper that was
+working perfectly. Nothing caught it, because the probe is hand-run rather than a CI step. **A test
+carrying a hand-maintained copy of the thing it tests is the bug `D-67` exists to delete, one layer
+out.**
 
 **A consumer exercises it on every platform.** `daukle/examples`' `wrapper-bootstrap` is a
 project that owns no daukle: its harness runs it through this wrapper on all three runners,
@@ -145,7 +164,7 @@ natively.
 - **No proxy, no mirror, no private release.** The URL is hardcoded to this repository's releases
   and there is no override, because an override is a second place a pin can be defeated.
 - **It does not upgrade itself.** Nothing here checks whether a newer daukle exists; the pinned
-  version is the version, until a person edits the pin. That is a refusal rather than a gap: an
-  auto-updating wrapper would make daukle's own bootstrap the one unpinned thing in a system where
-  every other acquisition carries a sha256. An explicit `wrapper update` is `D-68`, and the release
-  assets it needs exist as of `D-67`.
+  version is the version, until someone runs `wrapper update`. That is a refusal rather than a gap:
+  an auto-updating wrapper would make daukle's own bootstrap the one unpinned thing in a system
+  where every other acquisition carries a sha256, and a compromised release would propagate by
+  itself.
