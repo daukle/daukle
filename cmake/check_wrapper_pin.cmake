@@ -190,7 +190,25 @@ endforeach()
 # The other direction, which the pin cannot notice on its own: a release that
 # grew a platform leaves the wrapper refusing that host by name, which reads
 # like an unsupported host rather than a pin nobody updated.
+#
+# Only the PLATFORM assets, told apart by the daukle-<os>-<arch> convention. A
+# release also carries the wrapper's own daukle, daukle.ps1 and wrapper.toml
+# since D-67, and the first version of this loop called all three unpinned
+# platforms. The convention is asserted below rather than assumed, so a release
+# that stops following it fails here instead of quietly checking nothing.
+set(PLATFORM_ASSET "^daukle-")
+
+foreach(host ${PIN_HOSTS})
+    if(NOT PIN_ASSET_${host} MATCHES "${PLATFORM_ASSET}")
+        list(APPEND MISMATCHES
+             "${host} names the asset ${PIN_ASSET_${host}}, which does not match ${PLATFORM_ASSET}; the naming convention this check tells platform assets apart by has changed")
+    endif()
+endforeach()
+
 foreach(name ${FORGE_NAMES})
+    if(NOT name MATCHES "${PLATFORM_ASSET}")
+        continue()
+    endif()
     set(claimed 0)
     foreach(host ${PIN_HOSTS})
         if(PIN_ASSET_${host} STREQUAL "${name}")
