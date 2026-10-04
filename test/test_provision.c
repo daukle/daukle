@@ -1,6 +1,7 @@
 #include "greatest.h"
 #include "provision/provision.h"
 
+#include "cache/cache.h"
 #include "util/error.h"
 #include "http_server.h"
 #include "project/region.h"
@@ -18,6 +19,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #endif
@@ -36,6 +38,38 @@ static int directory_exists(const char *path) {
 #else
     struct stat info;
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+#endif
+}
+
+/* Answers whether anything at all is in a directory, including the temporary
+   file a half-done fetch would leave, which a count of named files would miss
+   because the name carries a pid. */
+static int directory_is_empty(const char *path) {
+#ifdef _WIN32
+    char pattern[1024];
+    WIN32_FIND_DATAA found;
+    snprintf(pattern, sizeof pattern, "%s\\*", path);
+    HANDLE handle = FindFirstFileA(pattern, &found);
+    if (handle == INVALID_HANDLE_VALUE) return 1;
+    int empty = 1;
+    do {
+        if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) continue;
+        empty = 0;
+    } while (empty && FindNextFileA(handle, &found));
+    FindClose(handle);
+    return empty;
+#else
+    DIR *directory = opendir(path);
+    if (directory == NULL) return 1;
+    int empty = 1;
+    struct dirent *entry;
+    while ((entry = readdir(directory)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        empty = 0;
+        break;
+    }
+    closedir(directory);
+    return empty;
 #endif
 }
 
@@ -952,6 +986,148 @@ TEST a_publisher_provisions_its_own_tool_and_runs_it(void) {
     PASS();
 }
 
+/* The whole point of the unpinned fetch: the digest it reports must be the
+   digest of the bytes it wrote, because a resolver commits that number as a
+   pin and nothing re-derives it afterwards. */
+TEST an_unpinned_fetch_reports_the_digest_of_what_it_wrote(void) {
+    static char message[1024];
+    char cache[1024];
+    use_private_cache("pin-digest", cache, sizeof cache);
+
+    char archive[ARCHIVE_SIZE];
+    size_t length = build_archive(archive, sizeof archive);
+    char expected[65];
+    fr_sha256_hex(archive, length, expected);
+
+    fr_test_server *server = fr_test_server_create();
+    fr_test_server_add_body_bytes(server, "/slf4j-api-1.7.36.jar", archive, length);
+    fr_test_server_start(server);
+
+    char url[256];
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/slf4j-api-1.7.36.jar",
+             fr_test_server_port(server));
+
+    fr_pin_result pinned;
+    fr_error err;
+    err.message[0] = '\0';
+    int status = fr_artifact_pin(url, NULL, 0, &pinned, &err);
+
+    fr_test_server_stop(server);
+    fr_test_server_free(server);
+
+    /* Read back rather than trust the return: the claim is about the file on
+       disk, and a digest computed over a stream that was written wrong would
+       still agree with itself. */
+    char written[65];
+    written[0] = '\0';
+    FILE *handle = fopen(pinned.path, "rb");
+    if (handle != NULL) {
+        static char body[ARCHIVE_SIZE * 2];
+        size_t read = fread(body, 1, sizeof body, handle);
+        fclose(handle);
+        fr_sha256_hex(body, read, written);
+    }
+
+    snprintf(message, sizeof message, "status %d (%s), path \"%s\", reported %s, expected %s,"
+             " on disk %s", status, err.message, pinned.path, pinned.sha256, expected, written);
+    fr_test_remove_tree(cache);
+
+    ASSERT_EQm(message, FR_OK, status);
+    ASSERT_STR_EQm(message, expected, pinned.sha256);
+    ASSERT_STR_EQm(message, expected, written);
+    /* The digest keys the directory and the url's last segment names the file,
+       which is what makes the next assertion's cache hit possible at all. */
+    ASSERTm(message, strstr(pinned.path, expected) != NULL);
+    ASSERTm(message, strstr(pinned.path, "slf4j-api-1.7.36.jar") != NULL);
+    PASS();
+}
+
+/* The property the spec rests on: resolving and then building must not fetch
+   the same bytes twice. The server is stopped before the pinned fetch, so an
+   unreachable url proves the hit rather than merely passing beside it. */
+TEST a_pinned_fetch_after_an_unpinned_one_makes_no_request(void) {
+    static char message[1024];
+    char cache[1024];
+    use_private_cache("pin-reuse", cache, sizeof cache);
+
+    char archive[ARCHIVE_SIZE];
+    size_t length = build_archive(archive, sizeof archive);
+
+    fr_test_server *server = fr_test_server_create();
+    fr_test_server_add_body_bytes(server, "/jedis-3.8.0.jar", archive, length);
+    fr_test_server_start(server);
+
+    char url[256];
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/jedis-3.8.0.jar", fr_test_server_port(server));
+
+    fr_pin_result pinned;
+    fr_error err;
+    err.message[0] = '\0';
+    int resolved = fr_artifact_pin(url, NULL, 0, &pinned, &err);
+
+    fr_test_server_stop(server);
+    fr_test_server_free(server);
+
+    fr_artifact_result built;
+    fr_error build_err;
+    build_err.message[0] = '\0';
+    int rebuilt = fr_artifact(url, pinned.sha256, NULL, 0, &built, &build_err);
+
+    int same_path = strcmp(pinned.path, built.path) == 0;
+    snprintf(message, sizeof message, "resolved %d (%s), rebuilt %d (%s), cached %d,"
+             " paths \"%s\" and \"%s\"", resolved, err.message, rebuilt, build_err.message,
+             built.was_cached, pinned.path, built.path);
+    fr_test_remove_tree(cache);
+
+    ASSERT_EQm(message, FR_OK, resolved);
+    ASSERT_EQm(message, FR_OK, rebuilt);
+    ASSERT_EQm(message, 1, built.was_cached);
+    ASSERTm(message, same_path);
+    PASS();
+}
+
+/* A url that cannot be reached must leave no file behind under any digest: a
+   partial write that the fetch then hashed would produce a pin for bytes that
+   are not the artifact, and the pin would verify forever after.
+   @implNote the cleanup is fr_http_get_to_file's rather than fr_artifact_pin's,
+   which is why this case is kept: mutating a remove out of the caller reddens
+   nothing, so this is the only thing holding the contract if the http layer
+   ever stops honouring it. */
+TEST an_unpinned_fetch_that_fails_leaves_no_file(void) {
+    static char message[512];
+    char cache[1024];
+    use_private_cache("pin-failure", cache, sizeof cache);
+
+    fr_test_server *server = fr_test_server_create();
+    fr_test_server_start(server);
+    int port = fr_test_server_port(server);
+    fr_test_server_stop(server);
+    fr_test_server_free(server);
+
+    char url[256];
+    snprintf(url, sizeof url, "http://127.0.0.1:%d/gone.jar", port);
+
+    fr_pin_result pinned;
+    fr_error err;
+    err.message[0] = '\0';
+    int status = fr_artifact_pin(url, NULL, 0, &pinned, &err);
+
+    char artifacts[1024];
+    fr_error root_err;
+    int rooted = fr_cache_artifacts_root(artifacts, sizeof artifacts, &root_err);
+    int left_behind = rooted == FR_OK && !directory_is_empty(artifacts);
+
+    snprintf(message, sizeof message, "status %d (%s), path \"%s\", digest \"%s\"", status,
+             err.message, pinned.path, pinned.sha256);
+    fr_test_remove_tree(cache);
+
+    ASSERT_EQm(message, FR_ERR, status);
+    ASSERT_STR_EQm(message, "", pinned.path);
+    ASSERT_STR_EQm(message, "", pinned.sha256);
+    ASSERT_EQm("a failed unpinned fetch left something in the artifact cache", 0, left_behind);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     self_path = argv[0];
     if (argc == 2 && strcmp(argv[1], "--task-child") == 0) return run_as_task_child();
@@ -975,5 +1151,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_url_ending_in_a_slash_still_falls_back_to_a_fact);
     RUN_TEST(a_project_provisions_a_tool_and_runs_it);
     RUN_TEST(a_publisher_provisions_its_own_tool_and_runs_it);
+    RUN_TEST(an_unpinned_fetch_reports_the_digest_of_what_it_wrote);
+    RUN_TEST(a_pinned_fetch_after_an_unpinned_one_makes_no_request);
+    RUN_TEST(an_unpinned_fetch_that_fails_leaves_no_file);
     GREATEST_MAIN_END();
 }

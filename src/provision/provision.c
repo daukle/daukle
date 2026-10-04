@@ -249,6 +249,79 @@ int fr_artifact(const char *url, const char *sha256_hex, const fr_http_header *h
     return FR_OK;
 }
 
+int fr_artifact_pin(const char *url, const fr_http_header *headers, size_t header_count,
+                    fr_pin_result *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+
+    if (url == NULL || url[0] == '\0') {
+        fr_error_set(err, "an unpinned fetch names no file to fetch");
+        return FR_ERR;
+    }
+
+    char artifacts[1024];
+    if (fr_cache_artifacts_root(artifacts, sizeof artifacts, err) != FR_OK) return FR_ERR;
+    fr_cache_make_directories(artifacts);
+
+    char host[64];
+    host_component(host, sizeof host);
+
+    char temporary[1024];
+    int written = snprintf(temporary, sizeof temporary, "%s/.partial-%s-%d-%u", artifacts, host,
+                           current_process_id(), next_attempt());
+    if (written < 0 || (size_t) written >= sizeof temporary) {
+        fr_error_set(err, "the temporary artifact path is too long");
+        return FR_ERR;
+    }
+    remove(temporary);
+
+    fr_sha256 digest;
+    size_t length = 0;
+    /* No remove on this path: fr_http_get_to_file removes the partial file
+       itself, measured by mutating a remove here and watching nothing redden. */
+    if (fr_http_get_to_file(url, headers, header_count, temporary, FR_HTTP_MAX_FILE, &digest,
+                            &length, err) != FR_OK) {
+        return FR_ERR;
+    }
+    fr_sha256_final(&digest, out->sha256);
+
+    char name[256];
+    artifact_file_name(url, name, sizeof name);
+
+    char directory[1024];
+    written = snprintf(directory, sizeof directory, "%s/%s", artifacts, out->sha256);
+    if (written < 0 || (size_t) written >= sizeof directory) {
+        remove(temporary);
+        out->sha256[0] = '\0';
+        fr_error_set(err, "the cache directory for %s is too long", url);
+        return FR_ERR;
+    }
+    written = snprintf(out->path, sizeof out->path, "%s/%s", directory, name);
+    if (written < 0 || (size_t) written >= sizeof out->path) {
+        remove(temporary);
+        out->path[0] = '\0';
+        out->sha256[0] = '\0';
+        fr_error_set(err, "the cache path for %s is too long", url);
+        return FR_ERR;
+    }
+
+    /* Two urls serving one digest land on one file, so a second resolve of the
+       same bytes keeps what is already there rather than renaming over it. */
+    if (fr_cache_file_exists(out->path)) {
+        remove(temporary);
+        return FR_OK;
+    }
+
+    fr_cache_make_directories(directory);
+    if (fr_cache_rename_file(temporary, out->path) != FR_OK) {
+        remove(temporary);
+        fr_error_set(err, "cannot move the fetched file for %s into the cache", url);
+        out->path[0] = '\0';
+        out->sha256[0] = '\0';
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
 int fr_provision(const char *url, const char *sha256_hex, const fr_http_header *headers,
                  size_t header_count, fr_provision_result *out,
                  fr_error *err) {

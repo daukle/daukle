@@ -100,4 +100,9 @@ int fr_lua_verbs_is_reserved(const char *name);
    flag, and lua_verbs.c has no other way to reach it. */
 void fr_lua_verbs_set_verbose(int enabled);
 
+/* Opens daukle.pin for this run, threaded from --resolve the same way verbose
+   is. It is off unless the flag was given, so the unpinned fetch is reachable
+   only when the command line asked for it. D-77. */
+void fr_lua_verbs_set_resolving(int enabled);
+
 #endif

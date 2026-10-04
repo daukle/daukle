@@ -50,4 +50,21 @@ typedef struct {
 int fr_artifact(const char *url, const char *sha256_hex, const fr_http_header *headers,
                 size_t header_count, fr_artifact_result *out, fr_error *err);
 
+typedef struct {
+    char path[1024];
+    char sha256[65];
+} fr_pin_result;
+
+/* Fetches an UNPINNED file and reports the digest it computed on the way, so a
+   resolver can emit a pin for bytes nothing had a pin for. It is the one
+   acquisition in daukle that does not verify, which is why its caller is gated
+   to an explicit resolve run: see fr_lua_verbs_set_resolving. D-77.
+   @implNote it lands the file under the same <artifacts>/<digest>/<name> key
+   fr_artifact reads, so the pinned fetch that follows a resolve is a cache hit
+   rather than a second download of the same bytes. There is no was_cached: the
+   key is not known until the bytes are, so the probe fr_artifact makes before
+   fetching has nothing to probe with. */
+int fr_artifact_pin(const char *url, const fr_http_header *headers, size_t header_count,
+                    fr_pin_result *out, fr_error *err);
+
 #endif

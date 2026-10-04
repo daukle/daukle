@@ -819,6 +819,7 @@ int main(int argc, char **argv) {
     fr_derived_set_notice_sink(print_notice);
     fr_lua_set_limits(options.instruction_limit, options.memory_limit);
     fr_lua_verbs_set_verbose(options.verbose);
+    fr_lua_verbs_set_resolving(options.resolving);
 
     switch (options.command) {
         case FR_CLI_VERSION:

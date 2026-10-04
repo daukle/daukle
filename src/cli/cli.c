@@ -39,6 +39,7 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
     out->manifest_path = NULL;
     out->use_cache = 1;
     out->verbose = 0;
+    out->resolving = 0;
     out->instruction_limit = 0;
     out->memory_limit = 0;
     out->add_spec = NULL;
@@ -68,6 +69,8 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
             return;
         } else if (strcmp(argument, "--verbose") == 0) {
             out->verbose = 1;
+        } else if (strcmp(argument, "--resolve") == 0) {
+            out->resolving = 1;
         } else if (strcmp(argument, "--to") == 0 && has_value_argument(index, argc, argv)) {
             out->add_consumer = argv[++index];
         } else if (strcmp(argument, "--modules") == 0 && has_value_argument(index, argc, argv)) {
@@ -273,6 +276,8 @@ void fr_cli_print_usage(FILE *out) {
     fprintf(out, "\noptions:\n");
     print_row(out, "--verbose", "say what is being done", width);
     print_row(out, "--no-cache, on every command but plugin update", "refetch rather than reuse",
+              width);
+    print_row(out, "--resolve", "allow a task to fetch an unpinned url and report its digest",
               width);
     fprintf(out, "\n\"daukle help <command>\" prints what one command does.\n");
 }

@@ -34,7 +34,7 @@ static const char *BASE[] = {
 
 static const char *KNOWN_VERBS[] = {
     "fetch", "read", "cache", "env", "region", "json_set", "json_parse", "parse", "exec", "tool",
-    "provision", "artifact", "write", "publish"
+    "provision", "artifact", "write", "pin", "publish"
 };
 
 /* daukle.publish is spec section 10's next reserved name: a fourth table and
@@ -415,6 +415,12 @@ void fr_lua_verbs_set_verbose(int enabled) {
     g_verbose = enabled;
 }
 
+static int g_resolving;
+
+void fr_lua_verbs_set_resolving(int enabled) {
+    g_resolving = enabled;
+}
+
 /* Reads the "as" field of the options table at table_index without honoring
    a metatable, for the same reason raw_getfield in config_lua.c does:
    __index is a base global reachable in this sandbox. The value stays on the
@@ -734,6 +740,80 @@ static int verb_artifact(lua_State *state) {
     fr_toolreport_artifact(label, url, digest, result.was_cached);
 
     lua_pushstring(state, result.path);
+    return 1;
+}
+
+/* daukle.pin takes no sha256 and the message says so rather than listing the
+   fields, because offering one is a misunderstanding of what the verb is for
+   and the list alone would not correct it. */
+static int refuse_an_unknown_pin_field(lua_State *state) {
+    lua_pushnil(state);
+    while (lua_next(state, 1) != 0) {
+        if (lua_type(state, -2) != LUA_TSTRING) {
+            return luaL_error(state, "daukle.pin takes named fields only");
+        }
+        const char *key = lua_tostring(state, -2);
+        if (strcmp(key, "sha256") == 0) {
+            return luaL_error(state, "daukle.pin does not take \"sha256\": the digest is"
+                                     " what it returns. Use daukle.artifact for bytes you"
+                                     " already have a pin for");
+        }
+        if (strcmp(key, "url") != 0 && strcmp(key, "as") != 0 && strcmp(key, "headers") != 0) {
+            return luaL_error(state, "daukle.pin does not take \"%s\"; it takes url, as"
+                                     " and headers", key);
+        }
+        lua_pop(state, 1);
+    }
+    return 0;
+}
+
+static int verb_pin(lua_State *state) {
+    if (!g_resolving) {
+        return luaL_error(state, "daukle.pin is available only in a resolve run: pass --resolve."
+                                 " An ordinary build fetches nothing it has no sha256 for");
+    }
+    if (fr_lua_generation_is_running()) {
+        return luaL_error(state, "daukle.pin is not available while generating; "
+                                 "generation is a pure function of the manifest");
+    }
+    if (fr_lua_plugin_exec_is_refused()) {
+        return luaL_error(state, "daukle.pin is not available while a plugin chunk is"
+                                 " loading; call it from a task or publish callback");
+    }
+    luaL_checktype(state, 1, LUA_TTABLE);
+    refuse_an_unknown_pin_field(state);
+
+    const char *url = provision_field(state, "url");
+    if (url == NULL) return luaL_error(state, "daukle.pin needs a url string");
+
+    const char *label = provision_field(state, "as");
+    if (label == NULL && !lua_isnil(state, -1)) {
+        return luaL_error(state, "daukle.pin field \"as\" must be a string");
+    }
+    if (label != NULL && !fr_toolreport_label_is_safe(label)) {
+        return luaL_error(state, "daukle.pin field \"as\" may not hold a control"
+                                 " character");
+    }
+
+    fr_http_header headers[FR_PROVISION_MAX_HEADERS];
+    memset(headers, 0, sizeof headers);
+    size_t header_count = read_provision_headers(state, headers);
+
+    fr_pin_result result;
+    fr_error err;
+    int fetched = fr_artifact_pin(url, header_count > 0 ? headers : NULL, header_count, &result,
+                                  &err);
+    free_provision_headers(headers, header_count);
+    if (fetched != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    fr_toolreport_artifact(label, url, result.sha256, 0);
+
+    lua_newtable(state);
+    lua_pushstring(state, result.path);
+    lua_setfield(state, -2, "path");
+    lua_pushstring(state, result.sha256);
+    lua_setfield(state, -2, "sha256");
     return 1;
 }
 
@@ -1213,6 +1293,8 @@ static void install_one(lua_State *state, const char *name) {
         lua_pushcfunction(state, verb_exec);
     } else if (strcmp(name, "write") == 0) {
         lua_pushcfunction(state, verb_write);
+    } else if (strcmp(name, "pin") == 0) {
+        lua_pushcfunction(state, verb_pin);
     } else if (fr_lua_verbs_is_reserved(name)) {
         lua_pushcfunction(state, reserved_verb);
     } else {

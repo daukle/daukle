@@ -2023,6 +2023,103 @@ TEST artifact_is_not_installed_without_being_declared(void) {
     PASS();
 }
 
+static lua_State *begin_pin_env(fr_registry *registry, int *out_env) {
+    fr_error err;
+    if (fr_lua_runtime_begin(".", registry, &err) != FR_OK) return NULL;
+    lua_State *state = fr_lua_runtime_state();
+    const char *verbs[] = { "pin" };
+    if (fr_lua_verbs_push_env(state, verbs, 1, &err) != FR_OK) return NULL;
+    *out_env = lua_gettop(state);
+    return state;
+}
+
+/* The gate IS the feature. Everything daukle acquires is pinned, and this is
+   the one verb that fetches bytes nothing has a pin for, so it must be
+   unreachable unless the command line asked for it. The url is unreachable on
+   purpose: a refusal that only fires after a request is a refusal that has
+   already done the thing. D-77. */
+TEST pin_is_refused_outside_a_resolve_run(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_pin_env(registry, &env);
+
+    fr_lua_verbs_set_resolving(0);
+    fr_error err;
+    err.message[0] = '\0';
+    int refused = state != NULL
+        && fr_lua_run_in_env(state, "daukle.pin{ url = '" ARTIFACT_URL "' }", "=t", env, &err)
+           == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    /* The message names the flag, because a user who reads "not available"
+       alone has nowhere to go. */
+    ASSERTm(message, strstr(message, "--resolve") != NULL);
+    PASS();
+}
+
+/* Offering a sha256 to the verb whose whole job is to compute one is a
+   misunderstanding rather than a typo, so the message corrects it and names
+   the verb to use instead. */
+TEST pin_refuses_a_sha256_and_says_where_to_take_it(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_pin_env(registry, &env);
+
+    fr_lua_verbs_set_resolving(1);
+    fr_error err;
+    err.message[0] = '\0';
+    int refused = state != NULL
+        && fr_lua_run_in_env(state,
+               "daukle.pin{ url = '" ARTIFACT_URL "', sha256 = '" ARTIFACT_PIN "' }",
+               "=t", env, &err) == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+    fr_lua_verbs_set_resolving(0);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "sha256") != NULL);
+    ASSERTm(message, strstr(message, "daukle.artifact") != NULL);
+    PASS();
+}
+
+/* A plugin that did not declare the capability does not get it. This matters
+   more for pin than for its siblings: uses is where a reader sees that a
+   plugin may fetch something unpinned at all, which is the argument for the
+   resolver being its own plugin rather than a library daukle/java requires. */
+TEST pin_is_not_installed_without_being_declared(void) {
+    static char message[512];
+    fr_registry *registry = fr_registry_create();
+    int env = 0;
+    lua_State *state = begin_artifact_env(registry, &env);
+
+    fr_lua_verbs_set_resolving(1);
+    fr_error err;
+    err.message[0] = '\0';
+    int refused = state != NULL
+        && fr_lua_run_in_env(state, "daukle.pin{ url = '" ARTIFACT_URL "' }", "=t", env, &err)
+           == FR_ERR;
+    snprintf(message, sizeof message, "%s", err.message);
+    fr_lua_verbs_set_resolving(0);
+
+    if (state != NULL) lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "pin") != NULL);
+    PASS();
+}
+
 /* root:dir names a directory, which nothing could before: the only route to a
    classpath entry was to name a file inside the tree and strip the member off
    the returned string, which is separator dependent. */
@@ -2621,6 +2718,9 @@ int main(int argc, char **argv) {
     RUN_TEST(provision_is_refused_while_generating);
     RUN_TEST(an_artifact_names_a_pinned_file_it_did_not_unpack);
     RUN_TEST(artifact_refuses_a_missing_sha256);
+    RUN_TEST(pin_is_refused_outside_a_resolve_run);
+    RUN_TEST(pin_refuses_a_sha256_and_says_where_to_take_it);
+    RUN_TEST(pin_is_not_installed_without_being_declared);
     RUN_TEST(artifact_refuses_an_unknown_key_by_name);
     RUN_TEST(artifact_is_not_installed_without_being_declared);
     RUN_TEST(a_root_dir_names_a_directory);

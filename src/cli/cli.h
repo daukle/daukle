@@ -28,6 +28,10 @@ typedef struct {
     const char *manifest_path;
     int use_cache;
     int verbose;
+    /* --resolve, which opens daukle.pin for the run. It is a flag rather than
+       a command because what resolves is a plugin's task, and core does not
+       know which task that is. D-77. */
+    int resolving;
     long instruction_limit;
     size_t memory_limit;
     /* Raw "project@range" text; fr_cli_parse only checks for the '@' and leaves
