@@ -100,7 +100,7 @@ would actually hurt.
 
 ## How this was verified
 
-`test/probe.sh` runs fourteen checks against the **real published release** inside a bare
+`test/probe.sh` runs fifteen checks against the **real published release** inside a bare
 `ubuntu:24.04`:
 
 ```
@@ -126,12 +126,11 @@ natively.
 - **Three cells, not six.** `linux/x86_64`, `macos/aarch64` and `windows/x86_64` are published.
   `linux/aarch64`, `macos/x86_64` and `windows/aarch64` are not, and the wrapper refuses them by
   name. Hosted runners cover the three that exist.
-- **Two of the three published cells are unexercised on aarch64 Linux and Windows, and those two
-  do not exist.** `macos/aarch64` IS exercised, as of 2026-10-04: `daukle/examples`'
-  `wrapper-bootstrap` runs this wrapper on `macos-latest`, which is arm64, so `Darwin`, the
-  `shasum -a 256` fallback and the arm64 asset all run on every CI pass of that repository.
-  `linux/aarch64` and `windows/aarch64` are not published at all and the wrapper refuses them by
-  name.
+- **Every published cell is now exercised**, as of 2026-10-04, which was not true when this
+  file was written. `daukle/examples`' `wrapper-bootstrap` runs the wrapper on all three
+  runners, and `macos-latest` is arm64, so `Darwin`, the `shasum -a 256` fallback and an
+  aarch64 asset are covered. What remains unexercised is the two cells that **do not exist**,
+  `linux/aarch64` and `windows/aarch64`, and there the only behaviour is the refusal.
 - **No proxy, no mirror, no private release.** The URL is hardcoded to this repository's releases
   and there is no override, because an override is a second place a pin can be defeated.
 - **It does not upgrade itself.** Nothing here checks whether a newer daukle exists; the pinned
