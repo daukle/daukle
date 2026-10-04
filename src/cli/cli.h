@@ -2,7 +2,11 @@
 #define DAUKLE_CLI_H
 
 #include <stddef.h>
+#include <stdio.h>
 
+/* FR_CLI_USAGE must stay LAST. It is the only member no word reaches, so the
+   documentation table covers every value below it, and test_cli walks the range
+   to prove a new command cannot be added without a help entry. */
 typedef enum {
     FR_CLI_SYNC,
     FR_CLI_CHECK,
@@ -14,6 +18,7 @@ typedef enum {
     FR_CLI_TASK,
     FR_CLI_TASKS,
     FR_CLI_PUBLISH,
+    FR_CLI_HELP,
     FR_CLI_USAGE
 } fr_cli_command;
 
@@ -45,14 +50,40 @@ typedef struct {
     const char *task_name;
     /* The destination "daukle publish" names, or NULL for every declared one. */
     const char *publish_name;
+    /* The command "daukle help" was asked about, or NULL for the whole list. */
+    const char *help_topic;
+    /* The word "help" was given that names no command, so the caller can say
+       which one rather than print the list as though nothing was asked. */
+    const char *help_unknown_topic;
 } fr_cli_options;
 
 void fr_cli_parse(int argc, char **argv, fr_cli_options *out);
 
-/* The usage line, here rather than in main.c so the one claim it makes that
+/* One row of the help, and the only place a command is described. The short
+   usage and `daukle help <command>` are both rendered from this table, so help
+   that disagrees with itself is not expressible. */
+typedef struct {
+    fr_cli_command command;
+    /* The word a user types, or NULL for the two that no word names: a task is
+       spelled as whatever the plugins declared, and --version is a flag. */
+    const char *name;
+    const char *synopsis;
+    const char *summary;
+    /* NULL where the summary says everything there is to say. */
+    const char *detail;
+} fr_cli_command_doc;
+
+const fr_cli_command_doc *fr_cli_command_docs(size_t *count);
+const fr_cli_command_doc *fr_cli_find_command_doc(const char *name);
+
+/* The short usage, here rather than in main.c so the one claim it makes that
    the parser can contradict is testable: --no-cache is refused by
    `plugin update` and accepted everywhere else, and main.c has no test
    binary to pin that against. */
-const char *fr_cli_usage(void);
+void fr_cli_print_usage(FILE *out);
+
+/* The detail for one command. Returns 0 when no command goes by that name,
+   having printed nothing. */
+int fr_cli_print_help(FILE *out, const char *name);
 
 #endif

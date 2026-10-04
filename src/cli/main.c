@@ -791,6 +791,13 @@ int main(int argc, char **argv) {
             return list_tasks(options.use_cache, options.verbose);
         case FR_CLI_PUBLISH:
             return run_publish(options.publish_name, options.use_cache, options.verbose);
+        case FR_CLI_HELP:
+            if (options.help_topic != NULL) {
+                fr_cli_print_help(stdout, options.help_topic);
+            } else {
+                fr_cli_print_usage(stdout);
+            }
+            return 0;
         case FR_CLI_USAGE:
             break;
     }
@@ -807,6 +814,11 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    fprintf(stderr, "%s", fr_cli_usage());
+    if (options.help_unknown_topic != NULL) {
+        fprintf(stderr, "daukle: no command is called \"%s\"\n", options.help_unknown_topic);
+        return 2;
+    }
+
+    fr_cli_print_usage(stderr);
     return 2;
 }
