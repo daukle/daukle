@@ -112,6 +112,11 @@ checks that delete `curl` and `wget` run LAST: `apt-get` will not restore a bina
 deleted rather than uninstalled, and an earlier removal silently starves every later check, which
 cost one confusing run.
 
+**A consumer exercises it on every platform.** `daukle/examples`' `wrapper-bootstrap` is a
+project that owns no daukle: its harness runs it through this wrapper on all three runners,
+byte compares its copy of these scripts against the pair here, and fails if the version the
+wrapper fetched is not the one pinned. That is where the macOS branch runs.
+
 Run by hand beyond that script: the `wget` fallback and `busybox ash` on `alpine:3.21`, and both
 PowerShell paths on Windows, where the pin refusal and the exit-code propagation were checked
 natively.
@@ -121,9 +126,12 @@ natively.
 - **Three cells, not six.** `linux/x86_64`, `macos/aarch64` and `windows/x86_64` are published.
   `linux/aarch64`, `macos/x86_64` and `windows/aarch64` are not, and the wrapper refuses them by
   name. Hosted runners cover the three that exist.
-- **aarch64 is unexercised.** Every run behind this file was x86_64 Linux, x86_64 Windows, or a
-  container on one of them. The macOS cell is published and the wrapper's macOS branch
-  (`shasum -a 256`, `Darwin`) has never been executed.
+- **Two of the three published cells are unexercised on aarch64 Linux and Windows, and those two
+  do not exist.** `macos/aarch64` IS exercised, as of 2026-10-04: `daukle/examples`'
+  `wrapper-bootstrap` runs this wrapper on `macos-latest`, which is arm64, so `Darwin`, the
+  `shasum -a 256` fallback and the arm64 asset all run on every CI pass of that repository.
+  `linux/aarch64` and `windows/aarch64` are not published at all and the wrapper refuses them by
+  name.
 - **No proxy, no mirror, no private release.** The URL is hardcoded to this repository's releases
   and there is no override, because an override is a second place a pin can be defeated.
 - **It does not upgrade itself.** Nothing here checks whether a newer daukle exists; the pinned
