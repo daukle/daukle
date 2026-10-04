@@ -116,6 +116,12 @@ endif()
 # A rate limit is a property of the runner's shared address and says nothing
 # about the pin, so it is the third answer rather than a red. Everything else
 # the forge says, 404 included, is about this repository and is a failure.
+#
+# This fires in practice: macos-latest skipped here on 2026-10-04 and passed on
+# a rerun ten minutes later, which is what a shared unauthenticated address
+# looks like. So this check is the early warning and NOT the guarantee. The
+# guarantee is that a release generates the pin rather than trusting it, and a
+# run that skipped is caught by the next one.
 if(HTTP_CODE STREQUAL "403" OR HTTP_CODE STREQUAL "429")
     message(STATUS "check_wrapper_pin: skipped, ${API} answered ${HTTP_CODE}, which is its rate limit")
     cmake_language(EXIT ${SKIP_EXIT})
