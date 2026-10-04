@@ -2023,6 +2023,41 @@ TEST artifact_is_not_installed_without_being_declared(void) {
     PASS();
 }
 
+
+/* The committed write is the one way a plugin may put a file where git will
+   see it, so the gate matters as much as daukle.pin's and is the same gate. */
+TEST a_committed_write_is_refused_outside_a_resolve_run(void) {
+    static char message[512];
+    char directory[] = "build-test-write-committed";
+    fr_cache_make_directories(directory);
+
+    fr_lua_verbs_set_resolving(0);
+    int refused = run_write_chunk("daukle.write{ path = 'pins.lua', text = 'x',"
+                                  " committed = true }", directory, message, sizeof message)
+                  == FR_ERR;
+    fr_test_remove_tree(directory);
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "--resolve") != NULL);
+    PASS();
+}
+
+/* An ordinary write keeps working with the gate shut, which is the pair: the
+   refusal must be about the committed flag and not about the verb. */
+TEST an_ordinary_write_is_unaffected_by_the_resolve_gate(void) {
+    static char message[512];
+    char directory[] = "build-test-write-ordinary";
+    fr_cache_make_directories(directory);
+
+    fr_lua_verbs_set_resolving(0);
+    int wrote = run_write_chunk("daukle.write{ path = 'plain.txt', text = 'x' }", directory,
+                                message, sizeof message) == FR_OK;
+    fr_test_remove_tree(directory);
+
+    ASSERTm(message, wrote);
+    PASS();
+}
+
 static lua_State *begin_pin_env(fr_registry *registry, int *out_env) {
     fr_error err;
     if (fr_lua_runtime_begin(".", registry, &err) != FR_OK) return NULL;
@@ -2718,6 +2753,8 @@ int main(int argc, char **argv) {
     RUN_TEST(provision_is_refused_while_generating);
     RUN_TEST(an_artifact_names_a_pinned_file_it_did_not_unpack);
     RUN_TEST(artifact_refuses_a_missing_sha256);
+    RUN_TEST(a_committed_write_is_refused_outside_a_resolve_run);
+    RUN_TEST(an_ordinary_write_is_unaffected_by_the_resolve_gate);
     RUN_TEST(pin_is_refused_outside_a_resolve_run);
     RUN_TEST(pin_refuses_a_sha256_and_says_where_to_take_it);
     RUN_TEST(pin_is_not_installed_without_being_declared);

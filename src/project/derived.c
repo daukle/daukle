@@ -31,6 +31,7 @@
    fr_derived_root's filesystem path and fr_derived_dir_relative's sandbox-
    relative path cannot drift apart. */
 #define FR_DERIVED_ROOT_NAME "build/daukle"
+#define FR_GENERATED_ROOT_NAME "daukle"
 
 typedef struct {
     char *path;
@@ -403,6 +404,23 @@ int fr_derived_dir_relative(const char *toolchain, char **out_dir, fr_error *err
         return FR_ERR;
     }
     snprintf(path, length, "%s/%s", FR_DERIVED_ROOT_NAME, toolchain);
+
+    *out_dir = path;
+    return FR_OK;
+}
+
+int fr_generated_dir_relative(const char *toolchain, char **out_dir, fr_error *err) {
+    *out_dir = NULL;
+    if (validate_toolchain_name(toolchain, err) != FR_OK) return FR_ERR;
+
+    size_t length = strlen(FR_GENERATED_ROOT_NAME) + 1 + strlen(toolchain) + 1;
+    char *path = malloc(length);
+    if (path == NULL) {
+        fr_error_set(err, "out of memory building the generated directory for \"%s\"",
+                     toolchain);
+        return FR_ERR;
+    }
+    snprintf(path, length, "%s/%s", FR_GENERATED_ROOT_NAME, toolchain);
 
     *out_dir = path;
     return FR_OK;

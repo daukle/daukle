@@ -52,6 +52,9 @@ typedef struct {
        this is what fr_lua_task_cwd publishes for daukle.exec's cwd default,
        and daukle.exec's cwd is always resolved relative to that same base. */
     const char *derived_dir_relative;
+    /* The COMMITTED counterpart, "daukle/<toolchain>", for what a resolve
+       produces and a clone must carry. See fr_generated_dir_relative. */
+    const char *generated_dir_relative;
     const fr_resolved *resolved;
     size_t resolved_count;
 } fr_task_run_context;

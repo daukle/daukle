@@ -180,6 +180,27 @@ int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_pa
     return resolve_under_base(state, relative, 0, out_path, err);
 }
 
+int fr_lua_sandbox_base_dir(lua_State *state, char **out, fr_error *err) {
+    *out = NULL;
+    lua_getfield(state, LUA_REGISTRYINDEX, FR_SANDBOX_BASE_DIR);
+    const char *base = lua_tostring(state, -1);
+    if (base == NULL) {
+        lua_pop(state, 1);
+        fr_error_set(err, "the sandbox has no base directory");
+        return FR_ERR;
+    }
+    size_t length = strlen(base) + 1;
+    char *copy = malloc(length);
+    if (copy != NULL) memcpy(copy, base, length);
+    lua_pop(state, 1);
+    if (copy == NULL) {
+        fr_error_set(err, "out of memory reading the sandbox base directory");
+        return FR_ERR;
+    }
+    *out = copy;
+    return FR_OK;
+}
+
 int fr_lua_sandbox_resolve_dir(lua_State *state, const char *relative, char **out_path,
                                fr_error *err) {
     return resolve_under_base(state, relative, 1, out_path, err);

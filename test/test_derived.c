@@ -836,6 +836,44 @@ TEST clean_removes_a_nested_link_without_following_it(void) {
 
 GREATEST_MAIN_DEFS();
 
+
+/* The committed directory is a sibling of the derived one and must never be
+   inside it: a daukle clean deletes build/daukle entirely, so a pins file
+   that landed there would vanish on a clean and a clone would not build. */
+TEST the_generated_directory_is_not_inside_the_derived_one(void) {
+    static char message[512];
+    char *generated = NULL;
+    char *derived = NULL;
+    fr_error err;
+    int built = fr_generated_dir_relative("maven", &generated, &err);
+    int built_derived = fr_derived_dir_relative("maven", &derived, &err);
+
+    snprintf(message, sizeof message, "generated \"%s\", derived \"%s\"",
+             generated != NULL ? generated : "", derived != NULL ? derived : "");
+    int nested = generated != NULL && derived != NULL
+                 && strstr(generated, "build") != NULL;
+    free(generated);
+    free(derived);
+
+    ASSERT_EQm(message, FR_OK, built);
+    ASSERT_EQm(message, FR_OK, built_derived);
+    ASSERT_EQm(message, 0, nested);
+    PASS();
+}
+
+/* A toolchain name is a directory name here as much as it is for the derived
+   directory, so the same refusal applies rather than a second, weaker one. */
+TEST the_generated_directory_refuses_a_toolchain_that_climbs_out(void) {
+    char *path = NULL;
+    fr_error err;
+    err.message[0] = '\0';
+    int refused = fr_generated_dir_relative("../escape", &path, &err) == FR_ERR;
+    free(path);
+    ASSERT(refused);
+    ASSERTm(err.message, strstr(err.message, "directory name") != NULL);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_generated_file_is_written_into_the_derived_directory);
@@ -867,5 +905,7 @@ int main(int argc, char **argv) {
     RUN_TEST(clean_refuses_when_the_derived_root_escapes_through_a_link);
     RUN_TEST(clean_refuses_when_the_derived_root_is_a_link_inside_the_project);
     RUN_TEST(clean_removes_a_nested_link_without_following_it);
+    RUN_TEST(the_generated_directory_is_not_inside_the_derived_one);
+    RUN_TEST(the_generated_directory_refuses_a_toolchain_that_climbs_out);
     GREATEST_MAIN_END();
 }

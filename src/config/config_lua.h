@@ -97,6 +97,12 @@ int fr_lua_resolver_call(const char *coordinate, const struct cJSON *block, char
 const char *fr_lua_task_cwd(void);
 void fr_lua_set_task_cwd(const char *directory);
 
+/* The committed generated directory for the running task, or NULL outside
+   one. Separate from the task cwd because a tool's cwd must stay the derived
+   directory: only daukle.write{ committed = true } looks here. */
+const char *fr_lua_task_generated_dir(void);
+void fr_lua_set_task_generated_dir(const char *directory);
+
 /* Sets language, source, toolchain, task, resolver and plugin on the table on
    top of the stack, for lua_verbs.c to build a plugin environment around; the
    underlying functions are file statics here, so this is their only way out. */

@@ -244,6 +244,16 @@ const char *fr_lua_task_cwd(void) {
     return task_cwd;
 }
 
+static const char *task_generated_dir;
+
+const char *fr_lua_task_generated_dir(void) {
+    return task_generated_dir;
+}
+
+void fr_lua_set_task_generated_dir(const char *directory) {
+    task_generated_dir = directory;
+}
+
 void fr_lua_set_task_cwd(const char *directory) {
     task_cwd = directory;
 }
@@ -569,8 +579,10 @@ int fr_lua_dispatch_task_run(void *state, const fr_task_run_context *context, fr
         (const char *const *) ((const fr_lua_plugin_slot *) state)->env,
         ((const fr_lua_plugin_slot *) state)->env_count);
     fr_lua_set_task_cwd(context->derived_dir_relative);
+    fr_lua_set_task_generated_dir(context->generated_dir_relative);
     lua_pushcfunction(fr_lua_runtime_state(), protected_task_run);
     int status = lua_pcall(fr_lua_runtime_state(), 0, 0, 0);
+    fr_lua_set_task_generated_dir(NULL);
     fr_lua_set_task_cwd(NULL);
     task_context = NULL;
     fr_lua_verbs_set_declared_env(NULL, 0);

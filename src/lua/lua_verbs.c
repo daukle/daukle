@@ -1229,17 +1229,53 @@ static int verb_write(lua_State *state) {
         return luaL_error(state, "daukle.write needs a \"text\" string");
     }
 
-    const char *directory = fr_lua_task_cwd();
+    lua_getfield(state, 1, "committed");
+    int committed = lua_toboolean(state, -1);
+    if (!lua_isnil(state, -1) && !lua_isboolean(state, -1)) {
+        return luaL_error(state, "daukle.write's \"committed\" must be true or false");
+    }
+    lua_pop(state, 1);
+
+    /* A committed file is one a clone must carry, so writing one is part of
+       resolving rather than of building: an ordinary build must not modify a
+       tracked file behind the user's back. Same gate as daukle.pin, and for
+       the same reason, which is why it names the same flag. D-85. */
+    if (committed && !g_resolving) {
+        return luaL_error(state, "daukle.write{ committed = true } is available only in a resolve"
+                                 " run: pass --resolve. An ordinary build does not rewrite a file"
+                                 " the project has committed");
+    }
+
+    const char *directory = committed ? fr_lua_task_generated_dir() : fr_lua_task_cwd();
     if (directory == NULL) {
-        return luaL_error(state, "daukle.write has no derived directory to write into");
+        return luaL_error(state, "daukle.write has no %s directory to write into",
+                          committed ? "generated" : "derived");
+    }
+
+    fr_error err;
+    char *resolved = NULL;
+    if (committed) {
+        /* The generated directory is created here rather than at sync, because
+           a project that never resolves should never grow one. Resolving a
+           path canonicalises it, which fails on a directory that is not there
+           yet, so it is made first and the containment check still runs. */
+        char *base = NULL;
+        if (fr_lua_sandbox_base_dir(state, &base, &err) != FR_OK) {
+            return luaL_error(state, "%s", err.message);
+        }
+        char tree[512];
+        int built = snprintf(tree, sizeof tree, "%s/%s", base, directory);
+        free(base);
+        if (built < 0 || (size_t) built >= sizeof tree) {
+            return luaL_error(state, "the generated directory path is too long");
+        }
+        fr_cache_make_directories(tree);
     }
 
     /* The task cwd is relative to the project root while the tool this file is
        written for runs WITH the derived directory as its cwd, so a relative
        answer would be wrong for the one caller it exists for. Resolving the
        directory also re-checks that it is still inside the project. */
-    fr_error err;
-    char *resolved = NULL;
     if (fr_lua_sandbox_resolve_dir(state, directory, &resolved, &err) != FR_OK) {
         return luaL_error(state, "%s", err.message);
     }

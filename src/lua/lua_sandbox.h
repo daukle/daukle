@@ -22,6 +22,12 @@ int fr_lua_sandbox_install(lua_State *state, const char *base_dir, char **out_ca
    caller owns *out. */
 int fr_lua_sandbox_canonical_dir(const char *path, char **out, fr_error *err);
 
+/* A copy of the canonical base this state resolves against, for the one
+   caller that must CREATE a directory before it can be resolved: every
+   resolve canonicalises, and canonicalising a path that does not exist yet
+   fails. The caller frees it. */
+int fr_lua_sandbox_base_dir(lua_State *state, char **out, fr_error *err);
+
 /* Resolves relative against the base directory recorded at install time and
    fails if the result escapes it. The caller owns *out_path. */
 int fr_lua_sandbox_resolve(lua_State *state, const char *relative, char **out_path, fr_error *err);

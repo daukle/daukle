@@ -27,6 +27,19 @@ int fr_derived_dir(const char *manifest_dir, const char *toolchain, char **out_d
    this form instead of fr_derived_dir's. */
 int fr_derived_dir_relative(const char *toolchain, char **out_dir, fr_error *err);
 
+/* "daukle/<toolchain>", relative to the manifest directory, and the COMMITTED
+   counterpart of fr_derived_dir_relative.
+   @implNote daukle writes two kinds of file and they have opposite lifetimes.
+   build/daukle/ holds what a tool produces on the way to an artifact: it is
+   rebuilt from nothing, it is gitignored, and daukle clean deletes it. This
+   holds what a RESOLVE produced: pins a project must carry in its history,
+   because an ordinary build may not fetch anything unpinned and a fresh clone
+   has to build offline. Putting both in one directory would mean either
+   committing build output or losing the pins on a clean.
+   It is not the project root for the rule that keeps the root habitable: a
+   file the user is not meant to edit does not sit where the user works. */
+int fr_generated_dir_relative(const char *toolchain, char **out_dir, fr_error *err);
+
 /* Creates derived_root, if needed, and writes "*\n" to
    <derived_root>/.gitignore when that file is absent, never overwriting one
    that exists: a user who edited it had a reason. Not called by
