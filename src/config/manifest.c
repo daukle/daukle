@@ -11,7 +11,6 @@
 #include <string.h>
 #include <stdio.h>
 
-#define FR_SCHEMA 1
 
 static char *duplicate(const char *text) {
     if (text == NULL) return NULL;

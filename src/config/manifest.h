@@ -3,6 +3,10 @@
 
 #include "util/types.h"
 
+/* The only manifest schema this daukle reads, and the one "daukle init"
+   writes. Shared so that init cannot scaffold a file the parser refuses. */
+#define FR_SCHEMA 1
+
 int fr_project_parse(const char *text, const char *origin, fr_project *out, fr_error *err);
 /* Takes ownership of root on both paths: the manifest holds it on success and
    it is deleted here on failure, so no caller ever frees root itself. */
