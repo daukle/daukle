@@ -29,6 +29,17 @@ the host's shell already does. The pin is a line of text a reviewer can read.
 **An upgrade is a one-file diff.** The version and the digests live in `.daukle/wrapper.toml` and
 nowhere else, so bumping daukle never touches a script.
 
+**The canonical pin is written by a release, not by a person** (`D-67`). Digests exist for the
+first time in the release job, once every cell has uploaded, so `cmake/write_wrapper_pin.cmake`
+runs there and the result is published as the `wrapper.toml` asset beside `daukle` and
+`daukle.ps1`. The copy in this directory is held to the latest published release by the ctest entry
+`wrapper_pin_matches_release`, which asks the forge rather than reading a local file.
+
+That is what makes a stale pin fail. Before it, nothing did: the probe tests whatever the pin says
+and `daukle/examples` pinned the same version, so a forgotten bump stayed green everywhere. The
+host-to-asset mapping is still hand written, because nothing in `daukle-macos-arm64` says it serves
+`macos/aarch64`, and an asset no mapping names now refuses the release.
+
 ## This does not break the no-files-at-the-root rule
 
 daukle's hardest constraint is that it writes no generated files to a project root, and a
@@ -134,4 +145,7 @@ natively.
 - **No proxy, no mirror, no private release.** The URL is hardcoded to this repository's releases
   and there is no override, because an override is a second place a pin can be defeated.
 - **It does not upgrade itself.** Nothing here checks whether a newer daukle exists; the pinned
-  version is the version, until a person edits the pin.
+  version is the version, until a person edits the pin. That is a refusal rather than a gap: an
+  auto-updating wrapper would make daukle's own bootstrap the one unpinned thing in a system where
+  every other acquisition carries a sha256. An explicit `wrapper update` is `D-68`, and the release
+  assets it needs exist as of `D-67`.
