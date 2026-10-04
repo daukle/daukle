@@ -1,7 +1,10 @@
 #include "cli/cli.h"
 
+#include "config/manifest.h"
+
 #include <errno.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -46,6 +49,7 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
     out->plugin_update_rejected_option = NULL;
     out->task_name = NULL;
     out->publish_name = NULL;
+    out->init_name = NULL;
     out->help_topic = NULL;
     out->help_unknown_topic = NULL;
 
@@ -124,6 +128,10 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
         if (word_count > 2) return;
         out->command = FR_CLI_PUBLISH;
         if (word_count == 2) out->publish_name = words[1];
+    } else if (strcmp(command, "init") == 0) {
+        if (word_count > 2) return;
+        out->command = FR_CLI_INIT;
+        if (word_count == 2) out->init_name = words[1];
     } else if (strcmp(command, "help") == 0) {
         if (word_count > 2) return;
         out->command = FR_CLI_HELP;
@@ -175,6 +183,13 @@ static const fr_cli_command_doc COMMAND_DOCS[] = {
     { FR_CLI_PUBLISH, "publish", "publish [name]",
       "publish the destinations the manifest declares",
       "Without a name this publishes every declared destination." },
+    { FR_CLI_INIT, "init", "init [name]",
+      "write a starter daukle.toml in this directory",
+      "Refuses to touch an existing daukle.toml. The name defaults to this directory's, and the\n"
+      "manifest it writes declares no plugins: what the project builds with is the next edit.\n"
+      "\n"
+      "It does NOT install the wrapper, and cannot: the release URL that would need belongs to\n"
+      "the wrapper scripts, not to daukle. See wrapper/ABOUT.md." },
     { FR_CLI_TASK, NULL, "<task>",
       "run a task by the name `tasks` lists",
       "A task takes no manifest path, because two bare words cannot be told apart from a task\n"
@@ -184,6 +199,31 @@ static const fr_cli_command_doc COMMAND_DOCS[] = {
     { FR_CLI_HELP, "help", "help [command]",
       "print this, or what one command does", NULL },
 };
+
+/* Here rather than in main.c because main.c has no test binary, and the two
+   things that can actually be wrong are which segment is taken and what the
+   manifest says. Both separators are looked for: a Windows working directory
+   uses backslashes and a POSIX shell on Windows hands back forward ones. */
+const char *fr_cli_last_path_segment(const char *path) {
+    if (path == NULL) return NULL;
+    const char *name = path;
+    for (const char *scan = path; *scan != '\0'; scan++) {
+        if (*scan == '/' || *scan == '\\') name = scan + 1;
+    }
+    return *name == '\0' ? NULL : name;
+}
+
+int fr_cli_init_manifest(const char *project, char *out, size_t size) {
+    if (project == NULL || project[0] == '\0') return 0;
+    int written = snprintf(out, size,
+                           "schema = %d\n"
+                           "project = \"%s\"\n"
+                           "version = \"0.1.0\"\n"
+                           "\n"
+                           "[modules]\n",
+                           FR_SCHEMA, project);
+    return written > 0 && (size_t) written < size;
+}
 
 const fr_cli_command_doc *fr_cli_command_docs(size_t *count) {
     *count = sizeof COMMAND_DOCS / sizeof COMMAND_DOCS[0];

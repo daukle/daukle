@@ -18,6 +18,7 @@ typedef enum {
     FR_CLI_TASK,
     FR_CLI_TASKS,
     FR_CLI_PUBLISH,
+    FR_CLI_INIT,
     FR_CLI_HELP,
     FR_CLI_USAGE
 } fr_cli_command;
@@ -50,6 +51,8 @@ typedef struct {
     const char *task_name;
     /* The destination "daukle publish" names, or NULL for every declared one. */
     const char *publish_name;
+    /* The name "daukle init" was given, or NULL to take the directory's. */
+    const char *init_name;
     /* The command "daukle help" was asked about, or NULL for the whole list. */
     const char *help_topic;
     /* The word "help" was given that names no command, so the caller can say
@@ -72,6 +75,14 @@ typedef struct {
     /* NULL where the summary says everything there is to say. */
     const char *detail;
 } fr_cli_command_doc;
+
+/* The last segment of a path, or NULL when there is none. Here rather than in
+   main.c because main.c has no test binary. */
+const char *fr_cli_last_path_segment(const char *path);
+
+/* Renders the manifest "daukle init" writes. Returns 0 when the name is
+   empty or the result would not fit. */
+int fr_cli_init_manifest(const char *project, char *out, size_t size);
 
 const fr_cli_command_doc *fr_cli_command_docs(size_t *count);
 const fr_cli_command_doc *fr_cli_find_command_doc(const char *name);

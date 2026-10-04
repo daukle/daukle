@@ -1,5 +1,6 @@
 #include "greatest.h"
 #include "cli/cli.h"
+#include "config/manifest.h"
 #include "project/tasks.h"
 
 static fr_cli_options parse(int argc, const char **argv) {
@@ -257,6 +258,65 @@ TEST the_usage_names_every_command(void) {
         snprintf(message, sizeof message, "the usage does not name \"%s\"", docs[index].synopsis);
         ASSERTm(message, strstr(usage, docs[index].synopsis) != NULL);
     }
+    PASS();
+}
+
+TEST init_with_no_word_takes_the_directory_name(void) {
+    const char *argv[] = { "daukle", "init" };
+    fr_cli_options options = parse(2, argv);
+    ASSERT_EQ(FR_CLI_INIT, options.command);
+    ASSERT(options.init_name == NULL);
+    PASS();
+}
+
+TEST init_takes_a_name(void) {
+    const char *argv[] = { "daukle", "init", "my-thing" };
+    fr_cli_options options = parse(3, argv);
+    ASSERT_EQ(FR_CLI_INIT, options.command);
+    ASSERT_STR_EQ("my-thing", options.init_name);
+    PASS();
+}
+
+TEST init_takes_no_second_name(void) {
+    const char *argv[] = { "daukle", "init", "one", "two" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(4, argv).command);
+    PASS();
+}
+
+/* Both separators, because a Windows working directory comes back with
+   backslashes and a POSIX shell on the same machine hands back forward ones. */
+TEST the_last_path_segment_is_taken_on_either_separator(void) {
+    ASSERT_STR_EQ("thing", fr_cli_last_path_segment("/home/me/thing"));
+    ASSERT_STR_EQ("thing", fr_cli_last_path_segment("C:\\Users\\me\\thing"));
+    ASSERT_STR_EQ("thing", fr_cli_last_path_segment("C:/Users/me\\thing"));
+    ASSERT_STR_EQ("thing", fr_cli_last_path_segment("thing"));
+    ASSERT(fr_cli_last_path_segment("/home/me/") == NULL);
+    ASSERT(fr_cli_last_path_segment("") == NULL);
+    ASSERT(fr_cli_last_path_segment(NULL) == NULL);
+    PASS();
+}
+
+/* The shape only. That daukle ACCEPTS what init writes is a stronger claim and
+   needs the toml reader, so it is pinned by test_e2e against a real sync.
+   FR_SCHEMA is the parser constant, so the two cannot drift. */
+TEST init_writes_the_schema_the_parser_requires(void) {
+    char text[1024];
+    ASSERT(fr_cli_init_manifest("me/thing", text, sizeof text));
+    ASSERT(strstr(text, "project = \"me/thing\"") != NULL);
+    ASSERT(strstr(text, "[modules]") != NULL);
+
+    char expected_schema[32];
+    snprintf(expected_schema, sizeof expected_schema, "schema = %d", FR_SCHEMA);
+    ASSERT(strstr(text, expected_schema) != NULL);
+    PASS();
+}
+
+TEST init_refuses_a_name_it_cannot_render(void) {
+    char text[1024];
+    ASSERT_FALSE(fr_cli_init_manifest("", text, sizeof text));
+    ASSERT_FALSE(fr_cli_init_manifest(NULL, text, sizeof text));
+    char tiny[8];
+    ASSERT_FALSE(fr_cli_init_manifest("a-name-far-too-long-for-this", tiny, sizeof tiny));
     PASS();
 }
 
@@ -531,6 +591,12 @@ int main(int argc, char **argv) {
     RUN_TEST(every_documented_row_carries_a_synopsis_and_a_summary);
     RUN_TEST(every_documented_command_word_is_reserved);
     RUN_TEST(the_usage_names_every_command);
+    RUN_TEST(init_with_no_word_takes_the_directory_name);
+    RUN_TEST(init_takes_a_name);
+    RUN_TEST(init_takes_no_second_name);
+    RUN_TEST(the_last_path_segment_is_taken_on_either_separator);
+    RUN_TEST(init_writes_the_schema_the_parser_requires);
+    RUN_TEST(init_refuses_a_name_it_cannot_render);
     RUN_TEST(help_with_no_word_is_the_whole_list);
     RUN_TEST(the_help_flag_is_the_help_command);
     RUN_TEST(help_takes_a_command_word);

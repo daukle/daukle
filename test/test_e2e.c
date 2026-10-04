@@ -1,4 +1,5 @@
 #include "greatest.h"
+#include "cli/cli.h"
 #include "net/http.h"
 #include "plugin/plugins.h"
 #include "plugin/registry.h"
@@ -814,12 +815,44 @@ TEST a_required_modules_return_value_reaches_the_registry(void) {
 
 GREATEST_MAIN_DEFS();
 
+
+/* The claim D-70 actually makes: a project scaffolded by `daukle init` is one
+   daukle can sync. Here rather than in test_cli because the manifest is TOML
+   and fr_project_parse reads the JSON the toml reader produces, so only a real
+   sync exercises the path a user takes. */
+TEST a_scaffolded_project_syncs(void) {
+    char root[512];
+    snprintf(root, sizeof root, "%s/daukle_test_init_%d", fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(root);
+    fr_test_make_directory(root);
+
+    char text[1024];
+    ASSERT(fr_cli_init_manifest("me/scaffolded", text, sizeof text));
+
+    char manifest[700];
+    snprintf(manifest, sizeof manifest, "%s/daukle.toml", root);
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_file_write_text(manifest, text, &err));
+
+    fr_sync_report report;
+    int status = fr_sync(manifest, 1, 1, &report, &err);
+    if (status != FR_OK) fprintf(stderr, "a_scaffolded_project_syncs: %s\n", err.message);
+    ASSERT_EQ(FR_OK, status);
+    /* A manifest declaring no plugins has nothing to generate, and a sync that
+       wrote something here would mean init had scaffolded more than it says. */
+    ASSERT_EQ((size_t) 0, report.count);
+    fr_sync_report_free(&report);
+    fr_test_remove_tree(root);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     self_path = argv[0];
     if (argc >= 2 && strcmp(argv[1], "--task-child") == 0) {
         return run_as_task_child(argc >= 3 ? argv[2] : "ran-here.txt");
     }
     GREATEST_MAIN_BEGIN();
+    RUN_TEST(a_scaffolded_project_syncs);
     RUN_TEST(reproduces_both_real_consumers);
     RUN_TEST(the_second_run_changes_nothing);
     RUN_TEST(check_names_every_drifted_consumer);

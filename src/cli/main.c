@@ -23,6 +23,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
+
 static void print_lua_log(const char *message) {
     fprintf(stderr, "daukle: %s\n", message);
 }
@@ -621,6 +627,51 @@ static void confirm_published(const char *goal, void *state) {
     printf("daukle: %s\n", goal);
 }
 
+/* Scaffolding a person runs once, not generation daukle owns, which is why it
+   may write at the project root at all: the no-files-at-the-root rule forbids
+   daukle WRITING generated files there, and this writes the authored file the
+   rule exists to protect. It declares no plugins, because what a project builds
+   with is a decision and an empty [modules] is already a working manifest.
+   D-70. */
+static int run_init(const char *name, int verbose) {
+    const char *path = "daukle.toml";
+    FILE *existing = fopen(path, "rb");
+    if (existing != NULL) {
+        fclose(existing);
+        fprintf(stderr, "daukle: %s already exists, and init will not overwrite it\n", path);
+        return 2;
+    }
+
+    /* The only part of this that is not in cli.c, where test_cli can reach it.
+       Both spellings of the call are the standard one for their platform and
+       neither has a branch of its own. */
+    char cwd[1024];
+#ifdef _WIN32
+    const char *working = _getcwd(cwd, (int) sizeof cwd);
+#else
+    const char *working = getcwd(cwd, sizeof cwd);
+#endif
+
+    const char *project = name != NULL ? name : fr_cli_last_path_segment(working);
+    if (project == NULL || project[0] == '\0') project = "my-project";
+
+    char text[1024];
+    if (!fr_cli_init_manifest(project, text, sizeof text)) {
+        fprintf(stderr, "daukle: the project name is too long to write into %s\n", path);
+        return 1;
+    }
+
+    fr_error err;
+    if (fr_file_write_text(path, text, &err) != FR_OK) {
+        report_error(&err, verbose);
+        return 1;
+    }
+
+    printf("daukle: wrote %s for \"%s\".\n", path, project);
+    printf("daukle: add a plugin under [plugins], then run \"daukle sync\".\n");
+    return 0;
+}
+
 static int run_publish(const char *only, int use_cache, int verbose) {
     fr_error err;
     char *resolved = NULL;
@@ -791,6 +842,8 @@ int main(int argc, char **argv) {
             return list_tasks(options.use_cache, options.verbose);
         case FR_CLI_PUBLISH:
             return run_publish(options.publish_name, options.use_cache, options.verbose);
+        case FR_CLI_INIT:
+            return run_init(options.init_name, options.verbose);
         case FR_CLI_HELP:
             if (options.help_topic != NULL) {
                 fr_cli_print_help(stdout, options.help_topic);
