@@ -15,8 +15,13 @@ jobs:
       # Every one of these builds daukle from source, so their suites are what says whether a
       # change here still satisfies the plugins written against it. Nothing in daukle's own suite
       # covers that: the coverage moved out to these repositories and the report never came back.
+      #
+      # The list is every repository whose own test.yml carries extra_repository: daukle/daukle,
+      # read off the forge rather than remembered. It had drifted to seven while twelve build
+      # daukle, so node, maven, lifecycle, guide and examples sat outside the nightly signal.
       repositories: >-
         ["daukle/java", "daukle/cmake", "daukle/npm", "daukle/c", "daukle/gradle",
-         "daukle/path", "daukle/github"]
+         "daukle/path", "daukle/github", "daukle/node", "daukle/maven",
+         "daukle/lifecycle", "daukle/guide", "daukle/examples"]
     secrets:
       envPAT: ${{ secrets.PAT }}
