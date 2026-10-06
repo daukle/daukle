@@ -50,8 +50,9 @@ jobs:
           },
           {
             "runner": "macos-latest",
+            "configure": "cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES='arm64;x86_64'",
             "binary": "build/daukle",
-            "asset_name": "daukle-macos-arm64"
+            "asset_name": "daukle-macos-universal"
           },
           {
             "runner": "windows-latest",
