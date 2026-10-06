@@ -6,8 +6,8 @@ declare; every ability arrives through a plugin, and a language daukle has never
 plugin rather than a change to core.
 
 A project holds `daukle.toml` and its sources. **No build file, no wrapper properties and nothing
-generated at the project root** — a file you are not supposed to edit does not sit where you will
-find it.
+generated at the project root**, because a file you are not supposed to edit does not sit where you
+will find it.
 
 ## You do not install it
 
