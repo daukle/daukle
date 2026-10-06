@@ -1,0 +1,13 @@
+schema = 1
+project = "daukle/example-local-plugin"
+version = "3.1.4"
+
+[modules]
+
+# A plugin can be a LOCAL PATH while you are writing it. The same plugin is
+# published by giving it a coordinate instead; nothing in the plugin changes.
+[plugins]
+banner = "./plugins/banner.lua"
+
+[toolchains.banner]
+greeting = "good morning"
