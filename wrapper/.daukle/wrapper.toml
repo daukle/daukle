@@ -9,23 +9,23 @@
 # cmake/write_wrapper_pin.cmake once every cell has uploaded, which is the first moment the
 # digests exist, and publishes the result as the wrapper.toml asset. The ctest entry
 # wrapper_pin_matches_release holds this copy to the latest published release.
-version = "0.4.0"
+version = "0.5.0"
 
 # One section per host, keyed as daukle spells it itself (fr_lua_host_os/fr_lua_host_arch). A host
 # with no section is refused by name rather than failing on a 404 at download time, so the two
 # cells this release does not cover say so. Both Mac hosts name ONE universal binary.
 [assets."linux/x86_64"]
 asset = "daukle-linux-x86_64"
-sha256 = "1662ac8d7a927a2f5c15dbe049cdbab21c17feeef4669eef7982fc11f959bf80"
+sha256 = "439903b84830f17fd2dd44de24da195a7dffdb1ec246545b98863fc9d6d09339"
 
 [assets."macos/aarch64"]
 asset = "daukle-macos-universal"
-sha256 = "7dc808f9a1bdce24c4bee199ef204fbe5bef1fbed19a84c549d0af66a409df5c"
+sha256 = "2c65ebf82b2988ac53fa2d5cf070669b9dc0dd70a1d44de4046ea62e60ae90ea"
 
 [assets."macos/x86_64"]
 asset = "daukle-macos-universal"
-sha256 = "7dc808f9a1bdce24c4bee199ef204fbe5bef1fbed19a84c549d0af66a409df5c"
+sha256 = "2c65ebf82b2988ac53fa2d5cf070669b9dc0dd70a1d44de4046ea62e60ae90ea"
 
 [assets."windows/x86_64"]
 asset = "daukle-windows-x86_64.exe"
-sha256 = "e1798bcb9eb7c53d54d6c63a7def9ad9b78b4a58aa94d09907ee90f25d818b30"
+sha256 = "549c2583d415a92f86de0c41f6309eb18f7edc481870000bd9989d56050139ba"
