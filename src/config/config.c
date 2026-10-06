@@ -1,6 +1,7 @@
 #include "config/config.h"
 
 #include "config/manifest.h"
+#include "lua/lua_verbs.h"
 #include "plugin/plugins.h"
 #include "project/region.h"
 #include "util/error.h"
@@ -14,6 +15,15 @@
 static const char *extension_of(const char *file_path) {
     const char *dot = strrchr(file_path, '.');
     return dot == NULL ? "" : dot + 1;
+}
+
+/* The part of a manifest path a chunk can pass back to daukle.read, which
+   resolves against the manifest's DIRECTORY and not the working one. */
+static const char *file_name_of(const char *file_path) {
+    const char *slash = strrchr(file_path, '/');
+    const char *backslash = strrchr(file_path, '\\');
+    const char *last = slash > backslash ? slash : backslash;
+    return last != NULL ? last + 1 : file_path;
 }
 
 static char *directory_of(const char *file_path) {
@@ -144,7 +154,10 @@ int fr_config_load_file(const char *file_path, fr_registry *registry, fr_manifes
     }
 
     /* Unconditional: the plugins table belongs to the root manifest, not to its format. */
-    if (fr_plugins_load(registry, document, directory, err) != FR_OK) {
+    fr_lua_verbs_set_manifest_name(file_name_of(file_path));
+    int loaded = fr_plugins_load(registry, document, directory, err);
+    fr_lua_verbs_set_manifest_name(NULL);
+    if (loaded != FR_OK) {
         cJSON_Delete(document);
         free(directory);
         return FR_ERR;

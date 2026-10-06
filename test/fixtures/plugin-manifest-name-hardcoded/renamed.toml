@@ -1,0 +1,14 @@
+schema = 1
+project = "daukle/manifest-name"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+probe = "./plugin"
+
+[toolchains.probe]
+
+[toolchains.probe.scripts]
+build = "one"
+lint = "two"

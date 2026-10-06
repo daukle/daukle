@@ -16,6 +16,7 @@
 #include "util/sha256.h"
 #include "support.h"
 #include "project/sync.h"
+#include "project/tasks.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -2828,6 +2829,62 @@ TEST an_archive_whose_pin_does_not_match_is_refused_and_discarded(void) {
    opens the runtime first and hands both down. See D-7.
    This pins the mechanism, not main.c's wiring of it, which has no test
    binary. */
+/* The count of probe: tasks a fixture's chunk registered, or -1 when loading
+   the manifest failed at all. */
+static int probe_tasks_of(const char *manifest_path, char *message, size_t size) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, &err) != FR_OK) return -1;
+
+    fr_manifest manifest;
+    if (fr_config_load_file(manifest_path, registry, &manifest, &err) != FR_OK) {
+        snprintf(message, size, "%s", err.message);
+        fr_registry_destroy(registry);
+        fr_lua_runtime_shutdown();
+        return -1;
+    }
+
+    fr_task_set set;
+    int found = -1;
+    if (fr_tasks_collect(registry, &manifest, &set, &err) == FR_OK) {
+        found = 0;
+        for (size_t index = 0; index < set.count; index++) {
+            if (strncmp(set.nodes[index].name, "probe:", 6) == 0) found++;
+        }
+        fr_tasks_set_free(&set);
+    }
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    return found;
+}
+
+/* D-110. The chunk registers one task per scripts entry, which is the whole
+   mechanism; what this pins is that it does so by daukle.manifest and not by a
+   spelling of its own, so the SAME plugin serves a differently named manifest. */
+TEST a_chunk_registers_one_task_per_entry_whatever_the_manifest_is_called(void) {
+    char message[256] = "";
+    ASSERT_EQ(2, probe_tasks_of("test/fixtures/plugin-manifest-name/daukle.toml",
+                                message, sizeof message));
+    /* A SEPARATE directory, holding no daukle.toml at all. Beside one, a chunk
+       spelling the name itself reads that file and passes for the wrong
+       reason, which is how the first version of this test passed a mutant. */
+    ASSERT_EQ(2, probe_tasks_of("test/fixtures/plugin-manifest-renamed/renamed.toml",
+                                message, sizeof message));
+    PASS();
+}
+
+/* The negative control, and the reason daukle.manifest exists: the identical
+   plugin with "daukle.toml" written into it takes the whole project down when
+   the manifest is called anything else. Before D-110 that was every chunk. */
+TEST the_same_plugin_spelling_the_name_itself_fails_on_a_renamed_manifest(void) {
+    char message[256] = "";
+    ASSERT_EQ(-1, probe_tasks_of("test/fixtures/plugin-manifest-name-hardcoded/renamed.toml",
+                                 message, sizeof message));
+    ASSERT(strstr(message, "daukle.toml") != NULL);
+    PASS();
+}
+
 TEST an_overlay_rooted_manifest_yields_its_plugins_table_without_loading_them(void) {
     const char *directory = "test/fixtures/lua-root-plugin";
     const char *manifest = "test/fixtures/lua-root-plugin/daukle.lua";
@@ -2979,6 +3036,8 @@ int main(int argc, char **argv) {
     RUN_TEST(fr_plugins_update_cache_with_an_unknown_label_errors_naming_it);
     RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error);
     RUN_TEST(a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_digests);
+    RUN_TEST(a_chunk_registers_one_task_per_entry_whatever_the_manifest_is_called);
+    RUN_TEST(the_same_plugin_spelling_the_name_itself_fails_on_a_renamed_manifest);
     RUN_TEST(an_overlay_rooted_manifest_yields_its_plugins_table_without_loading_them);
     GREATEST_MAIN_END();
 }
