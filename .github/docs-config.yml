@@ -1,0 +1,2 @@
+kind: generic
+description: A build tool that is only a plugin API. Core knows nothing about any language, compiler or build system: it reads a manifest, acquires plugins pinned by sha256, and runs what they declare. A release ships three platform binaries plus a wrapper, so a project never needs an installed daukle.
