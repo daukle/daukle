@@ -86,6 +86,16 @@ expect() {
     failed=$((failed + 1))
     return
   fi
+
+  # A refused example must still leave the harness running. Under `set -e` a
+  # run_example that returns non-zero kills the whole script, so the totals
+  # never print and every example after the failing one is silently skipped,
+  # while the exit code still says 1 and CI still looks correctly red.
+  if ! grep -q "passed, .* failed" "$root/out.txt"; then
+    echo "FAIL $name: the harness stopped before printing its totals" >&2
+    failed=$((failed + 1))
+    return
+  fi
   passed=$((passed + 1))
 }
 

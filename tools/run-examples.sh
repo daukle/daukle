@@ -91,12 +91,19 @@ run_example() {
       fail "$name" "sync failed"
       return
     fi
-    compare_expected "$example" "$sandbox" "$name" || return
+    # `|| return` here would return compare_expected's own non-zero status, and
+    # under `set -e` that ends the whole run: no totals, and every example after
+    # this one silently never runs while the exit code still says 1.
+    if ! compare_expected "$example" "$sandbox" "$name"; then
+      return
+    fi
     if ! (cd "$sandbox" && "$daukle" sync >/dev/null 2>&1); then
       fail "$name" "second sync failed"
       return
     fi
-    compare_expected "$example" "$sandbox" "$name" || return
+    if ! compare_expected "$example" "$sandbox" "$name"; then
+      return
+    fi
   fi
 
   if [ -f "$root/plugin.lua" ]; then
