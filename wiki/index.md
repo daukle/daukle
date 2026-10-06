@@ -53,13 +53,9 @@ resolver, and it is refused outside an explicit `--resolve` run.
 
 ## Where things are written
 
-| directory | lifetime |
-| --- | --- |
-| `build/daukle/<toolchain>/` | what a tool produces on the way to an artifact. `daukle clean` deletes it, and it is gitignored |
-| `daukle/<toolchain>/` | what a **resolve** produced. Committed, because an ordinary build may not fetch anything unpinned and a clone has to carry the pins |
-
-**A file you are not supposed to edit never sits at the project root.** `daukle.toml` and
-`daukle.lua` are there because you write them; a generated build file is not.
+Described in full on the page *Dependencies and compiling*, in this wiki, which is where the table
+that used to sit here went. The rule it states is that a file you are not supposed to edit never
+sits at the project root.
 
 ## The logic layer
 

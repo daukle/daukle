@@ -4,7 +4,7 @@
 optional `daukle.lua` beside it carries logic. It is daukle's answer to a Gradle build script, and
 a project without one never starts an interpreter.
 
-The project on this page is `examples/daukle-logic-layer/`.
+The example on this page is `daukle-logic-layer`, in this repository.
 
 ## When you need it
 

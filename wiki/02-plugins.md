@@ -3,7 +3,7 @@
 daukle has no languages in it. **Every ability you use is a plugin**, and this page is about where
 plugins come from, how they are pinned, and how to write one.
 
-The project on this page is `examples/daukle-local-plugin/`.
+The example on this page is `daukle-local-plugin`, in this repository.
 
 ## The three ways to name a plugin
 
