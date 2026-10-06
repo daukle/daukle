@@ -6,7 +6,7 @@ checked against a digest and executed.
 
 ```console
 $ ./daukle --version
-daukle 0.3.0
+daukle 0.4.0
 ```
 
 PowerShell runs the same thing as `.\daukle.ps1 --version`, and `./daukle sync` is the ordinary
@@ -27,12 +27,13 @@ shell does the download and the check.
 and it is the only file an upgrade touches. A missing pin is reported by path rather than guessed
 at.
 
-**This example pins `0.3.0`, so it runs the RELEASE and not `development`.** That is the one way
+**This example pins `0.4.0`, so it runs the RELEASE and not `development`.** That is the one way
 it differs from its neighbours, and it is the point rather than an oversight: a project using the
 wrapper is pinned to a published daukle until someone edits one line. The console block above
 holds the harness to it, so if the wrapper ever runs something other than the pinned version this
 example fails rather than passing quietly. **That version is a file a core release has to follow**,
-which is exactly what went wrong when `0.3.0` was published and left this example red.
+which is exactly what went wrong when `0.3.0` AND `0.4.0` were published and left this
+example red, twice.
 
 **The manifest is the smallest in this repository on purpose.** What is being demonstrated is the
 bootstrap, so the manifest acquires one plugin by coordinate and stops. Anything more would be a
