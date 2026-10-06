@@ -135,6 +135,6 @@ and runs no compiler. Page 4 does that.
 
 ## Next
 
-- [2. Plugins, and how daukle gets them](02-plugins.md)
-- [3. The logic layer](03-logic-layer.md)
-- [4. Dependencies and compiling](04-dependencies-and-compiling.md)
+- [[daukle/02-plugins]]
+- [[daukle/03-logic-layer]]
+- [[daukle/04-dependencies-and-compiling]]
