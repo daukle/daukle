@@ -12,16 +12,77 @@ the manifest that used to be copied out here now lives.
 
 ## Getting daukle
 
-A release carries three platform binaries plus a **wrapper**, so a project never needs an installed
-daukle. Commit the wrapper and its pin, and the first run fetches the exact version the pin names:
+**A project never needs an installed daukle.** Three committed files are what make it own none:
+`daukle`, `daukle.ps1` and `.daukle/wrapper.toml`. The first run fetches the exact binary the pin
+names and verifies it against a sha256 before running it:
 
 ```sh
 ./daukle sync
 ```
 
-The wrapper verifies the binary against a sha256 before running it. Every acquisition in daukle is
-pinned the same way: there is exactly one unpinned fetch in the whole system, it belongs to the
-resolver, and it is refused outside an explicit `--resolve` run.
+### Starting from nothing
+
+All three files are release assets, so getting them needs something that is not daukle. There is no
+installer: you download three text files, read them, and commit them.
+
+```sh
+base=https://github.com/daukle/daukle/releases/latest/download
+mkdir -p .daukle
+curl -fsSL -o daukle "$base/daukle"
+curl -fsSL -o daukle.ps1 "$base/daukle.ps1"
+curl -fsSL -o .daukle/wrapper.toml "$base/wrapper.toml"
+chmod +x daukle
+./daukle init
+```
+
+```powershell
+$base = 'https://github.com/daukle/daukle/releases/latest/download'
+New-Item -ItemType Directory -Force .daukle > $null
+Invoke-WebRequest "$base/daukle" -OutFile daukle
+Invoke-WebRequest "$base/daukle.ps1" -OutFile daukle.ps1
+Invoke-WebRequest "$base/wrapper.toml" -OutFile .daukle/wrapper.toml
+.\daukle.ps1 init
+```
+
+**This is deliberately not `curl | sh`.** The pin is a version and three digests a reviewer reads
+before anything executes, and piping a script into a shell would throw that away at the one moment
+it is worth most. Commit all three files; `./daukle wrapper update [version]` replaces them later,
+and it is explicit rather than automatic so that daukle's own bootstrap never becomes the one thing
+in the system that updates itself.
+
+**It is also the one unpinned step a project ever takes.** Whatever downloads the wrapper has no
+digest to check it against yet, because the digests are what it is downloading. Everything after it
+is pinned: the wrapper refuses a binary whose sha256 does not match the pin, and inside daukle there
+is exactly one unpinned fetch, it belongs to the resolver, and it is refused outside an explicit
+`--resolve` run.
+
+### Which route works on which host
+
+A release carries the two wrapper scripts, the pin, and **three platform binaries**. The wrapper
+composes a host string from the operating system and the architecture and looks it up in the pin, so
+a host with no entry is refused by name rather than failing on a download later:
+
+| host | binary | wrapper | build from source |
+| --- | --- | --- | --- |
+| linux/x86_64 | `daukle-linux-x86_64`, statically linked | yes | yes |
+| macos/aarch64 | `daukle-macos-arm64` | yes | yes |
+| windows/x86_64 | `daukle-windows-x86_64.exe` | yes | yes |
+| **macos/x86_64** | **none published** | **refused by name** | yes |
+| linux/aarch64 | none published | refused by name | yes |
+| windows/aarch64 | none published | refused by name | yes |
+
+**An Intel Mac has no published binary.** The refusal is clean and names the host it could not
+serve, but the machine is a real one, so that row is a gap rather than a platform nobody wanted.
+Building from source needs a C compiler, CMake and libcurl's development headers.
+
+A POSIX shell on Windows (Git Bash, MSYS2, Cygwin) runs the Windows binary through `./daukle`,
+rather than being sent to `daukle.ps1`.
+
+**There is no Homebrew, winget, Scoop or apt package, and that is a decision rather than a gap.**
+Each ecosystem would be another place the version can go stale, and the wrapper already means a
+project never needs an installed daukle at all, so the only audience for a package is somebody
+evaluating daukle outside a project. One downloaded binary serves that for a fraction of the
+permanent cost.
 
 ## Commands
 
