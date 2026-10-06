@@ -5,7 +5,7 @@ $ daukle sync
 writing 1 dependency into dependencies
 ```
 
-**daukle's configuration is not only a static file.** `daukle.toml` carries the data and an
+A project whose configuration is not only a static file. `daukle.toml` carries the data and an
 optional `daukle.lua` beside it carries the logic, which is what Gradle uses Groovy or Kotlin for.
 A project without a `daukle.lua` never starts an interpreter, so this costs nothing to projects
 that do not want it.
