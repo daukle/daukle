@@ -1,0 +1,7 @@
+schema = 1
+project = "fixture/crlf-block"
+version = "1.0.0"
+
+[modules]
+
+[plugins]

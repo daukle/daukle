@@ -1,0 +1,7 @@
+schema = 1
+project = "fixture/one-command"
+version = "1.0.0"
+
+[modules]
+
+[plugins]

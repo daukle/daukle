@@ -14,3 +14,8 @@ wrapper/.daukle/wrapper.toml text eol=lf
 # bytes were committed. Left unpinned here, autocrlf gave the two repositories different
 # bytes for one file and the examples harness reported a drift that was only line endings.
 wrapper/daukle.ps1 text eol=lf
+
+# A fixture that must be CRLF on EVERY runner, not only on Windows. This
+# repository does not pin `* -text` the way the plugin repositories do, so its
+# own ABOUT.md files are CRLF on Windows, and the example harness parses them.
+tools/test/fixtures/crlf-block/ABOUT.md text eol=crlf

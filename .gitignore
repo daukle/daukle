@@ -5,3 +5,5 @@ test/fixtures/consumer-partial/a.gradle
 docs/
 .idea/
 .superpowers/
+tools/test/.work/
+test/.work-examples/
