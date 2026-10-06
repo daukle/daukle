@@ -19,3 +19,10 @@ wrapper/daukle.ps1 text eol=lf
 # repository does not pin `* -text` the way the plugin repositories do, so its
 # own ABOUT.md files are CRLF on Windows, and the example harness parses them.
 tools/test/fixtures/crlf-block/ABOUT.md text eol=crlf
+
+# An example's expected/ tree is compared byte for byte against what daukle
+# writes, and daukle writes LF on every platform. Unpinned, a Windows checkout
+# turns these into CRLF and the comparison fails on that runner alone. The
+# plugin repositories get this from their own `* -text`; this one has no such
+# line, so its examples say it here.
+examples/** -text

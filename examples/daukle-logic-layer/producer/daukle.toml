@@ -1,0 +1,12 @@
+schema = 1
+project = "example/greeter"
+version = "2.0.0"
+
+# One module, and what it is called on npm. A producer states this once and
+# every consumer language reads the same table: the npm name and range live
+# here rather than in each consumer's own build file.
+[modules.cli]
+
+  [modules.cli.npm]
+  package = "cowsay"
+  range = "^1.6.0"

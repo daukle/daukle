@@ -1,0 +1,21 @@
+# The DATA half. Everything here is a fact about the project that does not
+# depend on anything: who it is, where its producer lives, which plugins it
+# uses. The consumers are built next door in daukle.lua, because which npm
+# section they land in is not knowable until daukle runs.
+schema = 1
+project = "daukle/example-logic-layer"
+version = "1.0.0"
+
+[modules]
+
+[sources."example/greeter"]
+kind = "path"
+path = "./producer"
+
+[resolvers.github]
+url = "https://raw.githubusercontent.com/daukle/daukle/1f515141e06d16eace718a45944a39933611fa39/plugins/github-releases.lua"
+sha256 = "3789865c266eb53fafcf7300d77a24461170c615195d92d0ddf88078c556e23e"
+
+[plugins]
+path = { resolver = "github", coordinate = "daukle/path@^1.0.0" }
+npm = { resolver = "github", coordinate = "daukle/npm@^1.0.0" }
