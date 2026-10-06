@@ -59,6 +59,12 @@ run_example() {
   example=$1
   name=$(basename "$example")
 
+  if [ -f "$example/needs-tools" ] && [ "${DAUKLE_EXAMPLE_E2E:-}" != "1" ]; then
+    echo "skip $name: set DAUKLE_EXAMPLE_E2E=1 to provision real tools here" >&2
+    skipped=$((skipped + 1))
+    return
+  fi
+
   block=$(console_block "$example")
   if [ -z "$block" ] && [ ! -d "$example/expected" ]; then
     fail "$name" "no console block in ABOUT.md and no expected/ tree, so it asserts nothing"
@@ -77,6 +83,20 @@ run_example() {
 
   if ! run_block "$sandbox" "$name" "$block"; then
     return
+  fi
+
+  if [ -d "$example/expected" ]; then
+    rm -rf "$sandbox/expected"
+    if ! (cd "$sandbox" && "$daukle" sync >/dev/null 2>&1); then
+      fail "$name" "sync failed"
+      return
+    fi
+    compare_expected "$example" "$sandbox" "$name" || return
+    if ! (cd "$sandbox" && "$daukle" sync >/dev/null 2>&1); then
+      fail "$name" "second sync failed"
+      return
+    fi
+    compare_expected "$example" "$sandbox" "$name" || return
   fi
 
   passed=$((passed + 1))
@@ -106,6 +126,27 @@ run_one() {
     fi
   done < "$work/.want"
   return 0
+}
+
+# An empty expected/ compares nothing and would pass, which is the one way an
+# example can look green while asserting nothing at all.
+compare_expected() {
+  example=$1
+  sandbox=$2
+  name=$3
+  if [ -z "$(cd "$example/expected" && find . -type f)" ]; then
+    fail "$name" "expected/ holds no files, so this example asserts nothing"
+    return 1
+  fi
+  ok=0
+  for relative in $(cd "$example/expected" && find . -type f); do
+    if ! cmp -s "$example/expected/$relative" "$sandbox/$relative"; then
+      fail "$name" "$relative differs"
+      diff -u "$example/expected/$relative" "$sandbox/$relative" >&2 || true
+      ok=1
+    fi
+  done
+  return $ok
 }
 
 # Runs each "$ " line of the console block in order.

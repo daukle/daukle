@@ -18,11 +18,26 @@ expect() {
   rm -rf "$root"
   mkdir -p "$root/examples"
   cp -R "$here/fixtures/$name" "$root/examples/$name"
+  # git cannot track an empty directory, so the empty-expected fixture has to
+  # carry a .keep that makes its expected/ tree non-empty on disk, which is the
+  # very shape it exists to refuse. Dropping it here is what makes the fixture
+  # the case it claims to be rather than a file-differs case wearing its name.
+  find "$root/examples/$name" -name .keep -exec rm -f {} +
 
   if sh "$harness" "$root" >"$root/out.txt" 2>&1; then
     actual=pass
   else
     actual=fail
+  fi
+
+  if [ "$verdict" = skip ]; then
+    if ! grep -q "^skip $name" "$root/out.txt"; then
+      echo "FAIL $name: expected a printed skip, got none" >&2
+      failed=$((failed + 1))
+      return
+    fi
+    passed=$((passed + 1))
+    return
   fi
 
   if [ "$actual" != "$verdict" ]; then
@@ -38,6 +53,8 @@ rm -rf "$work"
 expect one-command pass
 expect crlf-block pass
 expect no-block fail
+expect empty-expected fail
+DAUKLE_EXAMPLE_E2E= expect gated skip
 
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

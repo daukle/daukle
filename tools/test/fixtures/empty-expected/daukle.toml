@@ -1,0 +1,7 @@
+schema = 1
+project = "fixture/empty-expected"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
