@@ -18,10 +18,14 @@ jobs:
       #
       # The list is every repository whose own test.yml carries extra_repository: daukle/daukle,
       # read off the forge rather than remembered. It had drifted to seven while twelve build
-      # daukle, so node, maven, lifecycle, guide and examples sat outside the nightly signal.
+      # daukle, so node, maven, lifecycle and guide sat outside the nightly signal.
+      #
+      # daukle/guide must stay here: its build is where a broken cross-repository
+      # reference or a drifted snippet reddens, and dropping it would make that a
+      # nightly discovery rather than a per-push one.
       repositories: >-
         ["daukle/java", "daukle/cmake", "daukle/npm", "daukle/c", "daukle/gradle",
          "daukle/path", "daukle/github", "daukle/node", "daukle/maven",
-         "daukle/lifecycle", "daukle/guide", "daukle/examples"]
+         "daukle/lifecycle", "daukle/guide"]
     secrets:
       envPAT: ${{ secrets.PAT }}
