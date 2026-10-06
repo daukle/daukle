@@ -6,23 +6,9 @@ this site arrives through one of the plugins in the sidebar.
 
 ## A project
 
-```toml
-schema = 1
-project = "example/greeter"
-version = "1.0.0"
-
-[modules]
-
-[plugins]
-java = "daukle/java@^1"
-
-[toolchains.java]
-sourceRoot = "src/main/java"
-main = "example.Main"
-```
-
-That file and your sources are the whole project. There is no build file, no wrapper properties
-and nothing generated at the root.
+A `daukle.toml` and your sources are the whole of it: no build file, no wrapper properties and
+nothing generated at the root. The page *Your first project*, in this wiki, builds one from
+scratch and is where the manifest that used to be copied out here now lives.
 
 ## Getting daukle
 
