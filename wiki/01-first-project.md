@@ -1,11 +1,13 @@
 # 1. Your first project
 
-**Every file quoted on this page is a real file in this repository, and CI fails if a quote here
-stops matching it.** That is the whole reason this guide is a repository rather than a wiki: a
-snippet nobody runs is a claim, and this project has spent long enough removing claims.
+**Every file quoted on this page is a real file in some repository of this organization, and the
+site build fails if a quote here stops matching it.** That is the whole reason these pages live in
+repositories rather than in a wiki: a snippet nobody runs is a claim, and this project has spent
+long enough removing claims.
 
-The example on this page is `npm-dependency-ledger`, in the `daukle/npm` repository. You can copy
-it anywhere and run it.
+The example on this page is `npm-dependency-ledger`, and it lives in **`daukle/npm`** rather than
+here, because an example lives in the repository of the thing it demonstrates. Each fence below
+names the repository it is quoting. You can copy the example anywhere and run it.
 
 ## What daukle is
 
@@ -18,7 +20,7 @@ daukle acts**. You do not write build steps.
 
 ## The manifest
 
-```toml file=examples/npm-dependency-ledger/daukle.toml
+```toml file=daukle/npm:examples/npm-dependency-ledger/daukle.toml
 schema = 1
 project = "daukle/example-dependency-ledger"
 version = "1.0.0"
@@ -69,7 +71,7 @@ keeps everything you put in it.
 
 The thing being depended on describes itself, once, for every language:
 
-```toml file=examples/npm-dependency-ledger/producer/daukle.toml
+```toml file=daukle/npm:examples/npm-dependency-ledger/producer/daukle.toml
 schema = 1
 project = "example/greeter"
 version = "2.0.0"
@@ -101,7 +103,7 @@ in CI.
 
 Starting from a `package.json` holding only your own `left-pad`:
 
-```json file=examples/npm-dependency-ledger/expected/package.json
+```json file=daukle/npm:examples/npm-dependency-ledger/expected/package.json
 {
   "name": "example-dependency-ledger",
   "private": true,
