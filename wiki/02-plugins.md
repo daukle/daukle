@@ -109,6 +109,40 @@ Two consequences surprise people, so they are worth saying now:
 - **There is no `pcall`.** A plugin cannot catch a failed fetch and carry on, so a network failure
   fails the task. That is usually the right answer anyway.
 
+## `daukle.manifest`, for a plugin that declares a task per project entry
+
+A plugin's task list is usually fixed, because `javac` has a fixed set of things to do. A plugin
+driving a tool whose task list the PROJECT extends is different: a CMake project has its own
+targets, a package has its own scripts. Such a plugin reads the manifest when it loads and calls
+`daukle.task` once per entry.
+
+`daukle.manifest` is the manifest's file name, so the plugin never writes one of its own:
+
+```lua
+daukle.plugin{ api = 1, uses = { "read", "parse" } }
+
+daukle.toolchain{ name = "demo", generate = function() return {} end }
+
+local config = daukle.parse(daukle.read(daukle.manifest), daukle.manifest)
+local scripts = config.toolchains and config.toolchains.demo and config.toolchains.demo.scripts
+for name in pairs(scripts or {}) do
+  daukle.task{ name = "demo:" .. name, run = function() ... end }
+end
+```
+
+**Write `"daukle.toml"` instead and you have made that spelling a requirement of every project
+your plugin serves**, because a manifest passed to `daukle sync <path>` under any other name then
+fails before anything runs.
+
+Three things to know:
+
+- **It names the PRIMARY manifest**, so a `daukle.lua` overlay's additions are not visible here: a
+  chunk loads before overlays are applied. Declare what the tasks come from in the primary file.
+- **A task name is lowercase**, with digits, `.`, `_` and `-`. A tool's own `publishGithub` has to
+  be spelled `publish-github`.
+- **A duplicate name is fatal to the whole project**, not just to that task, so refuse a collision
+  where the entries are written.
+
 ## Where generated files go
 
 **`build/daukle/<toolchain>/` is derived**: `daukle clean` deletes it, and it is gitignored. That

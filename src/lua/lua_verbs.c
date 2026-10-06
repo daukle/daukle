@@ -1347,6 +1347,11 @@ static int undeclared_verb(lua_State *state) {
 
 static const char *const *pending_verbs;
 static size_t pending_verb_count;
+static const char *pending_manifest_name;
+
+void fr_lua_verbs_set_manifest_name(const char *name) {
+    pending_manifest_name = name;
+}
 
 static int protected_push_env(lua_State *state) {
     /* getmetatable and setmetatable are both base globals a plugin keeps, and
@@ -1380,6 +1385,10 @@ static int protected_push_env(lua_State *state) {
     fr_lua_verbs_install_registration(state);
     for (size_t index = 0; index < pending_verb_count; index++) {
         install_one(state, pending_verbs[index]);
+    }
+    if (pending_manifest_name != NULL) {
+        lua_pushstring(state, pending_manifest_name);
+        lua_setfield(state, -2, "manifest");
     }
 
     lua_newtable(state);

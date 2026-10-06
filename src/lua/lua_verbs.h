@@ -25,6 +25,15 @@
 int fr_lua_verbs_push_env(lua_State *state, const char *const *verbs, size_t verb_count,
                           fr_error *err);
 
+/* The manifest's own file name, which protected_push_env publishes as
+   daukle.manifest so a chunk can read the file daukle was started from without
+   naming it. Borrowed for the length of the load; the caller clears it with
+   NULL. D-110: a chunk that spelled "daukle.toml" made that spelling REQUIRED
+   of every project the plugin served, and a project driven from any other
+   manifest failed every command. It is ungated by uses on purpose, because a
+   file name is not a capability: reading it still needs "read". */
+void fr_lua_verbs_set_manifest_name(const char *name);
+
 /* BASE plus daukle.require and nothing else: what a module reached across a
    plugin boundary runs in. The obvious alternative, push_env with no verbs,
    is NOT this: protected_push_env installs the registration functions
