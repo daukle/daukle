@@ -44,7 +44,7 @@ Invoke-WebRequest "$base/wrapper.toml" -OutFile .daukle/wrapper.toml
 .\daukle.ps1 init
 ```
 
-**This is deliberately not `curl | sh`.** The pin is a version and three digests a reviewer reads
+**This is deliberately not `curl | sh`.** The pin is a version and a digest per host a reviewer reads
 before anything executes, and piping a script into a shell would throw that away at the one moment
 it is worth most. Commit all three files; `./daukle wrapper update [version]` replaces them later,
 and it is explicit rather than automatic so that daukle's own bootstrap never becomes the one thing
@@ -58,22 +58,23 @@ is exactly one unpinned fetch, it belongs to the resolver, and it is refused out
 
 ### Which route works on which host
 
-A release carries the two wrapper scripts, the pin, and **three platform binaries**. The wrapper
-composes a host string from the operating system and the architecture and looks it up in the pin, so
-a host with no entry is refused by name rather than failing on a download later:
+A release carries the two wrapper scripts, the pin, and **three platform binaries** covering four
+hosts, because one of them serves both Macs. The wrapper composes a host string from the operating
+system and the architecture and looks it up in the pin, so a host with no entry is refused by name
+rather than failing on a download later:
 
 | host | binary | wrapper | build from source |
 | --- | --- | --- | --- |
 | linux/x86_64 | `daukle-linux-x86_64`, statically linked | yes | yes |
-| macos/aarch64 | `daukle-macos-arm64` | yes | yes |
+| macos/aarch64 | `daukle-macos-universal` | yes | yes |
+| macos/x86_64 | `daukle-macos-universal`, the same file | yes | yes |
 | windows/x86_64 | `daukle-windows-x86_64.exe` | yes | yes |
-| **macos/x86_64** | **none published** | **refused by name** | yes |
 | linux/aarch64 | none published | refused by name | yes |
 | windows/aarch64 | none published | refused by name | yes |
 
-**An Intel Mac has no published binary.** The refusal is clean and names the host it could not
-serve, but the machine is a real one, so that row is a gap rather than a platform nobody wanted.
-Building from source needs a C compiler, CMake and libcurl's development headers.
+**Both Macs are served by one universal binary** rather than two downloads, which is why the two
+rows name the same file. A host with no row at all is refused by name before anything is
+downloaded, and building from source needs a C compiler, CMake and libcurl's development headers.
 
 A POSIX shell on Windows (Git Bash, MSYS2, Cygwin) runs the Windows binary through `./daukle`,
 rather than being sent to `daukle.ps1`.
