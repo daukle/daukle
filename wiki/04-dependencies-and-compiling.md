@@ -8,7 +8,7 @@ classpath belongs to that toolchain rather than to core.
 
 ## Compiling with no toolchain installed
 
-```toml file=examples/java-pinned-classpath/daukle.toml
+```toml file=daukle/java:examples/java-pinned-classpath/daukle.toml
 schema = 1
 project = "daukle/example-pinned-classpath"
 version = "1.0.0"
