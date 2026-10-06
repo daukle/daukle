@@ -49,7 +49,7 @@ runs there and the result is published as the `wrapper.toml` asset beside `daukl
 `wrapper_pin_matches_release`, which asks the forge rather than reading a local file.
 
 That is what makes a stale pin fail. Before it, nothing did: the probe tests whatever the pin says
-and `daukle/examples` pinned the same version, so a forgotten bump stayed green everywhere. The
+and `daukle-wrapper-bootstrap` pinned the same version, so a forgotten bump stayed green everywhere. The
 host-to-asset mapping is still hand written, because nothing in `daukle-macos-arm64` says it serves
 `macos/aarch64`, and an asset no mapping names now refuses the release.
 
@@ -142,7 +142,7 @@ working perfectly. Nothing caught it, because the probe is hand-run rather than 
 carrying a hand-maintained copy of the thing it tests is the bug `D-67` exists to delete, one layer
 out.**
 
-**A consumer exercises it on every platform.** `daukle/examples`' `wrapper-bootstrap` is a
+**A consumer exercises it on every platform.** `examples/daukle-wrapper-bootstrap` is a
 project that owns no daukle: its harness runs it through this wrapper on all three runners,
 byte compares its copy of these scripts against the pair here, and fails if the version the
 wrapper fetched is not the one pinned. That is where the macOS branch runs.
@@ -157,7 +157,7 @@ natively.
   `linux/aarch64`, `macos/x86_64` and `windows/aarch64` are not, and the wrapper refuses them by
   name. Hosted runners cover the three that exist.
 - **Every published cell is now exercised**, as of 2026-10-04, which was not true when this
-  file was written. `daukle/examples`' `wrapper-bootstrap` runs the wrapper on all three
+  file was written. `examples/daukle-wrapper-bootstrap` runs the wrapper on all three
   runners, and `macos-latest` is arm64, so `Darwin`, the `shasum -a 256` fallback and an
   aarch64 asset are covered. What remains unexercised is the two cells that **do not exist**,
   `linux/aarch64` and `windows/aarch64`, and there the only behaviour is the refusal.
