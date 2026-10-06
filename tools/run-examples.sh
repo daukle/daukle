@@ -99,6 +99,16 @@ run_example() {
     compare_expected "$example" "$sandbox" "$name" || return
   fi
 
+  if [ -f "$root/plugin.lua" ]; then
+    staged="$work/$name-staged"
+    rm -rf "$staged"
+    cp -R "$example" "$staged"
+    stage_working_tree "$staged"
+    if ! run_block "$staged" "$name (working tree)" "$block"; then
+      return
+    fi
+  fi
+
   passed=$((passed + 1))
 }
 
@@ -125,6 +135,30 @@ run_one() {
       return 1
     fi
   done < "$work/.want"
+  return 0
+}
+
+# The plugin the OWNING repository is developing, staged over a copy of the
+# example so that pass two exercises the working tree where pass one exercised
+# the published release. A repository with no plugin.lua at its root owns no
+# plugin, so there is nothing to stage and the example runs once.
+#
+# @implNote the variables here are deliberately not named `name` or `sandbox`.
+# A shell function has no locals, so reusing those would overwrite the caller's
+# and every staged failure would report the repository's name in place of the
+# example's, making one failing example indistinguishable from another.
+stage_working_tree() {
+  staged_root=$1
+  [ -f "$root/plugin.lua" ] || return 1
+  mkdir -p "$staged_root/plugins"
+  cp "$root/plugin.lua" "$staged_root/plugins/plugin.lua"
+  [ -d "$root/lib" ] && cp -R "$root/lib" "$staged_root/plugins/lib"
+  plugin_name=$(basename "$root")
+  awk -v plugin="$plugin_name" '
+    $1 == plugin && $2 == "=" { print plugin " = \"./plugins\""; next }
+    { print }
+  ' "$staged_root/daukle.toml" > "$staged_root/daukle.toml.staged"
+  mv "$staged_root/daukle.toml.staged" "$staged_root/daukle.toml"
   return 0
 }
 

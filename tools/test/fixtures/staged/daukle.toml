@@ -1,0 +1,8 @@
+schema = 1
+project = "fixture/staged"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+banner = "daukle/does-not-exist@^1.0.0"

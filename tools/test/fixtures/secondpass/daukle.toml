@@ -1,0 +1,11 @@
+schema = 1
+project = "fixture/secondpass"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+secondpass = "./bundled/plugin.lua"
+
+[toolchains.secondpass]
+version = "1"
