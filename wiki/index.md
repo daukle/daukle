@@ -63,9 +63,9 @@ resolver, and it is refused outside an explicit `--resolve` run.
 
 ## The logic layer
 
-`daukle.lua` sits beside `daukle.toml` for what a static manifest cannot say: a host conditional, a
-computed value, a loop. It is sandboxed Lua 5.4 with no `io`, no `os` and no `require`, and it
-mutates `daukle.config` in place.
+Described in full on the page *The logic layer*, in this wiki, which is where the two sentences
+that used to sit here went. Two descriptions of one subject written days apart is how both of them
+go stale.
 
 ## What core deliberately does not know
 
