@@ -1,0 +1,186 @@
+#!/bin/sh
+# Downloads a pinned daukle and runs it, so a project needs no daukle installed to build.
+#
+# Copy this file, daukle.ps1 and .daukle/wrapper.toml into a project root and commit all three.
+# They are authored files like daukle.toml, not generated ones: daukle never writes here, and the
+# binary this fetches goes to the cache, never beside the sources.
+#
+# No binary is committed, which is the one thing this does differently from gradlew. A native
+# program can be fetched and checked by the shell the host already has, so the pin is a digest in
+# a text file a reviewer can read.
+set -eu
+
+fail() {
+    echo "daukle wrapper: $1" >&2
+    exit 1
+}
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+pin_file="$script_dir/.daukle/wrapper.toml"
+
+read_pin() {
+    # Deliberately not a TOML parser. It reads the three keys this file is allowed to contain, so
+    # a pin carrying anything else is a pin this wrapper will not silently half-understand.
+    sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$2" | head -n 1
+}
+
+fetch() {
+    # A minimal image has neither, which a hosted CI runner never shows: ubuntu:24.04 has
+    # sha256sum and tar and no downloader at all. Naming the package beats "command not found".
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 3 -o "$2" "$1" || fail "could not download $1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "$2" "$1" || fail "could not download $1"
+    else
+        fail "neither curl nor wget is installed, so daukle cannot be downloaded. Install one of them (apt install curl, apk add curl, dnf install curl)."
+    fi
+}
+
+# `./daukle wrapper update [version]` replaces these three files with the ones a release publishes.
+# It lives here and not in daukle because core may name no forge: putting this URL in src/ fails
+# cmake/check_agnostic.cmake with "core names a forge". D-68.
+#
+# Explicit, never automatic. An auto-updating wrapper would make daukle's own bootstrap the one
+# unpinned thing in a system where every other acquisition carries a sha256, and a compromised
+# release would then propagate by itself.
+wrapper_update() {
+    if [ -n "$1" ]; then
+        base="https://github.com/daukle/daukle/releases/download/$1"
+    else
+        # The newest release's assets are served under this path, so the version is resolved by the
+        # download itself. Asking an API for the latest tag first would be a second request that
+        # can disagree with the one that follows it.
+        base="https://github.com/daukle/daukle/releases/latest/download"
+    fi
+
+    # Staged BESIDE the targets rather than in /tmp, so each move is a rename within one directory.
+    # That matters most for this script: a running sh reads its own file as it goes, and copying
+    # over it in place makes the shell resume in the middle of different bytes. A rename leaves the
+    # running inode alone.
+    suffix="update.$$"
+    trap 'rm -f "$script_dir/daukle.$suffix" "$script_dir/daukle.ps1.$suffix" "$script_dir/wrapper.toml.$suffix"' EXIT INT TERM
+
+    fetch "$base/wrapper.toml" "$script_dir/wrapper.toml.$suffix"
+    fetch "$base/daukle" "$script_dir/daukle.$suffix"
+    fetch "$base/daukle.ps1" "$script_dir/daukle.ps1.$suffix"
+
+    # All three or none. A half-replaced wrapper is a project whose scripts and pin disagree, which
+    # is worse than one that was never updated.
+    for staged in "wrapper.toml.$suffix" "daukle.$suffix" "daukle.ps1.$suffix"; do
+        [ -s "$script_dir/$staged" ] || fail "$base returned an empty $staged, so nothing was replaced."
+    done
+    new_version=$(read_pin version "$script_dir/wrapper.toml.$suffix")
+    [ -n "$new_version" ] ||
+        fail "what $base/wrapper.toml returned names no version, so it is not a pin and nothing was replaced."
+
+    mkdir -p "$script_dir/.daukle"
+    chmod +x "$script_dir/daukle.$suffix"
+    mv -f "$script_dir/wrapper.toml.$suffix" "$pin_file"
+    mv -f "$script_dir/daukle.ps1.$suffix" "$script_dir/daukle.ps1"
+    mv -f "$script_dir/daukle.$suffix" "$script_dir/daukle"
+    trap - EXIT INT TERM
+
+    echo "daukle wrapper: updated to $new_version. Review the diff and commit all three files."
+}
+
+# Only the two-word form is intercepted. A plugin may declare a task called "wrapper", and
+# `./daukle wrapper` still reaches daukle; `daukle wrapper update` could not have meant a task
+# either way, because a task takes no second word.
+if [ "${1:-}" = "wrapper" ] && [ "${2:-}" = "update" ]; then
+    [ $# -le 3 ] || fail "usage: ./daukle wrapper update [version]"
+    wrapper_update "${3:-}"
+    exit 0
+fi
+
+[ -f "$pin_file" ] || fail "no pin file at $pin_file. It is committed beside this script and names the version and its digests."
+
+# The spelling is daukle's own, from fr_lua_host_os and fr_lua_host_arch, so the wrapper and the
+# provisioning tables are one table in two languages rather than two conventions to keep in step.
+case "$(uname -s)" in
+    Linux) host_os=linux ;;
+    Darwin) host_os=macos ;;
+    # Git Bash, MSYS2 and Cygwin are POSIX shells on Windows, and they run the Windows binary.
+    # Refusing them and pointing at daukle.ps1 was wrong: a Windows developer driving a build from
+    # a POSIX shell is ordinary, and so is a CI job whose only shell on the Windows runner is bash.
+    MINGW* | MSYS* | CYGWIN*) host_os=windows ;;
+    *) fail "unsupported operating system $(uname -s). This wrapper knows linux, macos and windows." ;;
+esac
+
+case "$(uname -m)" in
+    x86_64 | amd64) host_arch=x86_64 ;;
+    arm64 | aarch64) host_arch=aarch64 ;;
+    *) fail "unsupported architecture $(uname -m). This wrapper knows x86_64 and aarch64." ;;
+esac
+
+host="$host_os/$host_arch"
+
+version=$(read_pin version "$pin_file")
+[ -n "$version" ] || fail "the pin file names no version: $pin_file"
+
+# One section per host, so an unsupported host is a missing section rather than a 404 later.
+#
+# The CR strip is not optional. These three files are copied into someone else's repository and
+# checked out under their git settings, so the pin can arrive CRLF however this repository stores
+# it, and then a header comparison silently matches nothing: the symptom is "no published daukle
+# for linux/x86_64. This release covers: linux/x86_64", which names the host it just refused.
+section=$(awk -v want="[assets.\"$host\"]" '
+    { sub(/\r$/, "") }
+    $0 == want { inside = 1; next }
+    /^\[/ { inside = 0 }
+    inside { print }
+' "$pin_file")
+
+if [ -z "$section" ]; then
+    have=$(sed -n 's/^\[assets\."\(.*\)"\].*/\1/p' "$pin_file" | tr '\n' ' ')
+    fail "no published daukle for $host. This release covers: ${have% }."
+fi
+
+asset=$(printf '%s\n' "$section" | sed -n 's/^[[:space:]]*asset[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+sha256=$(printf '%s\n' "$section" | sed -n 's/^[[:space:]]*sha256[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+[ -n "$asset" ] && [ -n "$sha256" ] || fail "the entry for $host is missing asset or sha256 in $pin_file"
+
+# The same three branches as cache_root_dir in src/cache/cache.c. This is a real duplication: the
+# rule lives in C once and in two scripts again, and it is the likeliest place for the wrapper to
+# drift from core, so it is written out rather than left to be discovered.
+if [ -n "${DAUKLE_CACHE_DIR:-}" ]; then
+    cache_root="$DAUKLE_CACHE_DIR"
+elif [ -n "${XDG_CACHE_HOME:-}" ]; then
+    cache_root="$XDG_CACHE_HOME/daukle"
+elif [ -n "${HOME:-}" ]; then
+    cache_root="$HOME/.cache/daukle"
+else
+    fail "no cache directory available: set DAUKLE_CACHE_DIR"
+fi
+
+binary_dir="$cache_root/wrapper/$version/$host"
+binary="$binary_dir/$asset"
+
+digest_of() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        # macOS ships shasum and not sha256sum.
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        fail "neither sha256sum nor shasum is installed, so the download cannot be verified. Install coreutils."
+    fi
+}
+
+# A cached file whose digest does not match is a corrupt cache, not an attack, so it is replaced.
+# A digest that does not match AFTER a fresh download is fatal: that is the pin doing its job.
+if [ ! -f "$binary" ] || [ "$(digest_of "$binary")" != "$sha256" ]; then
+    mkdir -p "$binary_dir"
+    partial="$binary.partial.$$"
+    fetch "https://github.com/daukle/daukle/releases/download/$version/$asset" "$partial"
+    actual=$(digest_of "$partial")
+    if [ "$actual" != "$sha256" ]; then
+        rm -f "$partial"
+        fail "the downloaded $asset has sha256 $actual, and the pin says $sha256. Nothing was run."
+    fi
+    chmod +x "$partial"
+    # Named only once it has been verified, so an interrupted run leaves no binary that a later
+    # run would find already in place.
+    mv -f "$partial" "$binary"
+fi
+
+exec "$binary" "$@"

@@ -15,7 +15,7 @@ jobs:
       cmake_configure: '-B build -DCMAKE_BUILD_TYPE=Release'
       cmake_build: '--build build --config Release'
       cmake_test: 'DAUKLE_NETWORK_TESTS=1 ctest --test-dir build -C Release --output-on-failure'
-      post_test: 'sh tools/test/run.sh'
+      post_test: 'sh tools/test/run.sh && DAUKLE_EXAMPLE_E2E=1 sh tools/run-examples.sh .'
       apt_packages: libcurl4-openssl-dev
     secrets:
       envPAT: ${{ secrets.PAT }}

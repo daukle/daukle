@@ -1,0 +1,16 @@
+schema = 1
+project = "daukle/example-wrapper-bootstrap"
+version = "1.0.0"
+
+[modules]
+
+# Deliberately the smallest manifest in this repository. The point of this example is not what
+# daukle does once it is running, it is that nothing had to be installed for it to run at all:
+# every other example here is executed by a daukle the harness compiled from source, and this one
+# is executed by the daukle its own ./daukle fetched.
+[resolvers.github]
+url = "https://raw.githubusercontent.com/daukle/daukle/1f515141e06d16eace718a45944a39933611fa39/plugins/github-releases.lua"
+sha256 = "3789865c266eb53fafcf7300d77a24461170c615195d92d0ddf88078c556e23e"
+
+[plugins]
+path = { resolver = "github", coordinate = "daukle/path@^1.0.0" }

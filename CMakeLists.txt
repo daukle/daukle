@@ -161,3 +161,8 @@ add_test(NAME wrapper_pin_matches_release COMMAND ${CMAKE_COMMAND}
          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_wrapper_pin.cmake)
 set_tests_properties(wrapper_pin_matches_release PROPERTIES
                      SKIP_REGULAR_EXPRESSION "check_wrapper_pin: skipped")
+
+add_test(NAME wrapper_example_matches_wrapper COMMAND ${CMAKE_COMMAND}
+         -DWRAPPER=${CMAKE_CURRENT_SOURCE_DIR}/wrapper
+         -DCOPY=${CMAKE_CURRENT_SOURCE_DIR}/examples/daukle-wrapper-bootstrap
+         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_wrapper_copy.cmake)
