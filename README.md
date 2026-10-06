@@ -5,7 +5,7 @@ A build tool that is only a plugin API. Core knows nothing about any language, c
 ## Examples
 
 - [`daukle-local-plugin`](examples/daukle-local-plugin): A plugin that lives inside the project it serves, as a single Lua file named by a path rather than by a published coordinate.
-- [`daukle-logic-layer`](examples/daukle-logic-layer): **daukle's configuration is not only a static file.**
+- [`daukle-logic-layer`](examples/daukle-logic-layer): A project whose configuration is not only a static file.
 - [`daukle-wrapper-bootstrap`](examples/daukle-wrapper-bootstrap): The only example here that does not need daukle installed.
 
 ## What daukle is
