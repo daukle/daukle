@@ -107,5 +107,5 @@ and the plugin for it is not built.
 
 ## Next
 
-Back to [1. Your first project](01-first-project.md), or read each plugin repository's own
+Back to [[daukle/01-first-project]], or read each plugin repository's own
 `examples/` for a worked case and its `AUTHORING.md` for the full surface.

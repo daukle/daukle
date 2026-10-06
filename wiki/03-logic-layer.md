@@ -102,4 +102,4 @@ org has yet needed a hundred lines of it.
 
 ## Next
 
-- [4. Dependencies and compiling](04-dependencies-and-compiling.md)
+- [[daukle/04-dependencies-and-compiling]]

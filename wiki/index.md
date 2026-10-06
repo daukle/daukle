@@ -7,8 +7,8 @@ this site arrives through one of the plugins in the sidebar.
 ## A project
 
 A `daukle.toml` and your sources are the whole of it: no build file, no wrapper properties and
-nothing generated at the root. The page *Your first project*, in this wiki, builds one from
-scratch and is where the manifest that used to be copied out here now lives.
+nothing generated at the root. [[daukle/01-first-project]] builds one from scratch and is where
+the manifest that used to be copied out here now lives.
 
 ## Getting daukle
 
@@ -39,14 +39,14 @@ resolver, and it is refused outside an explicit `--resolve` run.
 
 ## Where things are written
 
-Described in full on the page *Dependencies and compiling*, in this wiki, which is where the table
-that used to sit here went. The rule it states is that a file you are not supposed to edit never
+Described in full on [[daukle/04-dependencies-and-compiling]], which is where the table that used
+to sit here went. The rule it states is that a file you are not supposed to edit never
 sits at the project root.
 
 ## The logic layer
 
-Described in full on the page *The logic layer*, in this wiki, which is where the two sentences
-that used to sit here went. Two descriptions of one subject written days apart is how both of them
+Described in full on [[daukle/03-logic-layer]], which is where the two sentences that used to sit
+here went. Two descriptions of one subject written days apart is how both of them
 go stale.
 
 ## What core deliberately does not know

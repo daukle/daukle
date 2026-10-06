@@ -127,5 +127,5 @@ through `daukle.require`. Both are real and neither is here yet.
 
 ## Next
 
-- [3. The logic layer](03-logic-layer.md)
-- [4. Dependencies and compiling](04-dependencies-and-compiling.md)
+- [[daukle/03-logic-layer]]
+- [[daukle/04-dependencies-and-compiling]]
