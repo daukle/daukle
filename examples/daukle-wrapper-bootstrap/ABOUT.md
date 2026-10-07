@@ -6,7 +6,7 @@ checked against a digest and executed.
 
 ```console
 $ ./daukle --version
-daukle 0.5.0
+daukle 0.6.0
 ```
 
 PowerShell runs the same thing as `.\daukle.ps1 --version`, and `./daukle sync` is the ordinary
@@ -27,7 +27,7 @@ shell does the download and the check.
 and it is the only file an upgrade touches. A missing pin is reported by path rather than guessed
 at.
 
-**This example pins `0.5.0`, so it runs the RELEASE and not `development`.** That is the one way
+**This example pins `0.6.0`, so it runs the RELEASE and not `development`.** That is the one way
 it differs from its neighbours, and it is the point rather than an oversight: a project using the
 wrapper is pinned to a published daukle until someone edits one line. The console block above
 holds the harness to it, so if the wrapper ever runs something other than the pinned version this
