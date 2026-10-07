@@ -403,6 +403,15 @@ static int lua_declare_task(lua_State *state) {
     memset(slot, 0, sizeof *slot);
     slot->capability = fr_dup_string(capability);
     if (slot->capability == NULL) return luaL_error(state, "out of memory");
+    /* Every other declaration copies the chunk's env here, and this one did not,
+       so a task ran with an EMPTY allowlist and daukle.exec scrubbed every core
+       credential from the child whatever the plugin declared. A task is the only
+       callback allowed to exec, so the allowlist was unreachable from the one
+       place it governs. D-32. */
+    if (fr_lua_verbs_copy_declared_env(&slot->env, &slot->env_count) != 0) {
+        release_task_slot(slot);
+        return luaL_error(state, "out of memory recording env for \"%s\"", capability);
+    }
 
     fr_lua_raw_getfield(state, 1, "partOf");
     if (!lua_isnil(state, -1)) {
