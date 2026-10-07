@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(daukle VERSION 0.5.0 LANGUAGES C)
+project(daukle VERSION 0.6.0 LANGUAGES C)
 
 # A published daukle must run where nothing is installed, and libcurl.so.4 is
 # absent from every bare Linux image including the one it was built on. OFF
