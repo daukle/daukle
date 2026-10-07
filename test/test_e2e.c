@@ -445,6 +445,18 @@ static int run_as_task_child(const char *marker_name) {
     return 0;
 }
 
+/* Writes what the child actually inherited, which is the only place the
+   allowlist can be read: a scrubbed variable is absent from the child and
+   indistinguishable, inside daukle, from one nobody set. */
+static int run_as_task_env_child(void) {
+    FILE *marker = fopen("token-seen.txt", "w");
+    if (marker == NULL) return 1;
+    const char *value = getenv("GITHUB_TOKEN");
+    fputs(value == NULL ? "<unset>" : value, marker);
+    fclose(marker);
+    return 0;
+}
+
 /* argv[0] as ctest invokes it, kept so the fixture's plugin can resolve this
    binary by name through daukle.tool, which searches PATH only. */
 static const char *self_path;
@@ -511,6 +523,94 @@ TEST a_task_runs_its_child_in_the_derived_directory(void) {
 
     ASSERT_EQ(FR_OK, status);
     ASSERT(ran_here);
+    PASS();
+}
+
+/* Runs the fixture's one task and returns what the child saw of GITHUB_TOKEN. */
+static int token_a_task_child_saw(const char *manifest, char *out, size_t limit, fr_error *err) {
+    char directory[1024];
+    snprintf(directory, sizeof directory, "%s", self_path);
+    char *last = strrchr(directory, '/');
+    char *last_back = strrchr(directory, '\\');
+    if (last_back != NULL && (last == NULL || last_back > last)) last = last_back;
+    if (last != NULL) *last = '\0';
+
+    fr_session session;
+    if (fr_session_open(manifest, 1, &session, err) != FR_OK) return FR_ERR;
+
+    fr_sync_report report;
+    if (fr_sync_session(&session, 1, &report, err) != FR_OK) {
+        fr_session_close(&session);
+        return FR_ERR;
+    }
+    fr_sync_report_free(&report);
+
+    fr_task_set set;
+    fr_task_plan plan;
+    if (fr_tasks_collect(session.registry, &session.manifest, &set, err) != FR_OK) {
+        fr_session_close(&session);
+        return FR_ERR;
+    }
+    if (fr_tasks_plan(&set, "runner:touch", &plan, err) != FR_OK) {
+        fr_tasks_set_free(&set);
+        fr_session_close(&session);
+        return FR_ERR;
+    }
+
+    const char *original_path = getenv("PATH");
+    char saved_path[4096];
+    snprintf(saved_path, sizeof saved_path, "%s", original_path == NULL ? "" : original_path);
+    char path_value[4096];
+#ifdef _WIN32
+    snprintf(path_value, sizeof path_value, "%s;%s", directory, saved_path);
+#else
+    snprintf(path_value, sizeof path_value, "%s:%s", directory, saved_path);
+#endif
+    put_environment("PATH", path_value);
+    put_environment("DAUKLE_TEST_CHILD", last == NULL ? self_path : last + 1);
+    fr_test_set_env("GITHUB_TOKEN", "token-the-child-should-see");
+
+    int status = fr_tasks_run(&plan, &session, err);
+
+    fr_test_set_env("GITHUB_TOKEN", NULL);
+    put_environment("PATH", saved_path);
+
+    char marker[1024];
+    snprintf(marker, sizeof marker, "%.*s/build/daukle/runner/token-seen.txt",
+             (int) (strrchr(manifest, '/') - manifest), manifest);
+    out[0] = '\0';
+    FILE *handle = fopen(marker, "r");
+    if (handle != NULL) {
+        size_t read = fread(out, 1, limit - 1, handle);
+        out[read] = '\0';
+        fclose(handle);
+    }
+    remove(marker);
+
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    return status;
+}
+
+/* The pair, and neither half means anything alone. A scrub that removed
+   nothing would pass the first and fail the second; one that removed
+   everything would do the reverse. The allowlist reaching a TASK is what this
+   is really about: a task is the only callback allowed to exec, so until the
+   declaration arrived here it governed nothing that starts a process. D-32. */
+TEST a_task_child_inherits_a_credential_its_plugin_declared(void) {
+    static fr_error err;
+    char seen[256];
+
+    ASSERT_EQm(err.message, FR_OK,
+               token_a_task_child_saw("test/fixtures/task-env-declared/daukle.toml",
+                                      seen, sizeof seen, &err));
+    ASSERT_STR_EQ("token-the-child-should-see", seen);
+
+    ASSERT_EQm(err.message, FR_OK,
+               token_a_task_child_saw("test/fixtures/task-env-undeclared/daukle.toml",
+                                      seen, sizeof seen, &err));
+    ASSERT_STR_EQ("<unset>", seen);
     PASS();
 }
 
@@ -851,6 +951,9 @@ int main(int argc, char **argv) {
     if (argc >= 2 && strcmp(argv[1], "--task-child") == 0) {
         return run_as_task_child(argc >= 3 ? argv[2] : "ran-here.txt");
     }
+    if (argc >= 2 && strcmp(argv[1], "--task-child-env") == 0) {
+        return run_as_task_env_child();
+    }
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_scaffolded_project_syncs);
     RUN_TEST(reproduces_both_real_consumers);
@@ -861,6 +964,7 @@ int main(int argc, char **argv) {
     RUN_TEST(no_cache_bypasses_both_the_read_and_the_write);
     RUN_TEST(the_same_manifest_in_two_formats_writes_the_same_file);
     RUN_TEST(a_task_runs_its_child_in_the_derived_directory);
+    RUN_TEST(a_task_child_inherits_a_credential_its_plugin_declared);
     RUN_TEST(a_manifest_task_runs_a_program_from_a_real_manifest);
     RUN_TEST(a_publisher_runs_its_child_in_the_from_toolchains_directory);
     RUN_TEST(every_destination_runs_in_the_order_the_manifest_declares);
