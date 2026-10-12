@@ -1466,12 +1466,17 @@ TEST write_refuses_a_path_that_climbs_out(void) {
     char directory[] = "build-test-write-climb";
     fr_cache_make_directories(directory);
 
+    static char bare_message[512];
     int refused = run_write_chunk("daukle.write{ path = '../escape.txt', text = 'x' }",
                                   directory, message, sizeof message) == FR_ERR;
+    int bare_refused = run_write_chunk("daukle.write{ path = '..', text = 'x' }",
+                                       directory, bare_message, sizeof bare_message) == FR_ERR;
 
     fr_test_remove_tree(directory);
     ASSERT(refused);
+    ASSERT(bare_refused);
     ASSERTm(message, strstr(message, "must stay inside the derived directory") != NULL);
+    ASSERTm(bare_message, strstr(bare_message, "must stay inside the derived directory") != NULL);
     PASS();
 }
 
