@@ -1,0 +1,7 @@
+schema = 1
+project = "fixture/host-gate"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
