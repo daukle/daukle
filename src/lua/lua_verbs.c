@@ -1299,6 +1299,12 @@ static int verb_write(lua_State *state) {
     if (last_separator != NULL) {
         *last_separator = '\0';
         fr_cache_make_directories(path);
+        /* Silent by design (see fr_cache_make_directories), so the outcome is
+           asked for here: unchecked, a directory that could not be made
+           surfaces as a write error naming the FILE. */
+        if (!fr_cache_directory_exists(path)) {
+            return luaL_error(state, "could not create the directory %s", path);
+        }
         *last_separator = '/';
     }
 
