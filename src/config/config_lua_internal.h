@@ -45,7 +45,8 @@ int fr_lua_dispatch_language_apply(void *state, const fr_consumer *consumer,
 int fr_lua_dispatch_toolchain_generate(void *state, const fr_toolchain *toolchain,
                                       const char *project, const char *version,
                                       const char *root, const fr_resolved *resolved,
-                                      size_t count, fr_generated_file **out_files,
+                                      size_t count, const fr_module *modules,
+                                      size_t module_count, fr_generated_file **out_files,
                                       size_t *out_count, fr_error *err);
 int fr_lua_dispatch_source_load(void *state, const char *project, const struct cJSON *block,
                                 const char *base_dir, fr_project *out, fr_error *err);

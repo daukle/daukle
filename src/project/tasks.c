@@ -524,6 +524,8 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
         context.generated_dir_relative = generated_dir_relative;
         context.resolved = resolved;
         context.resolved_count = resolved_count;
+        context.modules = session->manifest.self.modules;
+        context.module_count = session->manifest.self.module_count;
 
         int status = node->plugin->run(node->plugin->state, &context, err);
         fr_resolved_free(resolved, resolved_count);

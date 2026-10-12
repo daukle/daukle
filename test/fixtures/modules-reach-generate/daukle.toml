@@ -1,0 +1,13 @@
+schema = 1
+project = "forebay/modules"
+version = "1.0.0"
+
+[modules.lib]
+
+[modules.app]
+requires = ["lib"]
+
+[plugins]
+stub = "./plugins/modules.lua"
+
+[toolchains.stub]

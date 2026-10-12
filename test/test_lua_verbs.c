@@ -2635,7 +2635,7 @@ TEST provision_is_refused_while_generating(void) {
         fr_error generate_err;
         generate_err.message[0] = '\0';
         generated = plugin->generate(plugin->state, &toolchain, "acme/app", "1.0.0",
-                                     "derived/stub", NULL, 0, &files, &file_count, &generate_err);
+                                     "derived/stub", NULL, 0, NULL, 0, &files, &file_count, &generate_err);
         snprintf(message, sizeof message, "%s", generate_err.message);
     }
 

@@ -365,6 +365,20 @@ TEST an_empty_generate_table_creates_no_directory(void) {
 
 GREATEST_MAIN_DEFS();
 
+TEST generate_sees_the_module_list_and_its_requires(void) {
+    char message[512];
+    int refused = generate_fails_with("test/fixtures/modules-reach-generate/daukle.toml",
+                                      message, sizeof message);
+    ASSERT_FALSE(refused);
+    char *text = NULL; fr_error err;
+    ASSERT_EQ(FR_OK, fr_file_read_text(
+        "test/fixtures/modules-reach-generate/build/daukle/stub/modules.txt", &text, &err));
+    ASSERT(strstr(text, "app<lib") != NULL);
+    ASSERT(strstr(text, "lib<") != NULL);
+    free(text);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_generated_path_that_climbs_out_is_refused_naming_the_key);
@@ -383,5 +397,6 @@ int main(int argc, char **argv) {
     RUN_TEST(generation_may_not_exec);
     RUN_TEST(generation_may_not_resolve_a_tool);
     RUN_TEST(an_empty_generate_table_creates_no_directory);
+    RUN_TEST(generate_sees_the_module_list_and_its_requires);
     GREATEST_MAIN_END();
 }

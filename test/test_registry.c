@@ -127,9 +127,10 @@ TEST walks_every_registered_config_plugin(void) {
 static int stub_generate(void *state, const fr_toolchain *toolchain, const char *project,
                          const char *version, const char *root,
                          const fr_resolved *resolved, size_t count,
+                         const fr_module *modules, size_t module_count,
                          fr_generated_file **out_files, size_t *out_count, fr_error *err) {
     (void) state; (void) toolchain; (void) project; (void) version; (void) root;
-    (void) resolved; (void) count; (void) err;
+    (void) resolved; (void) count; (void) modules; (void) module_count; (void) err;
     *out_files = NULL;
     *out_count = 0;
     return FR_OK;
