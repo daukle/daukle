@@ -577,7 +577,7 @@ TEST a_toolchain_generate_bridges_project_config_root_and_host(void) {
     if (plugin != NULL && toolchain_count == 1) {
         fr_error gen_err;
         status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
-                                  "9.9.9", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+                                  "9.9.9", "derived/stub", NULL, 0, NULL, 0, &files, &file_count, &gen_err);
     }
 
     char path[256] = "";
@@ -634,7 +634,7 @@ TEST a_toolchain_config_excludes_the_reserved_dependencies_key(void) {
     if (plugin != NULL) {
         fr_error gen_err;
         status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
-                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+                                  "1.0.0", "derived/stub", NULL, 0, NULL, 0, &files, &file_count, &gen_err);
     }
 
     char text[256] = "";
@@ -673,7 +673,7 @@ TEST the_generate_context_carries_the_toolchain_version(void) {
     if (plugin != NULL) {
         fr_error gen_err;
         status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
-                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+                                  "1.0.0", "derived/stub", NULL, 0, NULL, 0, &files, &file_count, &gen_err);
     }
 
     char text[256] = "";
@@ -711,7 +711,7 @@ TEST the_generate_context_still_hides_dependencies_from_config(void) {
     if (plugin != NULL) {
         fr_error gen_err;
         status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
-                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+                                  "1.0.0", "derived/stub", NULL, 0, NULL, 0, &files, &file_count, &gen_err);
     }
 
     char text[256] = "";
@@ -804,7 +804,7 @@ TEST a_toolchain_generate_must_return_a_table(void) {
     if (plugin != NULL) {
         fr_error gen_err;
         status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
-                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+                                  "1.0.0", "derived/stub", NULL, 0, NULL, 0, &files, &file_count, &gen_err);
         snprintf(message, sizeof message, "%s", gen_err.message);
     }
 
@@ -837,7 +837,7 @@ TEST a_toolchain_generate_refuses_a_non_string_file_path(void) {
     if (plugin != NULL) {
         fr_error gen_err;
         status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
-                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+                                  "1.0.0", "derived/stub", NULL, 0, NULL, 0, &files, &file_count, &gen_err);
         snprintf(message, sizeof message, "%s", gen_err.message);
     }
 
@@ -870,7 +870,7 @@ TEST a_toolchain_generate_refuses_a_non_string_file_contents(void) {
     if (plugin != NULL) {
         fr_error gen_err;
         status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
-                                  "1.0.0", "derived/stub", NULL, 0, &files, &file_count, &gen_err);
+                                  "1.0.0", "derived/stub", NULL, 0, NULL, 0, &files, &file_count, &gen_err);
         snprintf(message, sizeof message, "%s", gen_err.message);
     }
 

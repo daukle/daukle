@@ -1439,25 +1439,107 @@ TEST write_returns_the_path_it_wrote(void) {
     PASS();
 }
 
-TEST write_refuses_a_path_with_a_separator(void) {
-    static char message[512];
-    char directory[] = "build-test-write-sep";
+TEST write_creates_a_subdirectory_for_a_nested_path(void) {
+    char directory[] = "build-test-write-nested";
     fr_cache_make_directories(directory);
 
-    int refused = run_write_chunk("daukle.write{ path = 'nested/a.args', text = 'x' }",
+    int wrote = run_write_chunk("daukle.write{ path = 'alpha/build.gradle', text = 'plugins' }",
+                                directory, NULL, 0) == FR_OK;
+
+    char path[1024];
+    snprintf(path, sizeof path, "%s/alpha/build.gradle", directory);
+    char *text = NULL;
+    fr_error err;
+    int read_back = fr_file_read_text(path, &text, &err) == FR_OK;
+    int matched = read_back && strcmp(text, "plugins") == 0;
+    free(text);
+    fr_test_remove_tree(directory);
+
+    ASSERT(wrote);
+    ASSERT(read_back);
+    ASSERT(matched);
+    PASS();
+}
+
+TEST write_refuses_a_path_that_climbs_out(void) {
+    static char message[512];
+    char directory[] = "build-test-write-climb";
+    fr_cache_make_directories(directory);
+
+    static char bare_message[512];
+    int refused = run_write_chunk("daukle.write{ path = '../escape.txt', text = 'x' }",
                                   directory, message, sizeof message) == FR_ERR;
-    static char backslash_message[512];
-    int backslash = run_write_chunk("daukle.write{ path = '..\\\\escape.args', text = 'x' }",
-                                    directory, backslash_message,
-                                    sizeof backslash_message) == FR_ERR;
+    int bare_refused = run_write_chunk("daukle.write{ path = '..', text = 'x' }",
+                                       directory, bare_message, sizeof bare_message) == FR_ERR;
 
     fr_test_remove_tree(directory);
     ASSERT(refused);
-    ASSERT(backslash);
-    ASSERTm(message, strstr(message, "no directory separator") != NULL);
-    /* Without this the backslash case passes on a Lua escape error rather than
-       on the refusal, which is a green case that tests nothing. */
-    ASSERTm(backslash_message, strstr(backslash_message, "no directory separator") != NULL);
+    ASSERT(bare_refused);
+    ASSERTm(message, strstr(message, "must stay inside the derived directory") != NULL);
+    ASSERTm(bare_message, strstr(bare_message, "must stay inside the derived directory") != NULL);
+    PASS();
+}
+
+TEST write_refuses_a_path_with_a_backslash(void) {
+    static char message[512];
+    char directory[] = "build-test-write-backslash";
+    fr_cache_make_directories(directory);
+
+    int refused = run_write_chunk("daukle.write{ path = 'sub\\\\escape.txt', text = 'x' }",
+                                  directory, message, sizeof message) == FR_ERR;
+
+    fr_test_remove_tree(directory);
+    ASSERT(refused);
+    /* Without this the case passes on a Lua escape error rather than on the
+       refusal, which is a green case that tests nothing. */
+    ASSERTm(message, strstr(message, "separates directories") != NULL);
+    PASS();
+}
+
+TEST write_refuses_a_path_with_a_control_character(void) {
+    static char message[512];
+    char directory[] = "build-test-write-control";
+    fr_cache_make_directories(directory);
+
+    int refused = run_write_chunk("daukle.write{ path = 'a\\nb.txt', text = 'x' }",
+                                  directory, message, sizeof message) == FR_ERR;
+
+    fr_test_remove_tree(directory);
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "control character") != NULL);
+    PASS();
+}
+
+TEST write_refuses_a_bare_dot_path(void) {
+    static char message[512];
+    char directory[] = "build-test-write-dot";
+    fr_cache_make_directories(directory);
+
+    int refused = run_write_chunk("daukle.write{ path = '.', text = 'x' }",
+                                  directory, message, sizeof message) == FR_ERR;
+
+    fr_test_remove_tree(directory);
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "must name a file, not a directory") != NULL);
+    PASS();
+}
+
+TEST write_refuses_a_path_ending_in_a_separator_and_creates_nothing(void) {
+    static char message[512];
+    char directory[] = "build-test-write-trailing";
+    fr_cache_make_directories(directory);
+
+    int refused = run_write_chunk("daukle.write{ path = 'a/', text = 'x' }",
+                                  directory, message, sizeof message) == FR_ERR;
+
+    char stray[1024];
+    snprintf(stray, sizeof stray, "%s/a", directory);
+    int left_behind = fr_test_file_mtime(stray) != 0;
+    fr_test_remove_tree(directory);
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "must name a file, not a directory") != NULL);
+    ASSERT(!left_behind);
     PASS();
 }
 
@@ -2635,7 +2717,7 @@ TEST provision_is_refused_while_generating(void) {
         fr_error generate_err;
         generate_err.message[0] = '\0';
         generated = plugin->generate(plugin->state, &toolchain, "acme/app", "1.0.0",
-                                     "derived/stub", NULL, 0, &files, &file_count, &generate_err);
+                                     "derived/stub", NULL, 0, NULL, 0, &files, &file_count, &generate_err);
         snprintf(message, sizeof message, "%s", generate_err.message);
     }
 
@@ -2765,7 +2847,12 @@ int main(int argc, char **argv) {
     RUN_TEST(a_root_dir_refuses_a_member_that_climbs_out);
     RUN_TEST(write_puts_a_file_in_the_derived_directory);
     RUN_TEST(write_returns_the_path_it_wrote);
-    RUN_TEST(write_refuses_a_path_with_a_separator);
+    RUN_TEST(write_creates_a_subdirectory_for_a_nested_path);
+    RUN_TEST(write_refuses_a_path_that_climbs_out);
+    RUN_TEST(write_refuses_a_path_with_a_backslash);
+    RUN_TEST(write_refuses_a_path_with_a_control_character);
+    RUN_TEST(write_refuses_a_bare_dot_path);
+    RUN_TEST(write_refuses_a_path_ending_in_a_separator_and_creates_nothing);
     RUN_TEST(write_refuses_a_missing_path_or_text);
     RUN_TEST(write_is_not_installed_without_being_declared);
     GREATEST_MAIN_END();

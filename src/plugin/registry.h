@@ -29,6 +29,7 @@ typedef struct {
     int (*generate)(void *state, const fr_toolchain *toolchain, const char *project,
                     const char *version, const char *root,
                     const fr_resolved *resolved, size_t count,
+                    const fr_module *modules, size_t module_count,
                     fr_generated_file **out_files, size_t *out_count, fr_error *err);
     void *state;
 } fr_toolchain_plugin;
@@ -57,6 +58,11 @@ typedef struct {
     const char *generated_dir_relative;
     const fr_resolved *resolved;
     size_t resolved_count;
+    /* The project's own modules, which a multi-project toolchain renders one
+       build file per. `blocks` is deliberately not reachable from Lua: a
+       module's per-plugin block is what a CONSUMER reads about it. */
+    const fr_module *modules;
+    size_t module_count;
 } fr_task_run_context;
 
 /* run == NULL is an aggregator: a name for a group, with nothing to execute.

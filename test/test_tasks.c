@@ -46,6 +46,25 @@ static int counting_run(void *state, const fr_task_run_context *context, fr_erro
     return FR_OK;
 }
 
+/* D-115 shipped because core keeps a toolchain's `version` in a generate
+   callback's config and drops it from a task's. The module list must not
+   repeat that: a task writes this plugin's build file, so a list that reached
+   only `generate` would validate a graph and then build as if there were
+   none. */
+static int record_modules(void *state, const fr_task_run_context *context, fr_error *err) {
+    (void) err;
+    char *out = state;
+    for (size_t index = 0; index < context->module_count; index++) {
+        strcat(out, context->modules[index].name);
+        for (size_t edge = 0; edge < context->modules[index].requires_count; edge++) {
+            strcat(out, "<");
+            strcat(out, context->modules[index].requires[edge]);
+        }
+        strcat(out, ";");
+    }
+    return FR_OK;
+}
+
 static int failing_run(void *state, const fr_task_run_context *context, fr_error *err) {
     (void) state; (void) context;
     fr_error_set(err, "the compiler said no");
@@ -504,6 +523,44 @@ TEST a_failing_task_stops_the_run_naming_itself(void) {
     ASSERT_EQ(FR_ERR, fr_tasks_run(&plan, &session, &err));
     ASSERT(strstr(err.message, "task \"a:one\"") != NULL);
     ASSERT(strstr(err.message, "the compiler said no") != NULL);
+
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_test_remove_tree(scratch);
+    PASS();
+}
+
+TEST a_task_sees_the_module_list_and_its_requires(void) {
+    make_scratch("modules");
+    char seen[256];
+    seen[0] = '\0';
+
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin probe = { "daukle.task/a:probe", NULL, NULL, 0, record_modules, seen };
+    fr_error err;
+    fr_registry_add_task(registry, &probe, &err);
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\","
+        "\"modules\":{\"lib\":{},\"app\":{\"requires\":[\"lib\"]}},"
+        "\"toolchains\":{\"a\":\">=1.0\"}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "a:probe", &plan, &err));
+
+    fr_session session;
+    memset(&session, 0, sizeof session);
+    session.registry = registry;
+    session.manifest = manifest;
+    session.manifest_dir = scratch;
+
+    ASSERT_EQ(FR_OK, fr_tasks_run(&plan, &session, &err));
+    ASSERT(strstr(seen, "lib;") != NULL);
+    ASSERT(strstr(seen, "app<lib;") != NULL);
 
     fr_tasks_plan_free(&plan);
     fr_tasks_set_free(&set);
@@ -1181,6 +1238,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_goal_nothing_declares_is_refused);
     RUN_TEST(a_plan_runs_its_tasks_in_order);
     RUN_TEST(a_failing_task_stops_the_run_naming_itself);
+    RUN_TEST(a_task_sees_the_module_list_and_its_requires);
     RUN_TEST(a_run_publishes_the_base_relative_derived_directory);
     RUN_TEST(a_task_lists_what_joined_it);
     RUN_TEST(the_zero_plugin_unknown_message_says_the_project_has_none);

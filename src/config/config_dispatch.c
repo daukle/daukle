@@ -115,11 +115,32 @@ typedef struct {
     const char *root;
     const fr_resolved *resolved;
     size_t count;
+    const fr_module *modules;
+    size_t module_count;
     fr_generated_file **out_files;
     size_t *out_count;
 } lua_generate_context;
 
 static lua_generate_context *generate_context;
+
+/* One helper for both callbacks, because the two disagreeing is exactly the
+   defect D-115 was. */
+static void push_modules(lua_State *state, const fr_module *modules, size_t count) {
+    lua_newtable(state);
+    for (size_t index = 0; index < count; index++) {
+        lua_newtable(state);
+        lua_pushstring(state, modules[index].name);
+        lua_setfield(state, -2, "name");
+        lua_newtable(state);
+        for (size_t edge = 0; edge < modules[index].requires_count; edge++) {
+            lua_pushstring(state, modules[index].requires[edge]);
+            lua_rawseti(state, -2, (int) edge + 1);
+        }
+        lua_setfield(state, -2, "requires");
+        lua_rawseti(state, -2, (int) index + 1);
+    }
+    lua_setfield(state, -2, "modules");
+}
 
 static int protected_toolchain_generate(lua_State *state) {
     const lua_generate_context *context = generate_context;
@@ -179,6 +200,7 @@ static int protected_toolchain_generate(lua_State *state) {
         lua_rawseti(state, -2, (lua_Integer) index + 1);
     }
     lua_setfield(state, -2, "dependencies");
+    push_modules(state, context->modules, context->module_count);
 
     /* lua_call, not lua_pcall: see protected_language_apply above. */
     lua_call(state, 1, 1);
@@ -261,10 +283,12 @@ void fr_lua_set_task_cwd(const char *directory) {
 int fr_lua_dispatch_toolchain_generate(void *state, const fr_toolchain *toolchain, const char *project,
                                   const char *version, const char *root,
                                   const fr_resolved *resolved, size_t count,
+                                  const fr_module *modules, size_t module_count,
                                   fr_generated_file **out_files, size_t *out_count, fr_error *err) {
     int top = lua_gettop(fr_lua_runtime_state());
     lua_generate_context context = { state, toolchain, project, version, root,
-                                     resolved, count, out_files, out_count };
+                                     resolved, count, modules, module_count,
+                                     out_files, out_count };
     generate_context = &context;
     fr_lua_verbs_set_declared_env(
         (const char *const *) ((const fr_lua_plugin_slot *) state)->env,
@@ -543,6 +567,7 @@ static int protected_task_run(lua_State *state) {
     }
     lua_setfield(state, -2, "dependencies");
     lua_setfield(state, -2, "toolchain");
+    push_modules(state, context->modules, context->module_count);
 
     if (context->publish != NULL) {
         lua_newtable(state);

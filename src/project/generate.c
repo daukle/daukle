@@ -149,6 +149,7 @@ static int generate_toolchain(const fr_toolchain *toolchain, const fr_manifest *
     size_t file_count = 0;
     int result = plugin->generate(plugin->state, toolchain, manifest->self.project,
                                   project_version, FR_DERIVED_ROOT_RELATIVE, resolved, resolved_count,
+                                  manifest->self.modules, manifest->self.module_count,
                                   &files, &file_count, err);
     fr_resolved_free(resolved, resolved_count);
 

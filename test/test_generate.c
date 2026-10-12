@@ -8,6 +8,7 @@
 #include "project/generate.h"
 #include "project/region.h"
 #include "project/sync.h"
+#include "project/tasks.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -363,6 +364,50 @@ TEST an_empty_generate_table_creates_no_directory(void) {
     PASS();
 }
 
+TEST generate_sees_the_module_list_and_its_requires(void) {
+    char message[512];
+    int refused = generate_fails_with("test/fixtures/modules-reach-generate/daukle.toml",
+                                      message, sizeof message);
+    ASSERT_FALSE(refused);
+    char *text = NULL; fr_error err;
+    ASSERT_EQ(FR_OK, fr_file_read_text(
+        "test/fixtures/modules-reach-generate/build/daukle/stub/modules.txt", &text, &err));
+    ASSERT(strstr(text, "app<lib") != NULL);
+    ASSERT(strstr(text, "lib<") != NULL);
+    free(text);
+    PASS();
+}
+
+TEST a_task_sees_the_module_list_and_its_requires_in_lua(void) {
+    const char *manifest = "test/fixtures/modules-reach-generate/daukle.toml";
+    const char *written = "test/fixtures/modules-reach-generate/build/daukle/stub/task-modules.txt";
+    remove(written);
+
+    fr_error err;
+    fr_session session;
+    ASSERT_EQ(FR_OK, fr_session_open(manifest, 1, &session, &err));
+    fr_sync_report report;
+    ASSERT_EQ(FR_OK, fr_sync_session(&session, 1, &report, &err));
+    fr_sync_report_free(&report);
+
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "stub:list", &plan, &err));
+    int status = fr_tasks_run(&plan, &session, &err);
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    ASSERT_EQ(FR_OK, status);
+
+    char *text = NULL;
+    ASSERT_EQ(FR_OK, fr_file_read_text(written, &text, &err));
+    ASSERT(strstr(text, "app<lib") != NULL);
+    ASSERT(strstr(text, "lib<") != NULL);
+    free(text);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -383,5 +428,7 @@ int main(int argc, char **argv) {
     RUN_TEST(generation_may_not_exec);
     RUN_TEST(generation_may_not_resolve_a_tool);
     RUN_TEST(an_empty_generate_table_creates_no_directory);
+    RUN_TEST(generate_sees_the_module_list_and_its_requires);
+    RUN_TEST(a_task_sees_the_module_list_and_its_requires_in_lua);
     GREATEST_MAIN_END();
 }

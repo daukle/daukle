@@ -1188,10 +1188,9 @@ static int verb_exec(lua_State *state) {
 }
 
 /* A plugin may write one file, into the derived directory it already owns, and
-   the name may not carry a separator at all. That is deliberately smaller than
-   "a path inside the derived directory": an argfile needs a name and nothing
-   more, and refusing separators outright means there is no traversal question
-   to get wrong, no parent to create and no symlink to re-resolve.
+   the path may descend into a subdirectory of it, which is created. The same
+   containment rules as the generate writer apply: no climbing out, no
+   backslash, no control character.
 
    It exists because core already writes plugin-authored files there from a
    generate hook, and generate cannot run a tool, so a list that must be
@@ -1215,12 +1214,21 @@ static int verb_write(lua_State *state) {
     if (name[0] == '\0') {
         return luaL_error(state, "daukle.write's \"path\" may not be empty");
     }
-    if (strchr(name, '/') != NULL || strchr(name, '\\') != NULL) {
-        return luaL_error(state, "daukle.write's \"path\" must be a file name with no directory"
-                                 " separator; it is written into the derived directory");
+    if (fr_lua_sandbox_climbs_out(name)) {
+        return luaL_error(state, "daukle.write's \"path\" must stay inside the derived"
+                                 " directory: \"%s\"", name);
     }
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-        return luaL_error(state, "daukle.write's \"path\" must name a file, not \"%s\"", name);
+    if (strchr(name, '\\') != NULL) {
+        return luaL_error(state, "daukle.write's \"path\" separates directories with \"/\" and"
+                                 " not \"\\\": \"%s\"", name);
+    }
+    for (const char *cursor = name; *cursor != '\0'; cursor++) {
+        if ((unsigned char) *cursor < 0x20) {
+            return luaL_error(state, "daukle.write's \"path\" holds a control character");
+        }
+    }
+    if (strcmp(name, ".") == 0 || name[strlen(name) - 1] == '/') {
+        return luaL_error(state, "daukle.write's \"path\" must name a file, not a directory: \"%s\"", name);
     }
 
     lua_getfield(state, 1, "text");
@@ -1285,6 +1293,19 @@ static int verb_write(lua_State *state) {
     free(resolved);
     if (written < 0 || (size_t) written >= sizeof path) {
         return luaL_error(state, "the path is too long (%d characters)", (int) strlen(name));
+    }
+
+    char *last_separator = strrchr(path, '/');
+    if (last_separator != NULL) {
+        *last_separator = '\0';
+        fr_cache_make_directories(path);
+        /* Silent by design (see fr_cache_make_directories), so the outcome is
+           asked for here: unchecked, a directory that could not be made
+           surfaces as a write error naming the FILE. */
+        if (!fr_cache_directory_exists(path)) {
+            return luaL_error(state, "could not create the directory %s", path);
+        }
+        *last_separator = '/';
     }
 
     if (fr_file_write_text(path, text, &err) != FR_OK) {
