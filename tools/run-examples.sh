@@ -55,9 +55,70 @@ console_block() {
   ' "$1/ABOUT.md"
 }
 
+# daukle's own spelling of the host, because that is what an example's
+# needs-tools names and what a plugin's archive tables are keyed on.
+case $(uname -s) in
+  Linux*) host=linux ;;
+  Darwin*) host=macos ;;
+  MINGW*|MSYS*|CYGWIN*|Windows*) host=windows ;;
+  *) host=unknown ;;
+esac
+
+KNOWN_HOSTS="linux macos windows"
+
+# needs-tools may NAME the hosts the example runs on, one per line; an empty
+# file means every host, which is what all of them were when this was added.
+# Not every tool is published for every platform: there is no macOS gcc at any
+# version, so an example pinning one can only run where an archive exists.
+#
+# An unrecognised name is a FAILURE and not a skip. A typo would otherwise make
+# the example skip on every runner at once, which looks identical to a green
+# org and is the exact shape this harness exists to refuse.
+hosts_allow() {
+  example=$1
+  name=$2
+  marker="$example/needs-tools"
+  [ -f "$marker" ] || return 0
+
+  # Word splitting is what parses the file, so a name per line and several on
+  # one line are the same thing. The carriage return goes first: core does not
+  # pin `* -text`, so its own markers are CRLF on Windows and an unstripped \r
+  # makes every name unrecognised on one runner only.
+  set -- $(tr -d '\r' <"$marker")
+  [ "$#" -gt 0 ] || return 0
+
+  for candidate in "$@"; do
+    case " $KNOWN_HOSTS " in
+      *" $candidate "*) ;;
+      *)
+        fail "$name" \
+          "needs-tools names \"$candidate\", which is no host daukle knows ($KNOWN_HOSTS)"
+        return 1 ;;
+    esac
+  done
+
+  for candidate in "$@"; do
+    if [ "$candidate" = "$host" ]; then
+      return 0
+    fi
+  done
+
+  echo "skip $name: it runs on $* only, and this host is $host" >&2
+  skipped=$((skipped + 1))
+  return 1
+}
+
 run_example() {
   example=$1
   name=$(basename "$example")
+
+  # The HOST gate is read before the E2E gate on purpose. Both can apply at
+  # once and only one message can be printed: an unsupported host is permanent
+  # where a missing flag is not, so naming the flag would send a reader off to
+  # set a variable that cannot help them.
+  if ! hosts_allow "$example" "$name"; then
+    return
+  fi
 
   if [ -f "$example/needs-tools" ] && [ "${DAUKLE_EXAMPLE_E2E:-}" != "1" ]; then
     echo "skip $name: set DAUKLE_EXAMPLE_E2E=1 to provision real tools here" >&2
