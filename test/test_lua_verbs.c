@@ -1506,21 +1506,35 @@ TEST write_refuses_a_path_with_a_control_character(void) {
 }
 
 TEST write_refuses_a_bare_dot_path(void) {
-    static char dot_message[512];
-    static char dotdot_message[512];
+    static char message[512];
     char directory[] = "build-test-write-dot";
     fr_cache_make_directories(directory);
 
-    int dot = run_write_chunk("daukle.write{ path = '.', text = 'x' }",
-                              directory, dot_message, sizeof dot_message) == FR_ERR;
-    int dotdot = run_write_chunk("daukle.write{ path = '..', text = 'x' }",
-                                 directory, dotdot_message, sizeof dotdot_message) == FR_ERR;
+    int refused = run_write_chunk("daukle.write{ path = '.', text = 'x' }",
+                                  directory, message, sizeof message) == FR_ERR;
 
     fr_test_remove_tree(directory);
-    ASSERT(dot);
-    ASSERT(dotdot);
-    ASSERTm(dot_message, strstr(dot_message, "must name a file") != NULL);
-    ASSERTm(dotdot_message, strstr(dotdot_message, "\"path\"") != NULL);
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "must name a file, not a directory") != NULL);
+    PASS();
+}
+
+TEST write_refuses_a_path_ending_in_a_separator_and_creates_nothing(void) {
+    static char message[512];
+    char directory[] = "build-test-write-trailing";
+    fr_cache_make_directories(directory);
+
+    int refused = run_write_chunk("daukle.write{ path = 'a/', text = 'x' }",
+                                  directory, message, sizeof message) == FR_ERR;
+
+    char stray[1024];
+    snprintf(stray, sizeof stray, "%s/a", directory);
+    int left_behind = fr_test_file_mtime(stray) != 0;
+    fr_test_remove_tree(directory);
+
+    ASSERT(refused);
+    ASSERTm(message, strstr(message, "must name a file, not a directory") != NULL);
+    ASSERT(!left_behind);
     PASS();
 }
 
@@ -2833,6 +2847,7 @@ int main(int argc, char **argv) {
     RUN_TEST(write_refuses_a_path_with_a_backslash);
     RUN_TEST(write_refuses_a_path_with_a_control_character);
     RUN_TEST(write_refuses_a_bare_dot_path);
+    RUN_TEST(write_refuses_a_path_ending_in_a_separator_and_creates_nothing);
     RUN_TEST(write_refuses_a_missing_path_or_text);
     RUN_TEST(write_is_not_installed_without_being_declared);
     GREATEST_MAIN_END();

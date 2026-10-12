@@ -1214,8 +1214,6 @@ static int verb_write(lua_State *state) {
     if (name[0] == '\0') {
         return luaL_error(state, "daukle.write's \"path\" may not be empty");
     }
-    /* The generate writer accepts a nested relative path, so a task's writer refusing one is the
-       inconsistency, not the feature. */
     if (fr_lua_sandbox_climbs_out(name)) {
         return luaL_error(state, "daukle.write's \"path\" must stay inside the derived"
                                  " directory: \"%s\"", name);
@@ -1229,8 +1227,8 @@ static int verb_write(lua_State *state) {
             return luaL_error(state, "daukle.write's \"path\" holds a control character");
         }
     }
-    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-        return luaL_error(state, "daukle.write's \"path\" must name a file, not \"%s\"", name);
+    if (strcmp(name, ".") == 0 || name[strlen(name) - 1] == '/') {
+        return luaL_error(state, "daukle.write's \"path\" must name a file, not a directory: \"%s\"", name);
     }
 
     lua_getfield(state, 1, "text");
