@@ -11,7 +11,7 @@ jobs:
     with:
       line_endings: true
       toolchains: cmake
-      runners: '["ubuntu-latest", "windows-latest", "macos-latest"]'
+      runners: '["ubuntu-26.04", "windows-latest", "macos-latest"]'
       cmake_configure: '-B build -DCMAKE_BUILD_TYPE=Release'
       cmake_build: '--build build --config Release'
       cmake_test: 'DAUKLE_NETWORK_TESTS=1 ctest --test-dir build -C Release --output-on-failure'
