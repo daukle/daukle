@@ -24,6 +24,16 @@ if [ -z "${DAUKLE:-}" ]; then
   done
 fi
 
+# Each fixture is run from a throwaway root, so a RELATIVE DAUKLE resolves
+# against the wrong directory and every case fails at once, looking like a
+# broken harness rather than a mistyped variable. The discovery above already
+# produces an absolute path; this is for the one a caller supplies.
+case ${DAUKLE:-} in
+  ""|/*|[A-Za-z]:[/\\]*) ;;
+  *) DAUKLE=$(CDPATH= cd -- "$(dirname -- "$DAUKLE")" && pwd)/$(basename -- "$DAUKLE")
+     export DAUKLE ;;
+esac
+
 passed=0
 failed=0
 
