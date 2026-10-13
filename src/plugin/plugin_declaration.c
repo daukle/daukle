@@ -8,6 +8,7 @@
 #include "lua/luax.h"
 #include "plugin/plugin_modules.h"
 #include "util/error.h"
+#include "util/version.h"
 
 #include "lauxlib.h"
 
@@ -17,6 +18,20 @@
 /* Raised to stop the chunk the moment daukle.plugin has been read, so catching it
    distinguishes a declaration that was read from a plugin that really failed. */
 #define FR_PLUGIN_DECLARATION_READ "daukle: plugin declaration read"
+
+/* The plugin api this binary provides. A plugin declaring a HIGHER one is
+   refused by name; a plugin declaring a lower one is accepted forever, which is
+   what makes the number usable at all.
+
+   @implNote raise this in any release that adds a plugin-visible capability
+   which is NOT a new verb. A new verb needs no bump: an unknown entry in `uses`
+   is already refused by name by every core back to 0.1.0, which was measured
+   against the released binaries rather than assumed. The shape with no signal
+   of its own is a new FIELD inside a context table a callback already receives,
+   which is how `context.modules` reached 0.7.0 and `context.toolchain.version`
+   before it, and how a plugin needing one got a green build that compiled
+   nothing. D-116. */
+#define FR_PLUGIN_API_PROVIDED 1
 
 static fr_plugin_declaration *declaration_in_progress;
 
@@ -300,9 +315,19 @@ static int declare_plugin(lua_State *state) {
             return luaL_error(state, "%s \"%s\": api must be a whole number",
                               declaration->kind, declaration->label);
         }
-        if (api != 1) {
-            return luaL_error(state, "%s \"%s\": needs daukle api %I, this daukle provides 1",
+        if (api < 1) {
+            return luaL_error(state, "%s \"%s\": api must be 1 or greater, not %I",
                               declaration->kind, declaration->label, (LUAI_UACINT) api);
+        }
+        /* Only a HIGHER api is refused. The check was `api != 1`, which made the
+           field impossible to use: the first core to provide 2 would have
+           refused every plugin in the org, since they all declare 1. */
+        if (api > FR_PLUGIN_API_PROVIDED) {
+            return luaL_error(state,
+                              "%s \"%s\": needs daukle api %I and this daukle %s provides %d,"
+                              " so upgrade daukle",
+                              declaration->kind, declaration->label, (LUAI_UACINT) api,
+                              fr_self_version(), FR_PLUGIN_API_PROVIDED);
         }
     }
     lua_pop(state, 1);

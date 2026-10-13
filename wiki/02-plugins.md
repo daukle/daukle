@@ -97,6 +97,29 @@ a program declares `uses = { "exec", "tool" }`, one that fetches declares `"fetc
 cannot start a process, and the refusal comes from daukle rather than from the plugin's good
 intentions. When you review a dependency's plugin, `uses` is the line to read first.
 
+## What `api` is for, and when to raise it
+
+`api = 1` says which plugin api your plugin was written against. **daukle refuses an api HIGHER
+than it provides, by name and with its own version in the message**, so a plugin needing something
+newer than the daukle running it says so instead of misbehaving:
+
+```
+plugin "gradle": needs daukle api 2 and this daukle 0.7.0 provides 1, so upgrade daukle
+```
+
+**A LOWER api is accepted forever.** A plugin declaring `api = 1` keeps working on every later
+daukle, so there is no reason to raise yours to match a newer release. Raise it only when your
+plugin genuinely needs a capability that an older daukle lacks.
+
+**Most new capabilities need no api bump at all, because `uses` already polices them.** A verb that
+a daukle does not have is refused by name the moment the plugin is declared, which every daukle
+back to `0.1.0` does. The api number exists for the capability shape that has no signal of its
+own: **a new field inside a context table your callback already receives**, which an older daukle
+simply leaves absent.
+
+**Declare the LOWEST api your plugin actually needs.** Declaring a higher one refuses daukles that
+would have run your plugin perfectly well.
+
 ## What the sandbox gives a plugin
 
 `string`, `table`, `math`, and the handful of base functions. **Not** `io`, `os`, `require`,
