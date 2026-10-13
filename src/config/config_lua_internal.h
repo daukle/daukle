@@ -90,4 +90,13 @@ void fr_lua_declare_chunk_end(lua_State *state, int succeeded, int backup);
    set through fr_lua_verbs_install_registration instead. */
 void fr_lua_declare_install_config_surface(lua_State *state);
 
+/* The per-chunk and slot state config_declare.c owns, for the declarations
+   that live beside it. */
+int fr_lua_declare_chunk_declared_resolver(void);
+void fr_lua_declare_mark_chunk_other(void);
+size_t fr_lua_declare_chunk_toolchain_count(void);
+size_t fr_lua_declare_chunk_publisher_count(void);
+fr_lua_plugin_slot *fr_lua_declare_next_slot(void);
+void fr_lua_declare_count_slot(void);
+
 #endif

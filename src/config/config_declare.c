@@ -286,6 +286,34 @@ static int lua_declare_toolchain(lua_State *state) {
     return 0;
 }
 
+int fr_lua_declare_chunk_declared_resolver(void) {
+    return chunk_declared_resolver;
+}
+
+void fr_lua_declare_mark_chunk_other(void) {
+    chunk_declared_other = 1;
+}
+
+size_t fr_lua_declare_chunk_toolchain_count(void) {
+    return chunk_toolchain_count;
+}
+
+size_t fr_lua_declare_chunk_publisher_count(void) {
+    return chunk_publisher_count;
+}
+
+/* The slot the next declaration fills, or NULL when every slot is taken. It is
+   not counted until fr_lua_declare_count_slot, so a declaration that raises
+   first leaves nothing for the shutdown loop to free twice. */
+fr_lua_plugin_slot *fr_lua_declare_next_slot(void) {
+    if (plugin_slot_count == FR_LUA_MAX_PLUGINS) return NULL;
+    return &plugin_slots[plugin_slot_count];
+}
+
+void fr_lua_declare_count_slot(void) {
+    plugin_slot_count++;
+}
+
 /* Copies the toolchain-name prefix of a colon-qualified task name into a
    fixed buffer. luaL_error's format string is Lua's own minimal printf
    (lua_pushvfstring), which has no precision specifier: "%.*s" raises
@@ -343,7 +371,7 @@ static void release_task_slot(fr_lua_plugin_slot *slot) {
 }
 
 static int lua_declare_task(lua_State *state) {
-    if (chunk_declared_resolver) {
+    if (fr_lua_declare_chunk_declared_resolver()) {
         return luaL_error(state, "a resolver chunk declares only a resolver");
     }
     /* A task keeps exec and provision by inheriting them from the toolchain
@@ -355,8 +383,8 @@ static int lua_declare_task(lua_State *state) {
        indistinguishable from one that never comes, so "only to a toolchain
        plugin" would be false for a plugin that is one and simply declares it
        below. Naming the order is true in both cases and is also the fix. */
-    if (chunk_toolchain_count == 0) {
-        if (chunk_publisher_count > 0) {
+    if (fr_lua_declare_chunk_toolchain_count() == 0) {
+        if (fr_lua_declare_chunk_publisher_count() > 0) {
             return luaL_error(state, "a publisher declares publishers, not tasks: its publish"
                                      " function is the task, and daukle.exec is available there");
         }
@@ -369,7 +397,7 @@ static int lua_declare_task(lua_State *state) {
                                      " is declared above it; this chunk declares none yet");
         }
     }
-    chunk_declared_other = 1;
+    fr_lua_declare_mark_chunk_other();
     luaL_checktype(state, 1, LUA_TTABLE);
 
     fr_lua_raw_getfield(state, 1, "name");
@@ -394,12 +422,12 @@ static int lua_declare_task(lua_State *state) {
     if (slot_for(capability) != NULL) {
         return luaL_error(state, "\"%s\" is declared twice", capability);
     }
-    if (plugin_slot_count == FR_LUA_MAX_PLUGINS) {
+    fr_lua_plugin_slot *slot = fr_lua_declare_next_slot();
+    if (slot == NULL) {
         return luaL_error(state, "too many declarations in one configuration;"
                           " at most %d are allowed", FR_LUA_MAX_PLUGINS);
     }
 
-    fr_lua_plugin_slot *slot = &plugin_slots[plugin_slot_count];
     memset(slot, 0, sizeof *slot);
     slot->capability = fr_dup_string(capability);
     if (slot->capability == NULL) return luaL_error(state, "out of memory");
@@ -489,13 +517,13 @@ static int lua_declare_task(lua_State *state) {
     } else {
         lua_pop(state, 1);
     }
-    plugin_slot_count++;
+    fr_lua_declare_count_slot();
 
     fr_task_plugin plugin = { slot->capability, slot->part_of,
                               (const char *const *) slot->depends_on, slot->depends_on_count,
                               slot->has_run ? fr_lua_dispatch_task_run : NULL, slot };
     fr_error err;
-    if (fr_registry_add_task(registering_into, &plugin, &err) != FR_OK) {
+    if (fr_registry_add_task(fr_lua_registering_registry(), &plugin, &err) != FR_OK) {
         return luaL_error(state, "%s", err.message);
     }
     return 0;
