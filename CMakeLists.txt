@@ -56,8 +56,12 @@ if(NOT WIN32)
 endif()
 
 file(GLOB DAUKLE_CORE_SOURCES CONFIGURE_DEPENDS src/*/*.c)
+# The commands main.c dispatches to call back into it, so they are the executable's
+# and not the library's, where they would be objects no test could link.
+file(GLOB DAUKLE_CLI_COMMANDS CONFIGURE_DEPENDS src/cli/cli_*.c)
 list(REMOVE_ITEM DAUKLE_CORE_SOURCES
      ${CMAKE_CURRENT_SOURCE_DIR}/src/cli/main.c
+     ${DAUKLE_CLI_COMMANDS}
      ${CMAKE_CURRENT_SOURCE_DIR}/src/net/http_winhttp.c
      ${CMAKE_CURRENT_SOURCE_DIR}/src/net/http_curl.c
      ${CMAKE_CURRENT_SOURCE_DIR}/src/exec/exec_win32.c
@@ -98,7 +102,7 @@ else()
     target_link_libraries(daukle_core PUBLIC CURL::libcurl)
 endif()
 
-add_executable(daukle src/cli/main.c)
+add_executable(daukle src/cli/main.c ${DAUKLE_CLI_COMMANDS})
 target_link_libraries(daukle PRIVATE daukle_core)
 target_compile_options(daukle PRIVATE ${DAUKLE_WARNING_FLAGS})
 if(DAUKLE_STATIC AND NOT WIN32)
