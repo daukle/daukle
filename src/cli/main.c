@@ -1,10 +1,9 @@
-#include "cache/cache.h"
+#include "cli/cli_internal.h"
+
 #include "cli/cli.h"
 #include "config/config.h"
 #include "config/config_lua.h"
-#include "config/manifest.h"
 #include "config/tomledit.h"
-#include "exec/toolreport.h"
 #include "lua/lua_verbs.h"
 #include "lua/luax.h"
 #include "plugin/plugins.h"
@@ -37,7 +36,7 @@ static void print_notice(const char *message) {
     fprintf(stderr, "daukle: %s\n", message);
 }
 
-static void report_error(const fr_error *err, int verbose) {
+void fr_cli_report_error(const fr_error *err, int verbose) {
     fprintf(stderr, "daukle: %s\n", err->message);
     if (verbose) {
         const char *traceback = fr_lua_last_traceback();
@@ -64,7 +63,7 @@ static char *manifest_directory(const char *manifest_path) {
 /* A NULL manifest_path means "search the current directory"; a registry is
    built only for that search and torn down again before returning, per the
    rule that every registry a path builds is destroyed and shut down there. */
-static int resolve_manifest_path(const char *manifest_path, char **out_path, fr_error *err) {
+int fr_cli_resolve_manifest_path(const char *manifest_path, char **out_path, fr_error *err) {
     if (manifest_path != NULL) {
         *out_path = fr_dup_string(manifest_path);
         if (*out_path == NULL) {
@@ -89,7 +88,7 @@ static int run(const char *manifest_path, int write, int use_cache, int verbose)
     fr_sync_report report;
     int status = 0;
     if (fr_sync(manifest_path, write, use_cache, &report, &err) != FR_OK) {
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         if (write && report.count > 0) {
             fprintf(stderr, "daukle: %zu file%s updated before the failure\n",
                     report.count, report.count == 1 ? "" : "s");
@@ -113,141 +112,13 @@ static int run(const char *manifest_path, int write, int use_cache, int verbose)
 static int run_with_resolved_manifest(const char *manifest_path, int write, int use_cache, int verbose) {
     fr_error err;
     char *resolved = NULL;
-    if (resolve_manifest_path(manifest_path, &resolved, &err) != FR_OK) {
-        report_error(&err, verbose);
+    if (fr_cli_resolve_manifest_path(manifest_path, &resolved, &err) != FR_OK) {
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
     int status = run(resolved, write, use_cache, verbose);
     free(resolved);
     return status;
-}
-
-/* What the configuration actually depended on, so a future lockfile has a
-   record of it without a second pass over the config surface. */
-static void print_env_reads(const cJSON *env_reads) {
-    if (env_reads == NULL || env_reads->child == NULL) return;
-    printf("daukle: environment reads\n");
-    const cJSON *entry = NULL;
-    cJSON_ArrayForEach(entry, env_reads) {
-        if (cJSON_IsString(entry)) printf("  %s = %s\n", entry->string, entry->valuestring);
-    }
-}
-
-/* Printed after the manifest itself, exactly what fr_plugins_load recorded on
-   this run: label, resolved version or local location, declared verbs and
-   digest, so adopting a pin is a copy of the printed line's sha256, not a
-   separate lookup. Reads fr_plugins_report before it is cleared, never after. */
-static void print_plugin_report(void) {
-    const fr_plugin_report *report = fr_plugins_report();
-    if (report->count == 0 && report->unused_resolver_count == 0) return;
-
-    printf("daukle: plugins\n");
-    for (size_t index = 0; index < report->count; index++) {
-        const fr_plugin_report_entry *entry = &report->entries[index];
-        if (entry->required_by != NULL) {
-            printf("  %s: %s, sha256 %s, required by %s as %s", entry->label, entry->url,
-                   entry->sha256, entry->required_by, entry->alias);
-        } else if (entry->kind == FR_PLUGIN_RESOLVED) {
-            printf("  %s: %s via %s, %s, sha256 %s", entry->label, entry->resolved,
-                   entry->resolver, entry->url, entry->sha256);
-        } else {
-            printf("  %s: %s, sha256 %s", entry->label, entry->resolved, entry->sha256);
-        }
-        if (entry->uses_count == 0) {
-            printf(", uses none");
-        } else {
-            printf(", uses ");
-            for (size_t use_index = 0; use_index < entry->uses_count; use_index++) {
-                printf("%s%s", use_index == 0 ? "" : ",", entry->uses[use_index]);
-            }
-        }
-        if (entry->overridden) printf(", overridden");
-        printf("\n");
-    }
-
-    for (size_t index = 0; index < report->unused_resolver_count; index++) {
-        printf("  resolver %s: declared, unused\n", report->unused_resolvers[index]);
-    }
-}
-
-/* Mirrors print_plugin_report's shape so the two reports read as one
-   program's output: a "daukle: " header, then two-space-indented rows. The
-   row table is toolreport.c's, filled as a toolchain plugin provisions or
-   reuses a tool during this run. An installed row's url field actually holds
-   its path (see fr_toolreport_used_installed) and carries no digest, so it
-   is rendered without one rather than beside a blank "sha256 " that would
-   read as a provisioned row missing its pin. */
-static void print_toolreport(void) {
-    size_t count = fr_toolreport_row_count();
-    if (count == 0) return;
-
-    printf("daukle: tools\n");
-    for (size_t index = 0; index < count; index++) {
-        const fr_toolreport_row *row = fr_toolreport_row_at(index);
-        if (row->provisioned) {
-            printf("  %s: %s, sha256 %s\n", row->label, row->url, row->digest);
-        } else {
-            printf("  %s: %s\n", row->label, row->url);
-        }
-    }
-}
-
-static int print_config(const char *manifest_path, int use_cache, int verbose) {
-    fr_error err;
-    fr_cache_set_enabled(use_cache);
-
-    char *resolved = NULL;
-    if (resolve_manifest_path(manifest_path, &resolved, &err) != FR_OK) {
-        report_error(&err, verbose);
-        return 1;
-    }
-
-    fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, &err) != FR_OK) {
-        report_error(&err, verbose);
-        free(resolved);
-        return 1;
-    }
-
-    fr_manifest manifest;
-    int status = fr_config_load_file(resolved, registry, &manifest, &err);
-    /* The runtime owns the recorded reads and the shutdown below frees them. */
-    cJSON *env_reads = cJSON_Duplicate(fr_lua_env_reads(), 1);
-    fr_registry_destroy(registry);
-    fr_lua_runtime_shutdown();
-
-    if (status != FR_OK) {
-        report_error(&err, verbose);
-        cJSON_Delete(env_reads);
-        fr_manifest_free(&manifest);
-        free(resolved);
-        fr_plugins_report_clear();
-        fr_resolvers_clear();
-        return 1;
-    }
-
-    char *printed = cJSON_Print(manifest.document);
-    if (printed == NULL) {
-        fprintf(stderr, "daukle: out of memory printing \"%s\"\n", resolved);
-        cJSON_Delete(env_reads);
-        fr_manifest_free(&manifest);
-        free(resolved);
-        fr_plugins_report_clear();
-        fr_resolvers_clear();
-        return 1;
-    }
-
-    printf("%s\n", printed);
-    free(printed);
-    print_env_reads(env_reads);
-    cJSON_Delete(env_reads);
-    print_plugin_report();
-    print_toolreport();
-    fr_plugins_report_clear();
-    fr_resolvers_clear();
-    fr_manifest_free(&manifest);
-    free(resolved);
-    return 0;
 }
 
 static int ends_with(const char *text, const char *suffix) {
@@ -334,8 +205,8 @@ static int split_modules(const char *modules_arg, char ***out_modules, size_t *o
 static int add_dependency(const fr_cli_options *options) {
     fr_error err;
     char *resolved = NULL;
-    if (resolve_manifest_path(options->manifest_path, &resolved, &err) != FR_OK) {
-        report_error(&err, options->verbose);
+    if (fr_cli_resolve_manifest_path(options->manifest_path, &resolved, &err) != FR_OK) {
+        fr_cli_report_error(&err, options->verbose);
         return 1;
     }
 
@@ -349,7 +220,7 @@ static int add_dependency(const fr_cli_options *options) {
     const char *project = NULL;
     const char *range = NULL;
     if (split_add_spec(options->add_spec, spec_buffer, sizeof spec_buffer, &project, &range, &err) != FR_OK) {
-        report_error(&err, options->verbose);
+        fr_cli_report_error(&err, options->verbose);
         free(resolved);
         return 1;
     }
@@ -357,14 +228,14 @@ static int add_dependency(const fr_cli_options *options) {
     char **modules = NULL;
     size_t module_count = 0;
     if (split_modules(options->add_modules, &modules, &module_count, &err) != FR_OK) {
-        report_error(&err, options->verbose);
+        fr_cli_report_error(&err, options->verbose);
         free(resolved);
         return 1;
     }
 
     char *original_text = NULL;
     if (fr_file_read_text(resolved, &original_text, &err) != FR_OK) {
-        report_error(&err, options->verbose);
+        fr_cli_report_error(&err, options->verbose);
         free_modules(modules);
         free(resolved);
         return 1;
@@ -378,7 +249,7 @@ static int add_dependency(const fr_cli_options *options) {
     free_modules(modules);
 
     if (status != FR_OK) {
-        report_error(&err, options->verbose);
+        fr_cli_report_error(&err, options->verbose);
         free(resolved);
         return 1;
     }
@@ -386,7 +257,7 @@ static int add_dependency(const fr_cli_options *options) {
     status = fr_file_write_text(resolved, updated_text, &err);
     free(updated_text);
     if (status != FR_OK) {
-        report_error(&err, options->verbose);
+        fr_cli_report_error(&err, options->verbose);
         free(resolved);
         return 1;
     }
@@ -468,8 +339,8 @@ static int plugin_update(const char *label, int verbose) {
     fr_error err;
 
     char *resolved = NULL;
-    if (resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
-        report_error(&err, verbose);
+    if (fr_cli_resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -487,7 +358,7 @@ static int plugin_update(const char *label, int verbose) {
         if (registry != NULL) fr_registry_destroy(registry);
         free(directory);
         free(resolved);
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -499,7 +370,7 @@ static int plugin_update(const char *label, int verbose) {
         fr_lua_runtime_shutdown();
         fr_resolvers_clear();
         fr_registry_destroy(registry);
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -512,7 +383,7 @@ static int plugin_update(const char *label, int verbose) {
     fr_registry_destroy(registry);
     manifest_plugins_free(&plugins);
     if (status != FR_OK) {
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -534,8 +405,8 @@ static int plugin_update(const char *label, int verbose) {
 static int clean_derived(const char *manifest_path, int verbose) {
     fr_error err;
     char *resolved = NULL;
-    if (resolve_manifest_path(manifest_path, &resolved, &err) != FR_OK) {
-        report_error(&err, verbose);
+    if (fr_cli_resolve_manifest_path(manifest_path, &resolved, &err) != FR_OK) {
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -549,7 +420,7 @@ static int clean_derived(const char *manifest_path, int verbose) {
     int status = fr_derived_clean(directory, &err);
     free(directory);
     if (status != FR_OK) {
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -560,8 +431,8 @@ static int clean_derived(const char *manifest_path, int verbose) {
 static int run_task(const char *task_name, int use_cache, int verbose) {
     fr_error err;
     char *resolved = NULL;
-    if (resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
-        report_error(&err, verbose);
+    if (fr_cli_resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -569,14 +440,14 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
     int opened = fr_session_open(resolved, use_cache, &session, &err);
     free(resolved);
     if (opened != FR_OK) {
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
     fr_task_set set;
     if (fr_tasks_collect(session.registry, &session.manifest, &set, &err) != FR_OK) {
         fr_session_close(&session);
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -586,7 +457,7 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
         size_t plugin_count = fr_plugins_report_declared_count(fr_plugins_report());
         fr_tasks_set_free(&set);
         fr_session_close(&session);
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         if (unknown) {
             char message[256];
             fr_tasks_unknown_message(task_name, plugin_count, message, sizeof message);
@@ -605,7 +476,7 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
         fr_tasks_plan_free(&plan);
         fr_tasks_set_free(&set);
         fr_session_close(&session);
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
     fr_sync_report_free(&report);
@@ -615,7 +486,7 @@ static int run_task(const char *task_name, int use_cache, int verbose) {
     fr_tasks_set_free(&set);
     fr_session_close(&session);
     if (status != FR_OK) {
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
     printf("daukle: %s\n", task_name);
@@ -663,7 +534,7 @@ static int run_init(const char *name, int verbose) {
 
     fr_error err;
     if (fr_file_write_text(path, text, &err) != FR_OK) {
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -675,8 +546,8 @@ static int run_init(const char *name, int verbose) {
 static int run_publish(const char *only, int use_cache, int verbose) {
     fr_error err;
     char *resolved = NULL;
-    if (resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
-        report_error(&err, verbose);
+    if (fr_cli_resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -684,14 +555,14 @@ static int run_publish(const char *only, int use_cache, int verbose) {
     int opened = fr_session_open(resolved, use_cache, &session, &err);
     free(resolved);
     if (opened != FR_OK) {
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
     fr_task_set set;
     if (fr_tasks_collect(session.registry, &session.manifest, &set, &err) != FR_OK) {
         fr_session_close(&session);
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -713,7 +584,7 @@ static int run_publish(const char *only, int use_cache, int verbose) {
     if (fr_tasks_check_publish(&set, &session.manifest, only, &err) != FR_OK) {
         fr_tasks_set_free(&set);
         fr_session_close(&session);
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -722,7 +593,7 @@ static int run_publish(const char *only, int use_cache, int verbose) {
         fr_sync_report_free(&report);
         fr_tasks_set_free(&set);
         fr_session_close(&session);
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
     fr_sync_report_free(&report);
@@ -730,7 +601,7 @@ static int run_publish(const char *only, int use_cache, int verbose) {
     if (fr_tasks_run_publish(&set, &session, only, confirm_published, NULL, &err) != FR_OK) {
         fr_tasks_set_free(&set);
         fr_session_close(&session);
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -762,22 +633,22 @@ static void print_task_joiners(const fr_task_set *set, const char *name,
 static int list_tasks(int use_cache, int verbose) {
     fr_error err;
     char *resolved = NULL;
-    if (resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
-        report_error(&err, verbose);
+    if (fr_cli_resolve_manifest_path(NULL, &resolved, &err) != FR_OK) {
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
     fr_session session;
     int opened = fr_session_open(resolved, use_cache, &session, &err);
     free(resolved);
     if (opened != FR_OK) {
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
     fr_task_set set;
     if (fr_tasks_collect(session.registry, &session.manifest, &set, &err) != FR_OK) {
         fr_session_close(&session);
-        report_error(&err, verbose);
+        fr_cli_report_error(&err, verbose);
         return 1;
     }
 
@@ -830,7 +701,7 @@ int main(int argc, char **argv) {
         case FR_CLI_CHECK:
             return run_with_resolved_manifest(options.manifest_path, 0, options.use_cache, options.verbose);
         case FR_CLI_CONFIG_PRINT:
-            return print_config(options.manifest_path, options.use_cache, options.verbose);
+            return fr_cli_print_config(options.manifest_path, options.use_cache, options.verbose);
         case FR_CLI_ADD:
             return add_dependency(&options);
         case FR_CLI_PLUGIN_UPDATE:
