@@ -279,6 +279,10 @@ size_t fr_lua_declare_chunk_publisher_count(void) {
     return chunk_publisher_count;
 }
 
+void fr_lua_declare_count_publisher(void) {
+    chunk_publisher_count++;
+}
+
 /* The slot the next declaration fills, or NULL when every slot is taken. It is
    not counted until fr_lua_declare_count_slot, so a declaration that raises
    first leaves nothing for the shutdown loop to free twice. */
@@ -292,10 +296,10 @@ void fr_lua_declare_count_slot(void) {
 }
 
 static int lua_declare_publisher(lua_State *state) {
-    if (chunk_declared_resolver) {
+    if (fr_lua_declare_chunk_declared_resolver()) {
         return luaL_error(state, "a resolver chunk declares only a resolver");
     }
-    chunk_declared_other = 1;
+    fr_lua_declare_mark_chunk_other();
     luaL_checktype(state, 1, LUA_TTABLE);
 
     fr_lua_plugin_slot *slot = NULL;
@@ -305,10 +309,10 @@ static int lua_declare_publisher(lua_State *state) {
 
     fr_task_plugin plugin = { slot->capability, NULL, NULL, 0, fr_lua_dispatch_task_run, slot };
     fr_error err;
-    if (fr_registry_add_task(registering_into, &plugin, &err) != FR_OK) {
+    if (fr_registry_add_task(fr_lua_registering_registry(), &plugin, &err) != FR_OK) {
         return luaL_error(state, "%s", err.message);
     }
-    chunk_publisher_count++;
+    fr_lua_declare_count_publisher();
     return 0;
 }
 

@@ -98,6 +98,7 @@ int fr_lua_declare_chunk_declared_resolver(void);
 void fr_lua_declare_mark_chunk_other(void);
 size_t fr_lua_declare_chunk_toolchain_count(void);
 size_t fr_lua_declare_chunk_publisher_count(void);
+void fr_lua_declare_count_publisher(void);
 fr_lua_plugin_slot *fr_lua_declare_next_slot(void);
 void fr_lua_declare_count_slot(void);
 
