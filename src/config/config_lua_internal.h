@@ -15,6 +15,8 @@
    plugin slots every declaration fills. Neither file reaches into the other's
    storage: everything that crosses does so through this file. */
 
+#define FR_LUA_MAX_PLUGINS 128
+
 /* One registered plugin: the capability it answers to, the lua reference of
    the callback it registered, and, for a task, what it is part of and what it
    depends on. config_declare.c fills these; config_dispatch.c is handed one as
@@ -98,5 +100,9 @@ size_t fr_lua_declare_chunk_toolchain_count(void);
 size_t fr_lua_declare_chunk_publisher_count(void);
 fr_lua_plugin_slot *fr_lua_declare_next_slot(void);
 void fr_lua_declare_count_slot(void);
+
+fr_lua_plugin_slot *fr_lua_declare_slot_for(const char *capability);
+int fr_lua_declare_chunk_declares_toolchain(const char *name, size_t length);
+int fr_lua_declare_task(lua_State *state);
 
 #endif
