@@ -16,4 +16,6 @@ int fr_manifest_read_publish(const cJSON *entry, const char *name, fr_publish_ta
                              fr_error *err);
 int fr_manifest_check_publish_targets(const fr_manifest *out, const char *file_path, fr_error *err);
 
+int fr_manifest_project_from_json(const cJSON *root, const char *file_path, fr_project *out, fr_error *err);
+
 #endif
