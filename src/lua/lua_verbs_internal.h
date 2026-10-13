@@ -49,4 +49,6 @@ int fr_lua_root_tool(lua_State *state);
 int fr_lua_verb_tool(lua_State *state);
 int fr_lua_verb_exec(lua_State *state);
 
+int fr_lua_verb_write(lua_State *state);
+
 #endif
