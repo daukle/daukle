@@ -1,4 +1,5 @@
 #include "lua/lua_verbs.h"
+#include "lua/lua_verbs_internal.h"
 
 #include "cache/cache.h"
 #include "config/config_lua.h"
@@ -399,15 +400,7 @@ static int verb_parse(lua_State *state) {
     return 1;
 }
 
-#define FR_TOOL_HANDLE "daukle.tool"
 #define FR_VERB_MAX_ARGV 256
-
-#define FR_TOOL_NAME_MAX 128
-
-typedef struct {
-    char path[1024];
-    char name[FR_TOOL_NAME_MAX];
-} fr_lua_tool;
 
 static int g_verbose;
 
@@ -415,10 +408,18 @@ void fr_lua_verbs_set_verbose(int enabled) {
     g_verbose = enabled;
 }
 
+int fr_lua_verbs_is_verbose(void) {
+    return g_verbose;
+}
+
 static int g_resolving;
 
 void fr_lua_verbs_set_resolving(int enabled) {
     g_resolving = enabled;
+}
+
+int fr_lua_verbs_is_resolving(void) {
+    return g_resolving;
 }
 
 /* Reads the "as" field of the options table at table_index without honoring
@@ -476,18 +477,9 @@ static int verb_tool(lua_State *state) {
 
     luaL_getmetatable(state, FR_TOOL_HANDLE);
     lua_setmetatable(state, -2);
-    if (g_verbose) fprintf(stderr, "tool %s (%s)\n", handle->name, handle->path);
+    if (fr_lua_verbs_is_verbose()) fprintf(stderr, "tool %s (%s)\n", handle->name, handle->path);
     return 1;
 }
-
-#define FR_PROVISION_HANDLE "daukle.provision.root"
-
-/* Sized like fr_provision_result.root, so taking that root cannot truncate. */
-#define FR_PROVISION_ROOT_MAX 1024
-
-typedef struct {
-    char root[FR_PROVISION_ROOT_MAX];
-} fr_lua_root;
 
 static const char *const PROVISION_FIELDS[] = { "url", "sha256", "as", "headers" };
 
@@ -768,7 +760,7 @@ static int refuse_an_unknown_pin_field(lua_State *state) {
 }
 
 static int verb_pin(lua_State *state) {
-    if (!g_resolving) {
+    if (!fr_lua_verbs_is_resolving()) {
         return luaL_error(state, "daukle.pin is available only in a resolve run: pass --resolve."
                                  " An ordinary build fetches nothing it has no sha256 for");
     }
@@ -958,7 +950,7 @@ static int root_tool(lua_State *state) {
     snprintf(handle->name, sizeof handle->name, "%s", member_base_name(member));
     luaL_getmetatable(state, FR_TOOL_HANDLE);
     lua_setmetatable(state, -2);
-    if (g_verbose) fprintf(stderr, "tool %s (%s)\n", handle->name, handle->path);
+    if (fr_lua_verbs_is_verbose()) fprintf(stderr, "tool %s (%s)\n", handle->name, handle->path);
     return 1;
 }
 
@@ -1081,7 +1073,7 @@ static int verb_exec(lua_State *state) {
         return luaL_error(state, "%s", err.message);
     }
 
-    if (g_verbose) report_verbose_exec(handle, argv, count, cwd);
+    if (fr_lua_verbs_is_verbose()) report_verbose_exec(handle, argv, count, cwd);
 
     /* The names and values stay on the lua stack below anchor_base until
        fr_exec_run returns, exactly as argv[] does. */
@@ -1248,7 +1240,7 @@ static int verb_write(lua_State *state) {
        resolving rather than of building: an ordinary build must not modify a
        tracked file behind the user's back. Same gate as daukle.pin, and for
        the same reason, which is why it names the same flag. D-85. */
-    if (committed && !g_resolving) {
+    if (committed && !fr_lua_verbs_is_resolving()) {
         return luaL_error(state, "daukle.write{ committed = true } is available only in a resolve"
                                  " run: pass --resolve. An ordinary build does not rewrite a file"
                                  " the project has committed");
