@@ -1,6 +1,8 @@
 #ifndef DAUKLE_LUA_VERBS_INTERNAL_H
 #define DAUKLE_LUA_VERBS_INTERNAL_H
 
+#include "lua.h"
+
 /* The seam between lua_verbs.c, which builds the per-plugin environment and
    installs the verbs, and the files that each implement a family of them.
    Everything that crosses between those files does so through this one. */
@@ -25,5 +27,7 @@ typedef struct {
 
 int fr_lua_verbs_is_verbose(void);
 int fr_lua_verbs_is_resolving(void);
+
+int fr_lua_verb_env(lua_State *state);
 
 #endif
