@@ -306,7 +306,7 @@ static int validate_overrides(const fr_plugin_declaration *declaration, const cJ
             }
             char declared_aliases[256];
             fr_plugin_deps_list_names(declared_aliases, sizeof declared_aliases, names,
-                      declaration->requires_count);
+                                      declaration->requires_count);
             fr_error_set(err, "plugin \"%s\": requires[\"%s\"] overrides an alias this plugin does"
                               " not declare; it declares %s",
                          label, alias, declared_aliases);

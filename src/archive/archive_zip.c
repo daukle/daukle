@@ -22,7 +22,7 @@ static int local_header_agrees(fr_archive *archive, const mz_zip_archive_file_st
     char local_name[FR_ARCHIVE_MAX_NAME + 1];
     if (name_length > FR_ARCHIVE_MAX_NAME
         || !fr_archive_read_at(archive->file, entry->m_local_header_ofs + ZIP_LOCAL_HEADER_SIZE,
-                    (unsigned char *) local_name, name_length)) {
+                               (unsigned char *) local_name, name_length)) {
         fr_error_set(err, "the archive member \"%s\" has an unreadable local header",
                      archive->name);
         return 0;
