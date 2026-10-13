@@ -93,7 +93,7 @@ the client tier's rules.
 | what a configuration script may touch | `src/lua/lua_sandbox.c` | a permission system. It curates one globals table and bounds daukle.include |
 | verifying a spliced manifest still parses | `src/config/tomledit.c`, through `FR_CONFIG_TOML` | a second parser. It reads its own output back so no caller is handed text it would be wrong to write |
 | the one lua state's lifetime, running a configuration script and reading it back, and what the daukle table a script sees carries | `src/config/config_lua.c` | the verbs a plugin declares with, which are `src/config/config_declare.c`, nor the sandbox or the lua state, which are `src/lua/lua_sandbox.c` and `src/lua/luax.c` |
-| the declaration verbs, `daukle.language`, `source`, `toolchain`, `task`, `publisher` and `resolver`: what each one refuses, the slot it fills and what it registers | `src/config/config_declare.c` | calling any of them back, which is `src/config/config_dispatch.c`, nor the registry they land in, which is `src/plugin/registry.c` |
+| the declaration verbs, `daukle.language`, `source`, `toolchain`, `task`, `publisher` and `resolver`: what each one refuses, the slot it fills and what it registers | `src/config/config_declare.c`, with `task` and `publisher` in `config_declare_task.c`, which reads the chunk and slot state only through the accessors `config_lua_internal.h` declares | calling any of them back, which is `src/config/config_dispatch.c`, nor the registry they land in, which is `src/plugin/registry.c` |
 | calling a registered plugin back: the protected frame each dispatch runs under, the table it builds for the callback, and what it reads out of the answer | `src/config/config_dispatch.c` | declaring or registering anything, which is `src/config/config_declare.c`. It is handed the slot and calls the callback the slot names |
 | `daukle.require`: what a module name resolves to, the per-load memo, the owner frame a module of another plugin runs under, and the cycle report | `src/lua/lua_modules.c` | where a module's bytes come from, which is `src/plugin/plugin_modules.c`, nor who may reach across a plugin boundary, which is the `requires` graph in `src/plugin/plugin_deps.c` |
 | what a plugin may touch, and building one environment per plugin | `src/lua/lua_verbs.c`, which installs the verbs; each family is its own file behind `src/lua/lua_verbs_internal.h`: `_env` (`env`), `_data` (`read`, `fetch`, `cache`, `region`, `json_set`, `json_parse`, `parse`), `_provision` (`provision`, `artifact`, `pin`), `_root` (the root handle's methods), `_exec` (`tool`, `exec`), `_write` (`write`) | the configuration sandbox, which is `src/lua/lua_sandbox.c`. One is per plugin, the other is the state's globals |
@@ -165,7 +165,7 @@ across that boundary and all three are now refused. Declaring a task `other:x` i
 `lua_declare_task` unless the chunk declared a toolchain `other` above it. Resolving
 `daukle.require("other:lib/x")` is refused by `require_across_plugins` (`src/lua/lua_modules.c`)
 unless `other` is an alias in the chunk's own `requires`. Pointing a `dependsOn` or a `partOf` at
-`other:x` is refused by `edge_owner_is_declared` (`src/config/config_declare.c`) under the same two
+`other:x` is refused by `edge_owner_is_declared` (`src/config/config_declare_task.c`) under the same two
 conditions, which is the route that was open until 2026-10-02.
 
 **A bare edge name is deliberately not checked**, and the rule is about qualified names only. A bare
