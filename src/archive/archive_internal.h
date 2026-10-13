@@ -78,4 +78,8 @@ void fr_archive_publish(fr_archive *archive, fr_member_kind kind, size_t length,
                         int setuid, const fr_archive_member **out_member);
 int fr_archive_tar_next(fr_archive *archive, const fr_archive_member **out_member, fr_error *err);
 
+unsigned long fr_archive_read_little_endian(const unsigned char *bytes, size_t width);
+int fr_archive_read_at(FILE *file, unsigned long long offset, unsigned char *into, size_t count);
+int fr_archive_zip_next(fr_archive *archive, const fr_archive_member **out_member, fr_error *err);
+
 #endif

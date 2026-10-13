@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static unsigned long read_little_endian(const unsigned char *bytes, size_t width) {
+unsigned long fr_archive_read_little_endian(const unsigned char *bytes, size_t width) {
     unsigned long value = 0;
     for (size_t index = width; index > 0; index--) {
         value = (value << 8) | bytes[index - 1];
@@ -41,7 +41,7 @@ static int has_end_of_central_directory(const unsigned char *bytes, size_t lengt
         stop = length - ZIP_MAX_COMMENT - ZIP_END_OF_CENTRAL_DIRECTORY_SIZE;
     }
     for (;;) {
-        if (read_little_endian(bytes + scan, 4) == ZIP_END_OF_CENTRAL_DIRECTORY) return 1;
+        if (fr_archive_read_little_endian(bytes + scan, 4) == ZIP_END_OF_CENTRAL_DIRECTORY) return 1;
         if (scan == stop) return 0;
         scan--;
     }
@@ -65,7 +65,7 @@ int fr_archive_kind_of(const char *bytes, size_t length, fr_archive_kind *out, f
     return FR_ERR;
 }
 
-static int read_at(FILE *file, unsigned long long offset, unsigned char *into, size_t count) {
+int fr_archive_read_at(FILE *file, unsigned long long offset, unsigned char *into, size_t count) {
     if (offset > (unsigned long long) LONG_MAX) return 0;
     if (fseek(file, (long) offset, SEEK_SET) != 0) return 0;
     return fread(into, 1, count, file) == count;
@@ -73,7 +73,7 @@ static int read_at(FILE *file, unsigned long long offset, unsigned char *into, s
 
 static size_t zip_read(void *opaque, mz_uint64 file_offset, void *into, size_t count) {
     fr_archive *archive = opaque;
-    if (!read_at(archive->file, (unsigned long long) file_offset, into, count)) return 0;
+    if (!fr_archive_read_at(archive->file, (unsigned long long) file_offset, into, count)) return 0;
     return count;
 }
 
@@ -149,7 +149,7 @@ static int truncated_gzip_header(fr_error *err) {
 static int skip_gzip_extra_field(FILE *file) {
     unsigned char length[2];
     if (fread(length, 1, sizeof length, file) != sizeof length) return 0;
-    return fseek(file, (long) read_little_endian(length, 2), SEEK_CUR) == 0;
+    return fseek(file, (long) fr_archive_read_little_endian(length, 2), SEEK_CUR) == 0;
 }
 
 /* gzip's header is variable: gzip(1) writes the original file name after the
@@ -240,114 +240,6 @@ void fr_archive_publish(fr_archive *archive, fr_member_kind kind, size_t length,
     archive->member.executable = executable;
     archive->member.setuid = setuid;
     *out_member = &archive->member;
-}
-
-/* A local header and the central directory that disagree are two readers'
-   worth of truth about one member, which is the whole parsing differential. */
-static int local_header_agrees(fr_archive *archive, const mz_zip_archive_file_stat *entry,
-                               fr_error *err) {
-    unsigned char header[ZIP_LOCAL_HEADER_SIZE];
-    if (!read_at(archive->file, entry->m_local_header_ofs, header, sizeof header)
-        || read_little_endian(header, 4) != ZIP_LOCAL_HEADER) {
-        fr_error_set(err, "the archive member \"%s\" has no local header", archive->name);
-        return 0;
-    }
-
-    size_t name_length = (size_t) read_little_endian(header + 26, 2);
-    char local_name[FR_ARCHIVE_MAX_NAME + 1];
-    if (name_length > FR_ARCHIVE_MAX_NAME
-        || !read_at(archive->file, entry->m_local_header_ofs + ZIP_LOCAL_HEADER_SIZE,
-                    (unsigned char *) local_name, name_length)) {
-        fr_error_set(err, "the archive member \"%s\" has an unreadable local header",
-                     archive->name);
-        return 0;
-    }
-    local_name[name_length] = '\0';
-    if (strcmp(local_name, archive->name) != 0) {
-        fr_error_set(err, "the archive member \"%s\" calls itself \"%s\" in its local header",
-                     archive->name, local_name);
-        return 0;
-    }
-
-    unsigned long flags = read_little_endian(header + 6, 2);
-    unsigned long local_size = read_little_endian(header + 22, 4);
-    /* The sentinel puts the real size in a zip64 extra field. Reading that
-       field is the only way to keep comparing sizes, and a member at or above
-       4 GiB is not a toolchain, so the subset is refused instead. */
-    if (local_size == ZIP_SIZE_IN_ZIP64_EXTRA) {
-        fr_error_set(err, "the archive member \"%s\" is a zip64 entry, which daukle does not read",
-                     archive->name);
-        return 0;
-    }
-    /* Bit 3 moves the sizes to a trailing descriptor and zeroes them here. */
-    if ((flags & ZIP_FLAG_DATA_DESCRIPTOR) != 0 && local_size == 0) return 1;
-
-    if ((unsigned long long) local_size != entry->m_uncomp_size) {
-        fr_error_set(err,
-                     "the archive member \"%s\" is %lu bytes by its local header and %llu by the"
-                     " directory",
-                     archive->name, local_size, (unsigned long long) entry->m_uncomp_size);
-        return 0;
-    }
-    return 1;
-}
-
-static int zip_executable(const mz_zip_archive_file_stat *entry) {
-    if ((entry->m_version_made_by >> 8) != ZIP_MADE_ON_UNIX) return 0;
-    return ((entry->m_external_attr >> 16) & 0111u) != 0;
-}
-
-static int zip_setuid(const mz_zip_archive_file_stat *entry) {
-    if ((entry->m_version_made_by >> 8) != ZIP_MADE_ON_UNIX) return 0;
-    return ((entry->m_external_attr >> 16) & 06000u) != 0;
-}
-
-static int zip_next(fr_archive *archive, const fr_archive_member **out_member, fr_error *err) {
-    if (archive->zip_index >= mz_zip_reader_get_num_files(&archive->zip)) {
-        fr_archive_end_iteration(archive, out_member);
-        return FR_OK;
-    }
-
-    mz_zip_archive_file_stat entry;
-    if (!mz_zip_reader_file_stat(&archive->zip, archive->zip_index, &entry)) {
-        fr_error_set(err, "the archive has an unreadable directory entry at index %u",
-                     (unsigned) archive->zip_index);
-        return FR_ERR;
-    }
-
-    size_t name_length = strlen(entry.m_filename);
-    if (name_length > FR_ARCHIVE_MAX_NAME) {
-        fr_error_set(err, "the archive has a member with a name longer than %d bytes",
-                     FR_ARCHIVE_MAX_NAME);
-        return FR_ERR;
-    }
-    memcpy(archive->name, entry.m_filename, name_length + 1);
-
-    if (!local_header_agrees(archive, &entry, err)) return FR_ERR;
-
-    archive->zip_index++;
-    if (name_length > 0 && archive->name[name_length - 1] == '/') {
-        fr_archive_publish(archive, FR_MEMBER_DIRECTORY, 0, zip_executable(&entry), zip_setuid(&entry),
-                           out_member);
-        return FR_OK;
-    }
-
-    if (fr_archive_refuse_past_cap(archive, entry.m_uncomp_size, err)) return FR_ERR;
-
-    size_t length = (size_t) entry.m_uncomp_size;
-    if (!fr_archive_fits_the_member_buffer(archive, length, err)) return FR_ERR;
-    if (length > 0
-        && !mz_zip_reader_extract_to_mem(&archive->zip, archive->zip_index - 1,
-                                         archive->member_bytes, length, 0)) {
-        fr_error_set(err, "the archive member \"%s\" cannot be decompressed (%s)", archive->name,
-                     mz_zip_get_error_string(mz_zip_get_last_error(&archive->zip)));
-        return FR_ERR;
-    }
-    archive->member_bytes[length] = '\0';
-
-    fr_archive_publish(archive, FR_MEMBER_FILE, length, zip_executable(&entry), zip_setuid(&entry),
-                       out_member);
-    return FR_OK;
 }
 
 static int measure(fr_archive *archive, fr_error *err) {
@@ -451,7 +343,7 @@ fr_archive_kind fr_archive_opened_kind(const fr_archive *archive) {
 int fr_archive_next(fr_archive *archive, const fr_archive_member **out_member, fr_error *err) {
     *out_member = NULL;
     if (archive->done) return FR_OK;
-    if (archive->kind == FR_ARCHIVE_ZIP) return zip_next(archive, out_member, err);
+    if (archive->kind == FR_ARCHIVE_ZIP) return fr_archive_zip_next(archive, out_member, err);
     return fr_archive_tar_next(archive, out_member, err);
 }
 
