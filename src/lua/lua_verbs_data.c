@@ -1,0 +1,237 @@
+#include "lua/lua_verbs_internal.h"
+
+#include "cache/cache.h"
+#include "config/config_lua.h"
+#include "config/jsonedit.h"
+#include "config/jsonx.h"
+#include "lua/lua_sandbox.h"
+#include "lua/luax.h"
+#include "net/http.h"
+#include "plugin/registry.h"
+#include "project/lang_region.h"
+#include "project/region.h"
+#include "util/error.h"
+
+#include "lauxlib.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define FR_VERB_MAX_HEADERS 16
+#define FR_VERB_MAX_ARRAY 256
+
+int fr_lua_verb_read(lua_State *state) {
+    const char *relative = luaL_checkstring(state, 1);
+    char *resolved = NULL;
+    fr_error err;
+    if (fr_lua_sandbox_resolve(state, relative, &resolved, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    char *text = NULL;
+    int status = fr_file_read_text(resolved, &text, &err);
+    free(resolved);
+    if (status != FR_OK) return luaL_error(state, "%s", err.message);
+
+    lua_pushstring(state, text);
+    free(text);
+    return 1;
+}
+
+int fr_lua_verb_fetch(lua_State *state) {
+    const char *url = luaL_checkstring(state, 1);
+
+    fr_http_header headers[FR_VERB_MAX_HEADERS];
+    size_t header_count = 0;
+    if (!lua_isnoneornil(state, 2)) {
+        luaL_checktype(state, 2, LUA_TTABLE);
+        lua_pushnil(state);
+        while (lua_next(state, 2) != 0) {
+            if (header_count == FR_VERB_MAX_HEADERS) {
+                return luaL_error(state, "at most %d headers", FR_VERB_MAX_HEADERS);
+            }
+            if (lua_type(state, -2) != LUA_TSTRING || lua_type(state, -1) != LUA_TSTRING) {
+                return luaL_error(state, "every header name and value must be a string");
+            }
+            /* headers[].name/value point into the table still on the stack
+               below; the table must not be popped before fr_http_get runs. */
+            headers[header_count].name = lua_tostring(state, -2);
+            headers[header_count].value = lua_tostring(state, -1);
+            header_count++;
+            lua_pop(state, 1);
+        }
+    }
+
+    char *body = NULL;
+    size_t length = 0;
+    fr_error err;
+    if (fr_http_get(url, headers, header_count, &body, &length, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    lua_pushlstring(state, body, length);
+    free(body);
+    return 1;
+}
+
+int fr_lua_verb_cache(lua_State *state) {
+    const char *project = luaL_checkstring(state, 1);
+    const char *version = luaL_checkstring(state, 2);
+    const char *artifact = luaL_checkstring(state, 3);
+    luaL_checktype(state, 4, LUA_TFUNCTION);
+
+    char *cached = NULL;
+    fr_error err;
+    /* A miss is FR_OK with no text; FR_ERR is the cache refusing the path or
+       failing to read it, and falling through to the producer would turn that
+       into a silent refetch on every run. */
+    if (fr_cache_read(project, version, artifact, &cached, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    if (cached != NULL) {
+        lua_pushstring(state, cached);
+        free(cached);
+        return 1;
+    }
+
+    lua_pushvalue(state, 4);
+    /* Runs inside the plugin's protected frame already, so a producer error
+       must propagate with its original message and traceback intact. */
+    lua_call(state, 0, 1);
+    size_t length = 0;
+    const char *produced = lua_tolstring(state, -1, &length);
+    if (produced == NULL) return luaL_error(state, "the producer returned no text");
+
+    fr_cache_write(project, version, artifact, produced, length);
+    return 1;
+}
+
+static const char *pending_region_body;
+
+static int render_pending_body(const fr_consumer *consumer, const fr_resolved *resolved,
+                               size_t count, char **out_text, fr_error *err) {
+    (void) consumer; (void) resolved; (void) count;
+    *out_text = malloc(strlen(pending_region_body) + 1);
+    if (*out_text == NULL) {
+        fr_error_set(err, "out of memory rendering a region");
+        return FR_ERR;
+    }
+    strcpy(*out_text, pending_region_body);
+    return FR_OK;
+}
+
+int fr_lua_verb_region(lua_State *state) {
+    const char *text = luaL_checkstring(state, 1);
+    const char *begin = luaL_checkstring(state, 2);
+    const char *end = luaL_checkstring(state, 3);
+    pending_region_body = luaL_checkstring(state, 4);
+
+    char *out = NULL;
+    fr_error err;
+    int status = fr_lang_region_apply(begin, end, render_pending_body, NULL, NULL, 0,
+                                      text, &out, &err);
+    pending_region_body = NULL;
+    if (status != FR_OK) return luaL_error(state, "%s", err.message);
+
+    lua_pushstring(state, out);
+    free(out);
+    return 1;
+}
+
+static int json_set_array(lua_State *state, const char *text, const char *path, const char *key) {
+    lua_Integer count = luaL_len(state, 4);
+    if (count < 0 || count > FR_VERB_MAX_ARRAY) {
+        return luaL_error(state, "at most %d array values", FR_VERB_MAX_ARRAY);
+    }
+    if (!lua_checkstack(state, (int) count + 4)) {
+        return luaL_error(state, "cannot grow the lua stack for %d array values", (int) count);
+    }
+
+    const char *values[FR_VERB_MAX_ARRAY];
+    for (lua_Integer index = 1; index <= count; index++) {
+        lua_geti(state, 4, index);
+        if (lua_type(state, -1) != LUA_TSTRING) {
+            return luaL_error(state, "array value %d is not a string", (int) index);
+        }
+        /* The value stays on the stack: values[] points into it, and popping
+           before fr_json_edit_set_string_array runs would free it. */
+        values[index - 1] = lua_tostring(state, -1);
+    }
+
+    char *out = NULL;
+    fr_error err;
+    if (fr_json_edit_set_string_array(text, path, key, values, (size_t) count, &out, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    lua_pushstring(state, out);
+    free(out);
+    return 1;
+}
+
+int fr_lua_verb_json_set(lua_State *state) {
+    const char *text = luaL_checkstring(state, 1);
+    const char *path = luaL_checkstring(state, 2);
+    const char *key = luaL_checkstring(state, 3);
+
+    char *out = NULL;
+    fr_error err;
+    int status;
+    if (lua_isnoneornil(state, 4)) {
+        status = fr_json_edit_remove(text, path, key, &out, &err);
+    } else if (lua_type(state, 4) == LUA_TTABLE) {
+        return json_set_array(state, text, path, key);
+    } else {
+        status = fr_json_edit_set_string(text, path, key, luaL_checkstring(state, 4), &out, &err);
+    }
+    if (status != FR_OK) return luaL_error(state, "%s", err.message);
+
+    lua_pushstring(state, out);
+    free(out);
+    return 1;
+}
+
+int fr_lua_verb_json_parse(lua_State *state) {
+    const char *text = luaL_checkstring(state, 1);
+
+    cJSON *document = NULL;
+    fr_error err;
+    if (fr_json_parse(text, &document, &err) != FR_OK) {
+        return luaL_error(state, "daukle.json_parse: %s", err.message);
+    }
+
+    int pushed = fr_lua_push_json(state, document, &err);
+    cJSON_Delete(document);
+    if (pushed != FR_OK) return luaL_error(state, "daukle.json_parse: %s", err.message);
+    return 1;
+}
+
+int fr_lua_verb_parse(lua_State *state) {
+    const char *text = luaL_checkstring(state, 1);
+    const char *file_name = luaL_checkstring(state, 2);
+
+    fr_registry *registry = fr_lua_registering_registry();
+    if (registry == NULL) return luaL_error(state, "no registry is loading");
+
+    char capability[128];
+    const char *extension = strrchr(file_name, '.');
+    if (extension == NULL) return luaL_error(state, "\"%s\" has no extension", file_name);
+    snprintf(capability, sizeof capability, "daukle.config/%s", extension + 1);
+
+    const fr_config_plugin *plugin = fr_registry_config(registry, capability);
+    if (plugin == NULL) return luaL_error(state, "no plugin reads \"%s\"", extension + 1);
+    if (plugin->overlay) {
+        return luaL_error(state, "daukle.parse will not run \"%s\", which is an executable format",
+                          extension + 1);
+    }
+
+    cJSON *document = NULL;
+    fr_error err;
+    if (plugin->load(plugin->state, text, file_name, ".", registry, NULL, &document, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+
+    int pushed = fr_lua_push_json(state, document, &err);
+    cJSON_Delete(document);
+    if (pushed != FR_OK) return luaL_error(state, "%s", err.message);
+    return 1;
+}

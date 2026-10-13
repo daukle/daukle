@@ -6,10 +6,17 @@ set(CORE_FILES
     util/types.h project/sync.c project/sync.h cli/main.c cli/cli.c cli/cli.h config/config.c config/config.h
     project/derived.c project/derived.h project/generate.c project/generate.h project/tasks.c project/tasks.h
     plugin/plugin_fetch.c plugin/plugin_fetch.h archive/tar.c archive/tar.h plugin/plugin_modules.c plugin/plugin_modules.h
-    plugin/plugin_deps.c plugin/plugin_deps.h archive/archive.c archive/archive.h archive/unpack.c archive/unpack.h
+    plugin/plugin_deps.c plugin/plugin_deps.h archive/archive.c archive/archive.h archive/archive_internal.h
+    archive/archive_tar.c archive/archive_zip.c archive/unpack.c archive/unpack.h
     provision/provision.c provision/provision.h exec/toolreport.c exec/toolreport.h
     util/tree.c util/tree.h plugin/plugin_report.c plugin/plugins_internal.h
-    lua/lua_modules.c lua/lua_modules.h config/config_lua_internal.h config/config_dispatch.c)
+    lua/lua_modules.c lua/lua_modules.h config/config_lua_internal.h config/config_dispatch.c
+    config/config_dispatch_resolve.c config/config_dispatch_language.c
+    cli/cli_internal.h cli/cli_add.c cli/cli_config.c cli/cli_plugins.c cli/cli_tasks.c
+    config/manifest_internal.h config/manifest_project.c config/manifest_sections.c config/manifest_tasks.c
+    archive/unpack_internal.h archive/unpack_paths.c archive/unpack_links.c
+    plugin/plugin_deps_internal.h plugin/plugin_deps_acquire.c project/tasks_plan.c project/tasks_run.c
+    project/derived_paths.c)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
@@ -19,10 +26,10 @@ set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
 # One file against one pattern, written as "<file>|<pattern>". Excluding a whole
 # file is the older remedy and the one the header above describes; it costs the
 # other nine patterns on that file, which is too much for a 700-line reader that
-# will never resolve a plugin. archive/archive.c carries "path" and "linkpath"
+# will never resolve a plugin. archive/archive_tar.c carries "path" and "linkpath"
 # because those are pax extended-header KEYWORDS, a tar format's vocabulary that
 # predates this project. D-56.
-set(EXEMPTIONS "archive/archive.c|\"path\"")
+set(EXEMPTIONS "archive/archive_tar.c|\"path\"")
 
 set(FINDINGS "")
 foreach(name ${CORE_FILES})

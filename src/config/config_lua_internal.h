@@ -15,6 +15,8 @@
    plugin slots every declaration fills. Neither file reaches into the other's
    storage: everything that crosses does so through this file. */
 
+#define FR_LUA_MAX_PLUGINS 128
+
 /* One registered plugin: the capability it answers to, the lua reference of
    the callback it registered, and, for a task, what it is part of and what it
    depends on. config_declare.c fills these; config_dispatch.c is handed one as
@@ -89,5 +91,24 @@ void fr_lua_declare_chunk_end(lua_State *state, int succeeded, int backup);
    the daukle table on top of the stack. The plugin environment gets the whole
    set through fr_lua_verbs_install_registration instead. */
 void fr_lua_declare_install_config_surface(lua_State *state);
+
+/* The per-chunk and slot state config_declare.c owns, for the declarations
+   that live beside it. */
+int fr_lua_declare_chunk_declared_resolver(void);
+void fr_lua_declare_mark_chunk_other(void);
+size_t fr_lua_declare_chunk_toolchain_count(void);
+size_t fr_lua_declare_chunk_publisher_count(void);
+void fr_lua_declare_count_publisher(void);
+fr_lua_plugin_slot *fr_lua_declare_next_slot(void);
+void fr_lua_declare_count_slot(void);
+
+fr_lua_plugin_slot *fr_lua_declare_slot_for(const char *capability);
+int fr_lua_declare_chunk_declares_toolchain(const char *name, size_t length);
+int fr_lua_declare_task(lua_State *state);
+
+int fr_lua_declare_take_slot(lua_State *state, const char *prefix, const char *field,
+                             fr_lua_plugin_slot **out);
+int fr_lua_declare_publisher(lua_State *state);
+int fr_lua_declare_plugin(lua_State *state);
 
 #endif
