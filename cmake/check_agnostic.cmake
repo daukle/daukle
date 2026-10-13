@@ -11,6 +11,7 @@ set(CORE_FILES
     provision/provision.c provision/provision.h exec/toolreport.c exec/toolreport.h
     util/tree.c util/tree.h plugin/plugin_report.c plugin/plugins_internal.h
     lua/lua_modules.c lua/lua_modules.h config/config_lua_internal.h config/config_dispatch.c
+    config/config_dispatch_resolve.c config/config_dispatch_language.c
     cli/cli_internal.h cli/cli_add.c cli/cli_config.c cli/cli_plugins.c cli/cli_tasks.c
     config/manifest_internal.h config/manifest_project.c config/manifest_sections.c config/manifest_tasks.c
     archive/unpack_internal.h archive/unpack_paths.c archive/unpack_links.c)
