@@ -19,144 +19,6 @@ typedef struct {
     size_t count;
 } edit_value;
 
-static size_t skip_whitespace(const char *text, size_t index) {
-    while (text[index] == ' ' || text[index] == '\t' || text[index] == '\n' || text[index] == '\r') index++;
-    return index;
-}
-
-static size_t skip_string(const char *text, size_t index) {
-    index++;
-    while (text[index] != '\0') {
-        if (text[index] == '\\' && text[index + 1] != '\0') {
-            index += 2;
-            continue;
-        }
-        if (text[index] == '"') return index + 1;
-        index++;
-    }
-    return index;
-}
-
-static size_t skip_value(const char *text, size_t index) {
-    if (text[index] == '"') return skip_string(text, index);
-    if (text[index] == '{' || text[index] == '[') {
-        int depth = 0;
-        while (text[index] != '\0') {
-            if (text[index] == '"') {
-                index = skip_string(text, index);
-                continue;
-            }
-            if (text[index] == '{' || text[index] == '[') {
-                depth++;
-            } else if (text[index] == '}' || text[index] == ']') {
-                depth--;
-                if (depth == 0) return index + 1;
-            }
-            index++;
-        }
-        return index;
-    }
-    while (text[index] != '\0' && strchr(",}] \t\n\r", text[index]) == NULL) index++;
-    return index;
-}
-
-static int read_member(const char *text, size_t index, member *out) {
-    if (text[index] != '"') return 0;
-    out->key_start = index;
-    out->key_end = skip_string(text, index);
-    size_t cursor = skip_whitespace(text, out->key_end);
-    if (text[cursor] != ':') return 0;
-    cursor = skip_whitespace(text, cursor + 1);
-    out->value_start = cursor;
-    out->value_end = skip_value(text, cursor);
-    return 1;
-}
-
-static int first_member(const char *text, size_t brace, member *out) {
-    return read_member(text, skip_whitespace(text, brace + 1), out);
-}
-
-static int next_member(const char *text, const member *current, member *out) {
-    size_t index = skip_whitespace(text, current->value_end);
-    if (text[index] != ',') return 0;
-    return read_member(text, skip_whitespace(text, index + 1), out);
-}
-
-static int member_has_key(const char *text, const member *entry, const char *key) {
-    size_t length = entry->key_end - entry->key_start - 2;
-    return strlen(key) == length && strncmp(text + entry->key_start + 1, key, length) == 0;
-}
-
-static int find_member(const char *text, size_t brace, const char *key, member *out) {
-    member entry;
-    if (!first_member(text, brace, &entry)) return 0;
-    for (;;) {
-        if (member_has_key(text, &entry, key)) {
-            *out = entry;
-            return 1;
-        }
-        member following;
-        if (!next_member(text, &entry, &following)) return 0;
-        entry = following;
-    }
-}
-
-static int last_member(const char *text, size_t brace, member *out) {
-    member entry;
-    if (!first_member(text, brace, &entry)) return 0;
-    for (;;) {
-        member following;
-        if (!next_member(text, &entry, &following)) {
-            *out = entry;
-            return 1;
-        }
-        entry = following;
-    }
-}
-
-static size_t line_start(const char *text, size_t index) {
-    while (index > 0 && text[index - 1] != '\n') index--;
-    return index;
-}
-
-static void append_leading_whitespace(fr_strbuf *buffer, const char *text, size_t index) {
-    size_t start = line_start(text, index);
-    size_t cursor = start;
-    while (cursor < index && (text[cursor] == ' ' || text[cursor] == '\t')) cursor++;
-    fr_strbuf_append_bytes(buffer, text + start, cursor - start);
-}
-
-static int starts_its_line(const char *text, size_t index) {
-    for (size_t cursor = line_start(text, index); cursor < index; cursor++) {
-        if (text[cursor] != ' ' && text[cursor] != '\t') return 0;
-    }
-    return 1;
-}
-
-static char *leading_whitespace(const char *text, size_t index) {
-    fr_strbuf buffer;
-    fr_strbuf_init(&buffer);
-    append_leading_whitespace(&buffer, text, index);
-    return fr_strbuf_release(&buffer);
-}
-
-static char *indent_unit(const char *text) {
-    fr_strbuf buffer;
-    fr_strbuf_init(&buffer);
-    for (size_t index = 0; text[index] != '\0'; index++) {
-        if (text[index] != '\n') continue;
-        size_t start = index + 1;
-        size_t cursor = start;
-        while (text[cursor] == ' ' || text[cursor] == '\t') cursor++;
-        if (cursor > start && text[cursor] != '\0' && text[cursor] != '\n' && text[cursor] != '\r') {
-            fr_strbuf_append_bytes(&buffer, text + start, cursor - start);
-            return fr_strbuf_release(&buffer);
-        }
-    }
-    fr_strbuf_append(&buffer, "  ");
-    return fr_strbuf_release(&buffer);
-}
-
 static void append_json_string(fr_strbuf *buffer, const char *value) {
     fr_strbuf_append(buffer, "\"");
     for (const unsigned char *cursor = (const unsigned char *) value; *cursor != '\0'; cursor++) {
@@ -223,7 +85,7 @@ static int finish(char *result, char **out, fr_error *err) {
 
 static int replace_existing(const char *text, const member *existing, const edit_value *value,
                             const char *unit, char **out, fr_error *err) {
-    char *indent = leading_whitespace(text, existing->key_start);
+    char *indent = fr_json_edit_leading_whitespace(text, existing->key_start);
     if (indent == NULL) return finish(NULL, out, err);
 
     fr_strbuf rendered;
@@ -240,8 +102,8 @@ static int replace_existing(const char *text, const member *existing, const edit
 
 static int append_after_last(const char *text, const member *last, const char *key,
                              const edit_value *value, const char *unit, char **out, fr_error *err) {
-    int own_line = starts_its_line(text, last->key_start);
-    char *indent = own_line ? leading_whitespace(text, last->key_start) : NULL;
+    int own_line = fr_json_edit_starts_its_line(text, last->key_start);
+    char *indent = own_line ? fr_json_edit_leading_whitespace(text, last->key_start) : NULL;
     if (own_line && indent == NULL) return finish(NULL, out, err);
 
     fr_strbuf insertion;
@@ -262,7 +124,7 @@ static int append_after_last(const char *text, const member *last, const char *k
 
 static int fill_empty_object(const char *text, size_t brace, const char *key,
                              const edit_value *value, const char *unit, char **out, fr_error *err) {
-    char *closing_indent = leading_whitespace(text, brace);
+    char *closing_indent = fr_json_edit_leading_whitespace(text, brace);
     if (closing_indent == NULL) return finish(NULL, out, err);
 
     fr_strbuf member_indent;
@@ -289,22 +151,22 @@ static int fill_empty_object(const char *text, size_t brace, const char *key,
     free(closing_indent);
     if (insertion_text == NULL) return finish(NULL, out, err);
 
-    char *result = splice(text, brace + 1, skip_value(text, brace) - 1, insertion_text);
+    char *result = splice(text, brace + 1, fr_json_edit_skip_value(text, brace) - 1, insertion_text);
     free(insertion_text);
     return finish(result, out, err);
 }
 
 static int set_member(const char *text, size_t brace, const char *key, const edit_value *value,
                       char **out, fr_error *err) {
-    char *unit = indent_unit(text);
+    char *unit = fr_json_edit_indent_unit(text);
     if (unit == NULL) return finish(NULL, out, err);
 
     int status;
     member existing;
     member last;
-    if (find_member(text, brace, key, &existing)) {
+    if (fr_json_edit_find_member(text, brace, key, &existing)) {
         status = replace_existing(text, &existing, value, unit, out, err);
-    } else if (last_member(text, brace, &last)) {
+    } else if (fr_json_edit_last_member(text, brace, &last)) {
         status = append_after_last(text, &last, key, value, unit, out, err);
     } else {
         status = fill_empty_object(text, brace, key, value, unit, out, err);
@@ -315,26 +177,26 @@ static int set_member(const char *text, size_t brace, const char *key, const edi
 
 static int remove_member(const char *text, size_t brace, const char *key, char **out, fr_error *err) {
     member target;
-    if (!find_member(text, brace, key, &target)) {
+    if (!fr_json_edit_find_member(text, brace, key, &target)) {
         return finish(duplicate(text), out, err);
     }
 
     size_t previous_end = brace + 1;
     int has_previous = 0;
     member entry;
-    first_member(text, brace, &entry);
+    fr_json_edit_first_member(text, brace, &entry);
     while (entry.key_start != target.key_start) {
         previous_end = entry.value_end;
         has_previous = 1;
         member following;
-        next_member(text, &entry, &following);
+        fr_json_edit_next_member(text, &entry, &following);
         entry = following;
     }
 
     member following;
     size_t cut_start;
     size_t cut_end;
-    if (next_member(text, &target, &following)) {
+    if (fr_json_edit_next_member(text, &target, &following)) {
         cut_start = target.key_start;
         cut_end = following.key_start;
     } else if (has_previous) {
@@ -342,7 +204,7 @@ static int remove_member(const char *text, size_t brace, const char *key, char *
         cut_end = target.value_end;
     } else {
         cut_start = brace + 1;
-        cut_end = skip_value(text, brace) - 1;
+        cut_end = fr_json_edit_skip_value(text, brace) - 1;
     }
     return finish(splice(text, cut_start, cut_end, ""), out, err);
 }
@@ -373,14 +235,14 @@ static int split_path(const char *path, char storage[][MAX_SEGMENT_LENGTH], size
 
 static int locate_object(const char *text, const char *const *segments, size_t count,
                          size_t *brace_out, fr_error *err) {
-    size_t brace = skip_whitespace(text, 0);
+    size_t brace = fr_json_edit_skip_whitespace(text, 0);
     if (text[brace] != '{') {
         fr_error_set(err, "the document is not a json object");
         return FR_ERR;
     }
     for (size_t index = 0; index < count; index++) {
         member entry;
-        if (!find_member(text, brace, segments[index], &entry)) {
+        if (!fr_json_edit_find_member(text, brace, segments[index], &entry)) {
             fr_error_set(err, "\"%s\" is missing", segments[index]);
             return FR_ERR;
         }
@@ -398,11 +260,11 @@ static int locate_object(const char *text, const char *const *segments, size_t c
    an object reads as present, so locate_object reports it rather than a
    removal silently treating a malformed document as nothing to do. */
 static int path_is_present(const char *text, const char *const *segments, size_t count) {
-    size_t brace = skip_whitespace(text, 0);
+    size_t brace = fr_json_edit_skip_whitespace(text, 0);
     if (text[brace] != '{') return 1;
     for (size_t index = 0; index < count; index++) {
         member entry;
-        if (!find_member(text, brace, segments[index], &entry)) return 0;
+        if (!fr_json_edit_find_member(text, brace, segments[index], &entry)) return 0;
         if (text[entry.value_start] != '{') return 1;
         brace = entry.value_start;
     }
@@ -416,7 +278,7 @@ static int create_missing_objects(char **text, const char *const *segments, size
         if (locate_object(*text, segments, depth, &brace, err) != FR_OK) return FR_ERR;
 
         member entry;
-        if (find_member(*text, brace, segments[depth], &entry)) {
+        if (fr_json_edit_find_member(*text, brace, segments[depth], &entry)) {
             if ((*text)[entry.value_start] != '{') {
                 fr_error_set(err, "\"%s\" is not an object", segments[depth]);
                 return FR_ERR;
