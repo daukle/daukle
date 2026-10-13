@@ -38,4 +38,8 @@ int fr_lua_verb_json_set(lua_State *state);
 int fr_lua_verb_json_parse(lua_State *state);
 int fr_lua_verb_parse(lua_State *state);
 
+int fr_lua_verb_provision(lua_State *state);
+int fr_lua_verb_artifact(lua_State *state);
+int fr_lua_verb_pin(lua_State *state);
+
 #endif
