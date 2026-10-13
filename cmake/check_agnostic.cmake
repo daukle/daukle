@@ -10,7 +10,10 @@ set(CORE_FILES
     archive/archive_tar.c archive/archive_zip.c archive/unpack.c archive/unpack.h
     provision/provision.c provision/provision.h exec/toolreport.c exec/toolreport.h
     util/tree.c util/tree.h plugin/plugin_report.c plugin/plugins_internal.h
-    lua/lua_modules.c lua/lua_modules.h config/config_lua_internal.h config/config_dispatch.c)
+    lua/lua_modules.c lua/lua_modules.h config/config_lua_internal.h config/config_dispatch.c
+    cli/cli_internal.h cli/cli_add.c cli/cli_config.c cli/cli_plugins.c cli/cli_tasks.c
+    config/manifest_internal.h config/manifest_project.c config/manifest_sections.c config/manifest_tasks.c
+    archive/unpack_internal.h archive/unpack_paths.c archive/unpack_links.c)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
