@@ -47,4 +47,12 @@ int fr_unpack_apply_permissions(const char *native, const fr_archive_member *mem
 int fr_unpack_write_file_bytes(const char *native, const char *bytes, size_t length,
                                const char *relative, fr_error *err);
 
+void fr_unpack_deferred_links_free(deferred_links *set);
+int fr_unpack_write_symlink_member(const fr_archive_member *member, const native_root *root,
+                                   deferred_links *deferred, fr_unpack_report *report,
+                                   fr_error *err);
+int fr_unpack_restore_deferred_links(const deferred_links *deferred, const native_root *root,
+                                     const fr_unpack_limits *limits, size_t *total,
+                                     fr_unpack_report *report, fr_error *err);
+
 #endif
