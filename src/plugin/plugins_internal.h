@@ -46,4 +46,6 @@ int fr_plugins_out_of_memory(const char *label, fr_error *err);
 void fr_plugins_describe_declared_resolvers(char *out, size_t out_size,
                                             const fr_resolver_entry *resolvers, size_t count);
 
+int fr_plugins_record_requires(lua_State *state, fr_plugin_declaration *declaration);
+
 #endif
