@@ -1,4 +1,5 @@
 #include "archive/unpack.h"
+#include "archive/unpack_internal.h"
 
 #include "lua/lua_sandbox.h"
 #include "util/error.h"
@@ -21,14 +22,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#endif
-
-#define UNPACK_MAX_NATIVE 4096
-
-#ifdef _WIN32
-#define NATIVE_SEPARATOR '\\'
-#else
-#define NATIVE_SEPARATOR '/'
 #endif
 
 /* @implNote max_total_bytes was 1 GiB and refused the largest archive daukle
@@ -139,11 +132,6 @@ static int refuse_unsafe_link_target(const fr_archive_member *member, fr_error *
     }
     return FR_OK;
 }
-
-typedef struct {
-    char text[UNPACK_MAX_NATIVE];
-    size_t length;
-} native_root;
 
 /* @implNote The "\\?\" prefix a deep member needs past MAX_PATH also turns off
    the normalisation that would otherwise accept a forward slash or a relative
@@ -525,19 +513,6 @@ static int create_native_link(const char *native, const char *target) {
     return symlink(target, native) == 0;
 #endif
 }
-
-/* A link whose create was refused, kept until the stream ends. It cannot be
-   resolved where it is found: a link's target may arrive later in the archive
-   and may itself be a link, which 9 of xpack clang's 52 are. D-57. */
-typedef struct {
-    char *name;
-    char *target;
-} deferred_link;
-
-typedef struct {
-    deferred_link *items;
-    size_t count;
-} deferred_links;
 
 static int deferred_links_add(deferred_links *set, const char *name, const char *target) {
     deferred_link *items = realloc(set->items, (set->count + 1) * sizeof *items);
