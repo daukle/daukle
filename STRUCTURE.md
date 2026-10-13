@@ -86,7 +86,7 @@ the client tier's rules.
 | version ranges and ordering | `src/util/semver.c` | date or tag ordering |
 | URL building and escaping | `src/net/url.c` | HTTP |
 | growable strings | `src/util/strbuf.c` | a general container library |
-| the command surface | `src/cli/cli.c`, `src/cli/main.c` | logic. Everything it calls lives in a module beside it |
+| the command surface | `src/cli/cli.c` parses, `src/cli/main.c` dispatches, and each command family is its own file behind `src/cli/cli_internal.h`: `cli_config.c`, `cli_add.c`, `cli_plugins.c`, `cli_tasks.c` | logic. Everything it calls lives in a module beside it |
 | errors | `src/util/error.c`, `fr_error` | logging. The caller decides what to print |
 | which environment variables a plugin may read of the ones daukle itself consumes, and which a child it starts inherits | `fr_lua_verbs_*_env*` in `src/lua/lua_verbs_env.c`, tested by `test/test_exec.c` and `test/test_config_lua.c` | a sandbox. It scrubs only what daukle reads, never the user's own variables, and it cannot know which of those are secret |
 | the lua state, its memory cap and its errors | `src/lua/luax.c` | the sandbox, which is `src/lua/lua_sandbox.c`, nor the config format, which is `src/config/config_lua.c` |
@@ -246,10 +246,10 @@ manifest writers are proven against fixtures only, because nothing in the ecosys
 manifest release asset yet. basekit's 5.0.0 release carries eight jars and no manifest. Until
 something publishes one, the writers have never met real input.
 
-`daukle add` edits TOML only, and `src/cli/main.c` names that format on purpose: it checks the manifest path
+`daukle add` edits TOML only, and `src/cli/cli_add.c` names that format on purpose: it checks the manifest path
 ends in `.toml` and calls `fr_toml_edit_set_dependency` directly, which is a deliberate, accepted
 exception to the agnostic-core rule (ruling R29). The general form would be an edit hook on
-`fr_config_plugin`, so every format supplies its own editor and `src/cli/main.c` names none of them, but that
+`fr_config_plugin`, so every format supplies its own editor and `src/cli/cli_add.c` names none of them, but that
 would touch a plugin struct four completed tasks already depend on and would buy nothing until a JSON
 or Lua manifest needs editing in place too, so it is deferred rather than built now.
 
@@ -302,6 +302,6 @@ so the refusal was costing lua-rooted projects one command and buying nothing.
 What the refusal was standing in for is the **registry**, and that is a real constraint rather than
 a dissolved one. A lua format reopens the runtime through `fr_lua_runtime_begin`, which refuses a
 registry that is not the one already open; the old code passed `NULL`, so removing the refusal alone
-fails with `another registry's plugins are still registered`. `plugin_update` therefore opens the
+fails with `another registry's plugins are still registered`. `fr_cli_plugin_update` therefore opens the
 runtime on the manifest's own directory **before** reading it and hands both the directory and the
-registry down to `read_manifest_plugins` (`src/cli/main.c`).
+registry down to `read_manifest_plugins` (`src/cli/cli_plugins.c`).
