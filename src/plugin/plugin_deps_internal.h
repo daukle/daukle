@@ -55,4 +55,9 @@ struct deps_graph {
     size_t count;
 };
 
+const char *fr_plugin_deps_requester(const fr_plugin_deps *view);
+int fr_plugin_deps_out_of_memory(const fr_plugin_deps *view, fr_error *err);
+void fr_plugin_deps_list_names(char *out, size_t size, const char *const *names, size_t count);
+void fr_plugin_deps_free_node(deps_node *node);
+
 #endif

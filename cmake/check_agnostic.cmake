@@ -14,7 +14,8 @@ set(CORE_FILES
     config/config_dispatch_resolve.c config/config_dispatch_language.c
     cli/cli_internal.h cli/cli_add.c cli/cli_config.c cli/cli_plugins.c cli/cli_tasks.c
     config/manifest_internal.h config/manifest_project.c config/manifest_sections.c config/manifest_tasks.c
-    archive/unpack_internal.h archive/unpack_paths.c archive/unpack_links.c)
+    archive/unpack_internal.h archive/unpack_paths.c archive/unpack_links.c
+    plugin/plugin_deps_internal.h plugin/plugin_deps_acquire.c)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
