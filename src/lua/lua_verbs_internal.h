@@ -46,4 +46,7 @@ int fr_lua_root_path(lua_State *state);
 int fr_lua_root_dir(lua_State *state);
 int fr_lua_root_tool(lua_State *state);
 
+int fr_lua_verb_tool(lua_State *state);
+int fr_lua_verb_exec(lua_State *state);
+
 #endif
