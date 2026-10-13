@@ -14,6 +14,7 @@
 #include "project/region.h"
 #include "util/error.h"
 #include "util/sha256.h"
+#include "util/version.h"
 #include "support.h"
 #include "project/sync.h"
 #include "project/tasks.h"
@@ -572,7 +573,23 @@ TEST a_plugin_written_against_a_later_api_says_which(void) {
     fr_error err;
     ASSERT_EQ(FR_ERR, load_manifest("test/fixtures/plugin-future-api/daukle.toml", &err));
     ASSERT(strstr(err.message, "gradle") != NULL);
-    ASSERT(strstr(err.message, "needs daukle api 3, this daukle provides 1") != NULL);
+    ASSERT(strstr(err.message, "needs daukle api 3") != NULL);
+    ASSERT(strstr(err.message, "provides 1") != NULL);
+    /* The running version, so the message is actionable without the reader
+       knowing which release first provided which api. D-116. */
+    ASSERT(strstr(err.message, fr_self_version()) != NULL);
+    PASS();
+}
+
+/* A LOWER api than this core provides must be accepted, which is the whole
+   point of the field and what the previous `api != 1` check made impossible:
+   the first core to provide 2 would have refused every plugin in the org. The
+   accepted-path assertion lives in every other plugin test here, all of which
+   declare api = 1; this one pins the refusal boundary from below. D-116. */
+TEST an_api_below_one_is_refused(void) {
+    fr_error err;
+    ASSERT_EQ(FR_ERR, load_manifest("test/fixtures/plugin-api-zero/daukle.toml", &err));
+    ASSERT(strstr(err.message, "api must be 1 or greater, not 0") != NULL);
     PASS();
 }
 
@@ -2982,6 +2999,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_language_plugin_declaring_tool_but_not_exec_still_loads);
     RUN_TEST(a_verb_uses_does_not_know_is_refused);
     RUN_TEST(a_plugin_written_against_a_later_api_says_which);
+    RUN_TEST(an_api_below_one_is_refused);
     RUN_TEST(a_uses_entry_that_is_not_a_string_is_refused);
     RUN_TEST(a_verb_used_before_the_declaration_says_so);
     RUN_TEST(fr_plugins_read_declaration_rejects_a_closed_runtime);
