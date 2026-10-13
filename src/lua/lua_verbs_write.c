@@ -3,9 +3,7 @@
 #include "cache/cache.h"
 #include "config/config_lua.h"
 #include "lua/lua_sandbox.h"
-#include "lua/luax.h"
 #include "project/region.h"
-#include "util/error.h"
 
 #include "lauxlib.h"
 

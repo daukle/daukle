@@ -1,27 +1,13 @@
 #include "lua/lua_verbs.h"
 #include "lua/lua_verbs_internal.h"
 
-#include "cache/cache.h"
 #include "config/config_lua.h"
-#include "config/jsonedit.h"
-#include "config/jsonx.h"
-#include "exec/exec.h"
-#include "exec/tool.h"
-#include "exec/toolreport.h"
 #include "lua/lua_modules.h"
-#include "lua/lua_sandbox.h"
 #include "lua/luax.h"
-#include "net/http.h"
-#include "plugin/registry.h"
-#include "project/lang_region.h"
-#include "project/region.h"
-#include "provision/provision.h"
 #include "util/error.h"
 
-#include "cJSON.h"
 #include "lauxlib.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 

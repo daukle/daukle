@@ -3,12 +3,9 @@
 
 #include "config/config_lua.h"
 #include "exec/toolreport.h"
-#include "lua/lua_sandbox.h"
-#include "lua/luax.h"
 #include "net/http.h"
-#include "plugin/registry.h"
+#include "plugin/plugins.h"
 #include "provision/provision.h"
-#include "util/error.h"
 
 #include "lauxlib.h"
 

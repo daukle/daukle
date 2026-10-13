@@ -7,11 +7,11 @@
 #include "lua/lua_sandbox.h"
 #include "lua/luax.h"
 #include "net/http.h"
+#include "plugin/registry.h"
 #include "project/lang_region.h"
 #include "project/region.h"
 #include "util/error.h"
 
-#include "cJSON.h"
 #include "lauxlib.h"
 
 #include <stdio.h>

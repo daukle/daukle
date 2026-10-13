@@ -3,9 +3,6 @@
 #include "cache/cache.h"
 #include "exec/tool.h"
 #include "lua/lua_sandbox.h"
-#include "lua/luax.h"
-#include "provision/provision.h"
-#include "util/error.h"
 
 #include "lauxlib.h"
 

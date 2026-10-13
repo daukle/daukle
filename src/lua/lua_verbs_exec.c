@@ -6,8 +6,6 @@
 #include "exec/tool.h"
 #include "exec/toolreport.h"
 #include "lua/lua_sandbox.h"
-#include "lua/luax.h"
-#include "util/error.h"
 
 #include "lauxlib.h"
 
