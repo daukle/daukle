@@ -1,4 +1,5 @@
 #include "archive/archive.h"
+#include "archive/archive_internal.h"
 
 #include "archive/tar.h"
 #include "util/error.h"
@@ -9,63 +10,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define GZIP_FIXED_HEADER_SIZE 10u
-#define GZIP_FLAG_HEADER_CRC 0x02u
-#define GZIP_FLAG_EXTRA 0x04u
-#define GZIP_FLAG_NAME 0x08u
-#define GZIP_FLAG_COMMENT 0x10u
-#define GZIP_METHOD_DEFLATE 8u
-
-#define ZIP_LOCAL_HEADER 0x04034b50u
-#define ZIP_LOCAL_HEADER_SIZE 30u
-#define ZIP_END_OF_CENTRAL_DIRECTORY 0x06054b50u
-#define ZIP_END_OF_CENTRAL_DIRECTORY_SIZE 22u
-#define ZIP_MAX_COMMENT 65535u
-#define ZIP_FLAG_DATA_DESCRIPTOR 0x0008u
-#define ZIP_SIZE_IN_ZIP64_EXTRA 0xffffffffu
-#define ZIP_MADE_ON_UNIX 3u
-
-#define INFLATE_INPUT_BYTES 4096
-#define ARCHIVE_FIRST_MEMBER_BYTES 65536u
-
-typedef struct {
-    tinfl_decompressor inflator;
-    unsigned char window[TINFL_LZ_DICT_SIZE];
-    size_t ready_start;
-    size_t ready_count;
-    unsigned char input[INFLATE_INPUT_BYTES];
-    size_t input_offset;
-    size_t input_count;
-    int input_at_end;
-    int finished;
-} inflate_stream;
-
-struct fr_archive {
-    fr_archive_kind kind;
-    FILE *file;
-    long length;
-    size_t max_member_bytes;
-    char *member_bytes;
-    size_t member_capacity;
-
-    inflate_stream *stream;
-    size_t offset;
-
-    mz_zip_archive zip;
-    int zip_is_open;
-    mz_uint zip_index;
-
-    char name[FR_ARCHIVE_MAX_NAME + 1];
-    char link_target[101];
-    /* Set by a pax extended header and consumed by the member that follows it,
-       which is the whole of what "extended" means: the records describe the
-       NEXT member and nothing else. */
-    char pax_name[FR_ARCHIVE_MAX_NAME + 1];
-    char pax_link_target[101];
-    fr_archive_member member;
-    int done;
-};
 
 static unsigned long read_little_endian(const unsigned char *bytes, size_t width) {
     unsigned long value = 0;
