@@ -29,8 +29,8 @@ fr_lua_plugin_slot *fr_lua_declare_slot_for(const char *capability) {
 /* Returns 0 with *out set, or does not return at all: every failure below is
    raised, not reported. Callers still check, because the 0-on-success return
    would otherwise invite a dereference that only longjmp keeps safe. */
-static int take_slot(lua_State *state, const char *prefix, const char *field,
-                     fr_lua_plugin_slot **out) {
+int fr_lua_declare_take_slot(lua_State *state, const char *prefix, const char *field,
+                             fr_lua_plugin_slot **out) {
     lua_getfield(state, 1, "name");
     const char *name = lua_tostring(state, -1);
     if (name == NULL) return luaL_error(state, "a %s needs a name", prefix);
@@ -121,7 +121,7 @@ static int lua_declare_language(lua_State *state) {
     chunk_declared_other = 1;
     luaL_checktype(state, 1, LUA_TTABLE);
     fr_lua_plugin_slot *slot = NULL;
-    if (take_slot(state, "daukle.language/", "apply", &slot) != 0 || slot == NULL) {
+    if (fr_lua_declare_take_slot(state, "daukle.language/", "apply", &slot) != 0 || slot == NULL) {
         return luaL_error(state, "a language plugin could not be declared");
     }
 
@@ -146,7 +146,7 @@ static int lua_declare_source(lua_State *state) {
     chunk_declared_other = 1;
     luaL_checktype(state, 1, LUA_TTABLE);
     fr_lua_plugin_slot *slot = NULL;
-    if (take_slot(state, "daukle.source/", "load", &slot) != 0 || slot == NULL) {
+    if (fr_lua_declare_take_slot(state, "daukle.source/", "load", &slot) != 0 || slot == NULL) {
         return luaL_error(state, "a source plugin could not be declared");
     }
 
@@ -238,7 +238,7 @@ static int lua_declare_toolchain(lua_State *state) {
     chunk_declared_other = 1;
     luaL_checktype(state, 1, LUA_TTABLE);
     fr_lua_plugin_slot *slot = NULL;
-    if (take_slot(state, "daukle.toolchain/", "generate", &slot) != 0 || slot == NULL) {
+    if (fr_lua_declare_take_slot(state, "daukle.toolchain/", "generate", &slot) != 0 || slot == NULL) {
         return luaL_error(state, "a toolchain plugin could not be declared");
     }
 
@@ -295,32 +295,6 @@ void fr_lua_declare_count_slot(void) {
     plugin_slot_count++;
 }
 
-static int lua_declare_publisher(lua_State *state) {
-    if (fr_lua_declare_chunk_declared_resolver()) {
-        return luaL_error(state, "a resolver chunk declares only a resolver");
-    }
-    fr_lua_declare_mark_chunk_other();
-    luaL_checktype(state, 1, LUA_TTABLE);
-
-    fr_lua_plugin_slot *slot = NULL;
-    if (take_slot(state, "daukle.task/publish:", "publish", &slot) != 0 || slot == NULL) {
-        return luaL_error(state, "a publisher could not be declared");
-    }
-
-    fr_task_plugin plugin = { slot->capability, NULL, NULL, 0, fr_lua_dispatch_task_run, slot };
-    fr_error err;
-    if (fr_registry_add_task(fr_lua_registering_registry(), &plugin, &err) != FR_OK) {
-        return luaL_error(state, "%s", err.message);
-    }
-    fr_lua_declare_count_publisher();
-    return 0;
-}
-
-static int lua_declare_plugin(lua_State *state) {
-    (void) state;
-    return 0;
-}
-
 void fr_lua_verbs_install_registration(lua_State *state) {
     lua_pushcfunction(state, fr_lua_verbs_require_function());
     lua_setfield(state, -2, "require");
@@ -332,11 +306,11 @@ void fr_lua_verbs_install_registration(lua_State *state) {
     lua_setfield(state, -2, "toolchain");
     lua_pushcfunction(state, fr_lua_declare_task);
     lua_setfield(state, -2, "task");
-    lua_pushcfunction(state, lua_declare_publisher);
+    lua_pushcfunction(state, fr_lua_declare_publisher);
     lua_setfield(state, -2, "publisher");
     lua_pushcfunction(state, lua_declare_resolver);
     lua_setfield(state, -2, "resolver");
-    lua_pushcfunction(state, lua_declare_plugin);
+    lua_pushcfunction(state, fr_lua_declare_plugin);
     lua_setfield(state, -2, "plugin");
 }
 

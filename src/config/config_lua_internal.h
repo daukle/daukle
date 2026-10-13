@@ -106,4 +106,9 @@ fr_lua_plugin_slot *fr_lua_declare_slot_for(const char *capability);
 int fr_lua_declare_chunk_declares_toolchain(const char *name, size_t length);
 int fr_lua_declare_task(lua_State *state);
 
+int fr_lua_declare_take_slot(lua_State *state, const char *prefix, const char *field,
+                             fr_lua_plugin_slot **out);
+int fr_lua_declare_publisher(lua_State *state);
+int fr_lua_declare_plugin(lua_State *state);
+
 #endif

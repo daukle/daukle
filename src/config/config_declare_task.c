@@ -236,3 +236,29 @@ int fr_lua_declare_task(lua_State *state) {
     }
     return 0;
 }
+
+int fr_lua_declare_publisher(lua_State *state) {
+    if (fr_lua_declare_chunk_declared_resolver()) {
+        return luaL_error(state, "a resolver chunk declares only a resolver");
+    }
+    fr_lua_declare_mark_chunk_other();
+    luaL_checktype(state, 1, LUA_TTABLE);
+
+    fr_lua_plugin_slot *slot = NULL;
+    if (fr_lua_declare_take_slot(state, "daukle.task/publish:", "publish", &slot) != 0 || slot == NULL) {
+        return luaL_error(state, "a publisher could not be declared");
+    }
+
+    fr_task_plugin plugin = { slot->capability, NULL, NULL, 0, fr_lua_dispatch_task_run, slot };
+    fr_error err;
+    if (fr_registry_add_task(fr_lua_registering_registry(), &plugin, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
+    fr_lua_declare_count_publisher();
+    return 0;
+}
+
+int fr_lua_declare_plugin(lua_State *state) {
+    (void) state;
+    return 0;
+}
