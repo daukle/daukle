@@ -13,4 +13,9 @@ int fr_cli_add_dependency(const fr_cli_options *options);
 char *fr_cli_manifest_directory(const char *manifest_path);
 int fr_cli_plugin_update(const char *label, int verbose);
 
+int fr_cli_run(const char *manifest_path, int write, int use_cache, int verbose);
+int fr_cli_run_task(const char *task_name, int use_cache, int verbose);
+int fr_cli_run_publish(const char *only, int use_cache, int verbose);
+int fr_cli_list_tasks(int use_cache, int verbose);
+
 #endif
