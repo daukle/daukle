@@ -69,4 +69,13 @@ struct fr_archive {
     int done;
 };
 
+int fr_archive_read_exactly(fr_archive *archive, unsigned char *into, size_t count);
+int fr_archive_skip_exactly(fr_archive *archive, size_t count);
+int fr_archive_refuse_past_cap(fr_archive *archive, unsigned long long size, fr_error *err);
+int fr_archive_fits_the_member_buffer(fr_archive *archive, size_t length, fr_error *err);
+void fr_archive_end_iteration(fr_archive *archive, const fr_archive_member **out_member);
+void fr_archive_publish(fr_archive *archive, fr_member_kind kind, size_t length, int executable,
+                        int setuid, const fr_archive_member **out_member);
+int fr_archive_tar_next(fr_archive *archive, const fr_archive_member **out_member, fr_error *err);
+
 #endif
