@@ -42,4 +42,8 @@ int fr_lua_verb_provision(lua_State *state);
 int fr_lua_verb_artifact(lua_State *state);
 int fr_lua_verb_pin(lua_State *state);
 
+int fr_lua_root_path(lua_State *state);
+int fr_lua_root_dir(lua_State *state);
+int fr_lua_root_tool(lua_State *state);
+
 #endif
