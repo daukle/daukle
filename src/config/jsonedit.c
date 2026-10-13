@@ -1,4 +1,5 @@
 #include "config/jsonedit.h"
+#include "config/jsonedit_internal.h"
 
 #include "util/error.h"
 #include "util/strbuf.h"
@@ -17,13 +18,6 @@ typedef struct {
     const char *const *values;
     size_t count;
 } edit_value;
-
-typedef struct {
-    size_t key_start;
-    size_t key_end;
-    size_t value_start;
-    size_t value_end;
-} member;
 
 static size_t skip_whitespace(const char *text, size_t index) {
     while (text[index] == ' ' || text[index] == '\t' || text[index] == '\n' || text[index] == '\r') index++;
