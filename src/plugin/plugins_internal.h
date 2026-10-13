@@ -42,4 +42,8 @@ int fr_plugins_report_record_unused_resolvers(const fr_plugin_entry *entries, si
                                               const fr_resolver_entry *resolvers,
                                               size_t resolver_count, fr_error *err);
 
+int fr_plugins_out_of_memory(const char *label, fr_error *err);
+void fr_plugins_describe_declared_resolvers(char *out, size_t out_size,
+                                            const fr_resolver_entry *resolvers, size_t count);
+
 #endif
