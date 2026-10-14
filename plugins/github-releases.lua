@@ -78,6 +78,28 @@ local function asset_url(release, name)
   return nil
 end
 
+local function highest_satisfying(body, range, repo, range_text)
+  local releases = daukle.json_parse(body)
+  if type(releases) ~= "table" then error("the releases response is not a json array") end
+
+  local best, best_release = nil, nil
+  -- A tag that is not a version (a doc tag, a marker) is skipped rather than
+  -- refused: not every tag in a repository is a release of this plugin.
+  for _, release in ipairs(releases) do
+    local version = type(release.tag_name) == "string" and parse_version(release.tag_name) or nil
+    if version ~= nil and satisfies(range, version) then
+      if best == nil or greater(version, best) then
+        best, best_release = version, release
+      end
+    end
+  end
+
+  if best == nil then
+    error("no release of \"" .. repo .. "\" satisfies \"" .. range_text .. "\"")
+  end
+  return best, best_release
+end
+
 daukle.resolver{
   resolve = function(coordinate, block)
     local repo, range_text = coordinate:match("^([^@]+)@(.+)$")
@@ -101,28 +123,15 @@ daukle.resolver{
     --- The one interior slash daukle.cache's project slot permits, exactly the "owner/name" shape.
     local cache_project = repo
 
+    --- Checked inside the producer so a list that satisfies nothing raises before
+    --- daukle.cache writes it; cached, it would refuse the range until --no-cache
+    --- even after the release it names is published (D-129).
     local body = daukle.cache(cache_project, range_text, index, function()
-      return daukle.fetch(index, authorization())
+      local fetched = daukle.fetch(index, authorization())
+      highest_satisfying(fetched, range, repo, range_text)
+      return fetched
     end)
-
-    local releases = daukle.json_parse(body)
-    if type(releases) ~= "table" then error("the releases response is not a json array") end
-
-    local best, best_release = nil, nil
-    -- A tag that is not a version (a doc tag, a marker) is skipped rather than
-    -- refused: not every tag in a repository is a release of this plugin.
-    for _, release in ipairs(releases) do
-      local version = type(release.tag_name) == "string" and parse_version(release.tag_name) or nil
-      if version ~= nil and satisfies(range, version) then
-        if best == nil or greater(version, best) then
-          best, best_release = version, release
-        end
-      end
-    end
-
-    if best == nil then
-      error("no release of \"" .. repo .. "\" satisfies \"" .. range_text .. "\"")
-    end
+    local best, best_release = highest_satisfying(body, range, repo, range_text)
 
     local url = asset_url(best_release, asset)
     if url == nil then
