@@ -151,6 +151,12 @@ if(APPLE)
              -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_macos_links.cmake)
 endif()
 
+add_test(NAME cli_commands COMMAND ${CMAKE_COMMAND}
+         -DDAUKLE=$<TARGET_FILE:daukle>
+         -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+         -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/cli-commands
+         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_cli_commands.cmake)
+
 add_test(NAME agnostic_core COMMAND ${CMAKE_COMMAND}
          -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_agnostic.cmake)
