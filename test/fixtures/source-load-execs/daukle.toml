@@ -9,7 +9,7 @@ kind = "path"
 path = "./producer"
 
 [plugins]
-path = "./plugins/path.lua"
+path = "./plugins/execing-path.lua"
 
 [[consumers]]
 id = "stub"

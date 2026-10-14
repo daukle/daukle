@@ -35,9 +35,10 @@ static int read_fixture(const char *file_path, fr_manifest *out, fr_error *err) 
    the directory the runtime opens on, so the fixture directory is both where
    the plugin copy lives and where its producer must sit. The toml format is
    registered because the plugin hands what it read to daukle.parse. */
-static fr_registry *with_path_source(const char *fixture_dir) {
+static fr_registry *with_source_plugin(const char *fixture_dir, const char *plugin_file) {
     fr_registry *registry = fr_registry_create();
-    cJSON *document = cJSON_Parse("{\"plugins\":{\"path\":\"./plugins/path.lua\"}}");
+    cJSON *document = cJSON_CreateObject();
+    cJSON_AddStringToObject(cJSON_AddObjectToObject(document, "plugins"), "path", plugin_file);
     fr_error err;
     int loaded = fr_registry_add_config(registry, &FR_CONFIG_TOML, &err) == FR_OK
                  && fr_lua_runtime_begin(fixture_dir, registry, &err) == FR_OK
@@ -48,6 +49,10 @@ static fr_registry *with_path_source(const char *fixture_dir) {
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     return NULL;
+}
+
+static fr_registry *with_path_source(const char *fixture_dir) {
+    return with_source_plugin(fixture_dir, "./plugins/path.lua");
 }
 
 static void without_path_source(fr_registry *registry) {
@@ -127,12 +132,15 @@ TEST reports_a_module_that_has_no_block_for_the_language(void) {
     PASS();
 }
 
-static int resolve_fails_naming(const char *fixture_dir, const char *expected) {
+/* The source is not named path.lua: agnostic_core holds every fixture copy of
+   that name byte identical to the staged plugin. */
+static int resolve_fails_naming(const char *fixture_dir, const char *plugin_file,
+                                const char *expected) {
     char manifest_path[256];
     snprintf(manifest_path, sizeof manifest_path, "%s/daukle.toml", fixture_dir);
     fr_manifest manifest; fr_error err;
     read_fixture(manifest_path, &manifest, &err);
-    fr_registry *registry = with_path_source(fixture_dir);
+    fr_registry *registry = with_source_plugin(fixture_dir, plugin_file);
     if (registry == NULL) { fr_manifest_free(&manifest); return 0; }
 
     fr_resolved *items = NULL; size_t count = 0;
@@ -146,13 +154,14 @@ static int resolve_fails_naming(const char *fixture_dir, const char *expected) {
 }
 
 TEST a_source_load_may_not_exec(void) {
-    ASSERT(resolve_fails_naming("test/fixtures/source-load-execs",
+    ASSERT(resolve_fails_naming("test/fixtures/source-load-execs", "./plugins/execing-path.lua",
                                 "daukle.exec is not available while a source loads"));
     PASS();
 }
 
 TEST a_source_load_may_not_provision(void) {
     ASSERT(resolve_fails_naming("test/fixtures/source-load-provisions",
+                                "./plugins/provisioning-path.lua",
                                 "daukle.provision is not available while a source loads"));
     PASS();
 }

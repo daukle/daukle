@@ -10,7 +10,7 @@ path = "./producer"
 
 [plugins]
 path = "./plugins/path.lua"
-gradle = "./plugins/gradle.lua"
+gradle = "./plugins/execing-gradle.lua"
 
 [[consumers]]
 id = "stub"

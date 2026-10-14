@@ -502,9 +502,8 @@ TEST a_chunk_may_hold_a_source_and_exec_in_a_task(void) {
     PASS();
 }
 
-/* The gate at daukle.language and daukle.source fires only once a plugin says
-   what kind it is, by which time a plugin that execs at the top of its chunk
-   has already run the program. The refusal has to reach the call itself. */
+/* A plugin that execs at the top of its chunk runs the program before any
+   callback is asked for, so the refusal has to reach the call itself. */
 TEST a_plugin_execing_before_it_declares_is_refused_at_the_call(void) {
     fr_error err;
     fr_registry *registry = NULL;
