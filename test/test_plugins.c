@@ -487,7 +487,7 @@ TEST a_source_plugin_may_declare_exec(void) {
     PASS();
 }
 
-TEST a_chunk_may_hold_a_source_and_exec_in_a_task(void) {
+TEST a_chunk_may_declare_a_source_beside_a_toolchain_with_exec(void) {
     fr_error err;
     fr_registry *registry = NULL;
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
@@ -3077,7 +3077,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_manifest_declaring_no_plugins_opens_no_lua_state);
     RUN_TEST(a_language_plugin_may_declare_exec);
     RUN_TEST(a_source_plugin_may_declare_exec);
-    RUN_TEST(a_chunk_may_hold_a_source_and_exec_in_a_task);
+    RUN_TEST(a_chunk_may_declare_a_source_beside_a_toolchain_with_exec);
     RUN_TEST(a_plugin_execing_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_plugin_provisioning_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_language_plugin_declaring_tool_but_not_exec_still_loads);

@@ -1,0 +1,25 @@
+schema = 1
+project = "forebay/source-beside-a-task"
+version = "1.0.0"
+
+[modules]
+
+[sources."forebay/basekit"]
+kind = "execing"
+path = "./producer"
+
+[plugins]
+runner = "./plugins/runner.lua"
+
+[toolchains.runner]
+version = "1"
+
+[[consumers]]
+id = "stub"
+language = "passthrough"
+file = "out.txt"
+configuration = "none"
+
+  [consumers.dependencies."forebay/basekit"]
+  version = "^5.0.0"
+  modules = ["ir"]

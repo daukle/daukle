@@ -526,6 +526,70 @@ TEST a_task_runs_its_child_in_the_derived_directory(void) {
     PASS();
 }
 
+/* One chunk holds a source whose load execs and a task that execs. The task
+   running after the refused load is what proves the gate was left closed. */
+TEST a_task_still_execs_after_its_chunks_source_was_refused(void) {
+    char directory[1024];
+    snprintf(directory, sizeof directory, "%s", self_path);
+    char *last = strrchr(directory, '/');
+    char *last_back = strrchr(directory, '\\');
+    if (last_back != NULL && (last == NULL || last_back > last)) last = last_back;
+    if (last != NULL) *last = '\0';
+
+    const char *original_path = getenv("PATH");
+    char saved_path[4096];
+    snprintf(saved_path, sizeof saved_path, "%s", original_path == NULL ? "" : original_path);
+    char path_value[4096];
+#ifdef _WIN32
+    snprintf(path_value, sizeof path_value, "%s;%s", directory, saved_path);
+#else
+    snprintf(path_value, sizeof path_value, "%s:%s", directory, saved_path);
+#endif
+    put_environment("PATH", path_value);
+    put_environment("DAUKLE_TEST_CHILD", last == NULL ? self_path : last + 1);
+
+    const char *marker = "test/fixtures/source-beside-a-task/build/daukle/runner/ran-here.txt";
+    remove(marker);
+
+    fr_error err;
+    fr_session session;
+    int opened = fr_session_open("test/fixtures/source-beside-a-task/daukle.toml", 1, &session,
+                                 &err) == FR_OK;
+    int load_refused = 0;
+    int ran_before_the_task = 0;
+    int status = FR_ERR;
+    if (opened) {
+        fr_sync_report report;
+        load_refused = fr_sync_session(&session, 1, &report, &err) == FR_ERR
+                       && strstr(err.message, "daukle.exec is not available while a source loads")
+                          != NULL;
+        fr_sync_report_free(&report);
+        ran_before_the_task = file_exists(marker);
+
+        fr_task_set set;
+        fr_task_plan plan;
+        if (fr_tasks_collect(session.registry, &session.manifest, &set, &err) == FR_OK) {
+            if (fr_tasks_plan(&set, "runner:touch", &plan, &err) == FR_OK) {
+                status = fr_tasks_run(&plan, &session, &err);
+                fr_tasks_plan_free(&plan);
+            }
+            fr_tasks_set_free(&set);
+        }
+        fr_session_close(&session);
+    }
+    int ran_here = file_exists(marker);
+
+    put_environment("PATH", saved_path);
+    remove(marker);
+
+    ASSERT(opened);
+    ASSERT(load_refused);
+    ASSERT_FALSE(ran_before_the_task);
+    ASSERT_EQm(err.message, FR_OK, status);
+    ASSERT(ran_here);
+    PASS();
+}
+
 /* Runs the fixture's one task and returns what the child saw of GITHUB_TOKEN. */
 static int token_a_task_child_saw(const char *manifest, char *out, size_t limit, fr_error *err) {
     char directory[1024];
@@ -964,6 +1028,7 @@ int main(int argc, char **argv) {
     RUN_TEST(no_cache_bypasses_both_the_read_and_the_write);
     RUN_TEST(the_same_manifest_in_two_formats_writes_the_same_file);
     RUN_TEST(a_task_runs_its_child_in_the_derived_directory);
+    RUN_TEST(a_task_still_execs_after_its_chunks_source_was_refused);
     RUN_TEST(a_task_child_inherits_a_credential_its_plugin_declared);
     RUN_TEST(a_manifest_task_runs_a_program_from_a_real_manifest);
     RUN_TEST(a_publisher_runs_its_child_in_the_from_toolchains_directory);
