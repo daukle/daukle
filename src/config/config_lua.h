@@ -51,16 +51,24 @@ void fr_lua_declare_set_required_aliases(const fr_plugin_requirement *requires, 
 fr_registry *fr_lua_registering_registry(void);
 
 /* True while a plugin chunk is running, which is exactly when daukle.exec must
-   refuse: the checks in daukle.language and daukle.source fire only once a
-   plugin declares its kind, and a plugin that execs at the top of its chunk has
-   already run the program by then. This refusal covers the whole chunk, for
-   every kind, and stays that way rather than narrowing to the kinds that may
-   not exec: that is a fail-open hole found and closed once already, and
-   narrowing it would reopen it for whichever kind was judged safe. Generation
-   opens a second, unrelated window where exec is refused: a toolchain's
-   generate callback must be a pure function of the manifest, so that
-   `daukle check` never starts a process; see fr_lua_generation_is_running. */
+   refuse: a plugin that execs at the top of its chunk would run the program
+   during `daukle check`, before any callback asked for it. This refusal covers
+   the whole chunk, for every kind, and stays that way rather than narrowing to
+   the kinds that may not exec: that is a fail-open hole found and closed once
+   already, and narrowing it would reopen it for whichever kind was judged safe.
+   Generation opens a second window, see fr_lua_generation_is_running, and a
+   source's load or a language's apply a third, see
+   fr_lua_process_free_callback_phase. */
 int fr_lua_plugin_exec_is_refused(void);
+
+/* A source's load and a language's apply run on every command, often for a
+   dependency the user did not write, so neither may start a process even when
+   its chunk's `uses` names exec for a task or publish callback beside it. A
+   depth, not a flag, so a load nested inside another load cannot clear the
+   gate when it returns. The phase names the outermost callback. D-133. */
+void fr_lua_enter_process_free_callback(const char *phase);
+void fr_lua_leave_process_free_callback(void);
+const char *fr_lua_process_free_callback_phase(void);
 
 /* True only while a toolchain's generate callback is running inside
    lua_pcall, so daukle.exec and daukle.tool can refuse there: generation

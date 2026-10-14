@@ -163,13 +163,16 @@ int fr_lua_verb_provision(lua_State *state) {
         return luaL_error(state, "daukle.provision is not available while generating; "
                                  "generation is a pure function of the manifest");
     }
-    /* The per-kind refusals in config_lua fire when daukle.language and its
-       siblings are CALLED, by which time a chunk that provisioned at its top
-       level has already put a tree on disk during `daukle check`. The refusal
-       has to reach the call, exactly as daukle.exec's does. */
+    /* A chunk that provisioned at its top level would put a tree on disk during
+       `daukle check`, so the refusal reaches the call, exactly as daukle.exec's does. */
     if (fr_lua_plugin_exec_is_refused()) {
         return luaL_error(state, "daukle.provision is not available while a plugin chunk is"
                                  " loading; call it from a task or publish callback");
+    }
+    const char *phase = fr_lua_process_free_callback_phase();
+    if (phase != NULL) {
+        return luaL_error(state, "daukle.provision is not available while %s; call it from a"
+                                 " task or publish callback", phase);
     }
     luaL_checktype(state, 1, LUA_TTABLE);
     refuse_an_unknown_provision_field(state, "daukle.provision");
