@@ -1,4 +1,4 @@
-daukle.plugin{ api = 1, uses = { "exec" } }
+daukle.plugin{ api = 2, uses = { "exec" } }
 
 daukle.source{
   name = "bad",

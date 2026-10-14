@@ -457,33 +457,46 @@ TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
     PASS();
 }
 
-TEST a_language_plugin_may_not_declare_exec(void) {
+TEST a_language_plugin_may_declare_exec(void) {
     fr_error err;
     fr_registry *registry = NULL;
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
 
     fr_manifest manifest;
-    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/plugin-exec-refused/daukle.toml",
-                                          registry, &manifest, &err));
-    ASSERT(strstr(err.message,
-                  "daukle.exec is available only to a toolchain or publisher plugin") != NULL);
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-language-declares-exec/daukle.toml",
+                                         registry, &manifest, &err));
 
+    fr_manifest_free(&manifest);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
 
-TEST a_source_plugin_may_not_declare_exec(void) {
+TEST a_source_plugin_may_declare_exec(void) {
     fr_error err;
     fr_registry *registry = NULL;
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
 
     fr_manifest manifest;
-    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/plugin-exec-refused-source/daukle.toml",
-                                          registry, &manifest, &err));
-    ASSERT(strstr(err.message,
-                  "daukle.exec is available only to a toolchain or publisher plugin") != NULL);
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-source-declares-exec/daukle.toml",
+                                         registry, &manifest, &err));
 
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST a_chunk_may_hold_a_source_and_exec_in_a_task(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/source-beside-a-toolchain/daukle.toml",
+                                         registry, &manifest, &err));
+
+    fr_manifest_free(&manifest);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     PASS();
@@ -574,7 +587,7 @@ TEST a_plugin_written_against_a_later_api_says_which(void) {
     ASSERT_EQ(FR_ERR, load_manifest("test/fixtures/plugin-future-api/daukle.toml", &err));
     ASSERT(strstr(err.message, "gradle") != NULL);
     ASSERT(strstr(err.message, "needs daukle api 3") != NULL);
-    ASSERT(strstr(err.message, "provides 1") != NULL);
+    ASSERT(strstr(err.message, "provides 2") != NULL);
     /* The running version, so the message is actionable without the reader
        knowing which release first provided which api. D-116. */
     ASSERT(strstr(err.message, fr_self_version()) != NULL);
@@ -3063,8 +3076,9 @@ int main(int argc, char **argv) {
     RUN_TEST(sync_writes_through_a_plugin_registered_language);
     RUN_TEST(a_verb_a_plugin_declared_is_there_when_it_runs);
     RUN_TEST(a_manifest_declaring_no_plugins_opens_no_lua_state);
-    RUN_TEST(a_language_plugin_may_not_declare_exec);
-    RUN_TEST(a_source_plugin_may_not_declare_exec);
+    RUN_TEST(a_language_plugin_may_declare_exec);
+    RUN_TEST(a_source_plugin_may_declare_exec);
+    RUN_TEST(a_chunk_may_hold_a_source_and_exec_in_a_task);
     RUN_TEST(a_plugin_execing_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_plugin_provisioning_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_language_plugin_declaring_tool_but_not_exec_still_loads);

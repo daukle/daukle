@@ -127,6 +127,36 @@ TEST reports_a_module_that_has_no_block_for_the_language(void) {
     PASS();
 }
 
+static int resolve_fails_naming(const char *fixture_dir, const char *expected) {
+    char manifest_path[256];
+    snprintf(manifest_path, sizeof manifest_path, "%s/daukle.toml", fixture_dir);
+    fr_manifest manifest; fr_error err;
+    read_fixture(manifest_path, &manifest, &err);
+    fr_registry *registry = with_path_source(fixture_dir);
+    if (registry == NULL) { fr_manifest_free(&manifest); return 0; }
+
+    fr_resolved *items = NULL; size_t count = 0;
+    int refused = fr_resolve_consumer(&manifest.consumers[0], &manifest, fixture_dir, registry,
+                                      &items, &count, &err) == FR_ERR
+                  && strstr(err.message, expected) != NULL;
+
+    without_path_source(registry);
+    fr_manifest_free(&manifest);
+    return refused;
+}
+
+TEST a_source_load_may_not_exec(void) {
+    ASSERT(resolve_fails_naming("test/fixtures/source-load-execs",
+                                "daukle.exec is not available while a source loads"));
+    PASS();
+}
+
+TEST a_source_load_may_not_provision(void) {
+    ASSERT(resolve_fails_naming("test/fixtures/source-load-provisions",
+                                "daukle.provision is not available while a source loads"));
+    PASS();
+}
+
 TEST deduplicates_a_module_reached_twice(void) {
     fr_manifest manifest; fr_error err;
     read_fixture("test/fixtures/consumer-dup/daukle.toml", &manifest, &err);
@@ -266,6 +296,8 @@ int main(int argc, char **argv) {
     RUN_TEST(accepts_an_empty_requires_from_a_source_plugin);
     RUN_TEST(reports_a_module_that_has_no_block_for_the_language);
     RUN_TEST(deduplicates_a_module_reached_twice);
+    RUN_TEST(a_source_load_may_not_exec);
+    RUN_TEST(a_source_load_may_not_provision);
     RUN_TEST(rejects_a_version_outside_the_range);
     RUN_TEST(reports_a_module_absent_from_the_language);
     RUN_TEST(reports_an_unknown_module_by_name);

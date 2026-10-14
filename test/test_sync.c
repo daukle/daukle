@@ -125,6 +125,15 @@ TEST reports_an_unknown_source_kind_as_a_missing_plugin(void) {
     PASS();
 }
 
+TEST a_language_apply_may_not_exec(void) {
+    fr_error err;
+    fr_sync_report report;
+    ASSERT_EQ(FR_ERR, fr_sync("test/fixtures/language-apply-execs/daukle.toml", 1, 1, &report, &err));
+    ASSERT(strstr(err.message, "daukle.exec is not available while a language applies") != NULL);
+    fr_sync_report_free(&report);
+    PASS();
+}
+
 TEST reports_a_missing_language_as_a_missing_plugin(void) {
     fr_error err;
     fr_sync_report report;
@@ -231,6 +240,7 @@ int main(int argc, char **argv) {
     RUN_TEST(counts_the_files_written_before_a_failure);
     RUN_TEST(reports_an_unknown_source_kind_as_a_missing_plugin);
     RUN_TEST(reports_a_missing_language_as_a_missing_plugin);
+    RUN_TEST(a_language_apply_may_not_exec);
     RUN_TEST(a_repository_with_no_tool_file_generates_into_the_derived_directory);
     RUN_TEST(generating_twice_changes_nothing_the_second_time);
     RUN_TEST(check_names_a_stale_derived_tree_without_writing);
