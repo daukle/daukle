@@ -1320,6 +1320,77 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     PASS();
 }
 
+static int release_published;
+
+/* Serves 1.1.0 alone until release_published is set, then 1.2.0 beside it,
+   which is a repository before and after a tag is pushed. */
+static int stub_release_published_later(const char *url, const fr_http_header *headers,
+                                        size_t header_count, char **out_body, size_t *out_length,
+                                        fr_error *err) {
+    (void) headers; (void) header_count; (void) err;
+    release_requests++;
+    if (strstr(url, "/releases") != NULL) {
+        *out_body = copy_body(release_published
+            ? "[{\"tag_name\":\"1.2.0\",\"assets\":"
+              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/p.lua\"}]},"
+              "{\"tag_name\":\"1.1.0\",\"assets\":"
+              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/o.lua\"}]}]"
+            : "[{\"tag_name\":\"1.1.0\",\"assets\":"
+              "[{\"name\":\"plugin.lua\",\"browser_download_url\":\"https://x/o.lua\"}]}]",
+            out_length);
+    } else {
+        *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
+                              "daukle.language{ name = 'remote-1-2-0', apply = function() return '' end }\n",
+                              out_length);
+    }
+    return FR_OK;
+}
+
+static int load_github_coordinate(const char *document_json, fr_error *err) {
+    fr_registry *registry = NULL;
+    int status = fr_build_registry(&registry, err);
+    cJSON *document = cJSON_Parse(document_json);
+    if (status == FR_OK) status = fr_lua_runtime_begin("test/fixtures/github-resolver", registry, err);
+    if (status == FR_OK) status = fr_plugins_load(registry, document, "test/fixtures/github-resolver", err);
+    cJSON_Delete(document);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
+    return status;
+}
+
+/* D-129: a range asked for before any release satisfied it used to cache that
+   release list, and every later run refused the range until --no-cache. */
+TEST the_github_resolver_does_not_cache_a_list_that_satisfies_nothing(void) {
+    const char *document_json =
+        "{\"resolvers\":{\"gh\":{\"path\":\"./github-releases.lua\"}},"
+        "\"plugins\":{\"r\":\"gh:daukle/remote@^1.2.0\"}}";
+
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_github_unsatisfied_%d",
+            fr_test_temp_base(), fr_test_process_id());
+    fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
+    fr_http_fn previous = fr_http_set_backend(stub_release_published_later);
+
+    fr_error before_err, after_err;
+    release_published = 0;
+    int before_status = load_github_coordinate(document_json, &before_err);
+    char before_message[512];
+    snprintf(before_message, sizeof before_message, "%s", before_err.message);
+
+    release_published = 1;
+    int after_status = load_github_coordinate(document_json, &after_err);
+
+    fr_http_set_backend(previous);
+    fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+
+    ASSERT(before_status != FR_OK);
+    ASSERT(strstr(before_message, "no release of \"daukle/remote\" satisfies \"^1.2.0\"") != NULL);
+    ASSERT_EQm(after_err.message, FR_OK, after_status);
+    PASS();
+}
+
 TEST an_undeclared_resolver_is_refused_naming_it(void) {
     fr_error err;
     int status = FR_OK;
@@ -3031,6 +3102,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_chunk_may_not_declare_a_resolver);
     RUN_TEST(the_headers_a_resolver_returns_reach_the_artifact_fetch);
     RUN_TEST(the_github_resolver_picks_the_highest_release_in_range);
+    RUN_TEST(the_github_resolver_does_not_cache_a_list_that_satisfies_nothing);
     RUN_TEST(an_undeclared_resolver_is_refused_naming_it);
     RUN_TEST(a_matching_pin_loads_and_a_mismatched_one_fails_naming_both_digests);
     RUN_TEST(an_uppercase_pin_still_matches_the_lowercase_digest);
