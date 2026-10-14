@@ -97,6 +97,16 @@ a program declares `uses = { "exec", "tool" }`, one that fetches declares `"fetc
 cannot start a process, and the refusal comes from daukle rather than from the plugin's good
 intentions. When you review a dependency's plugin, `uses` is the line to read first.
 
+**`exec` and `provision` are also withheld by WHEN, whatever `uses` says.** One `plugin.lua` may
+declare a source or a language beside a toolchain or a publisher, so a GitHub plugin can both
+fetch a manifest and publish a release. But a source's `load` and a language's `apply` run on every
+command, often for a dependency you did not write, so neither may start a process or provision a
+tool: the call is refused naming the phase, `daukle.exec is not available while a source loads`.
+Call them from a task or a publish callback. A chunk's top level and a toolchain's `generate` are
+refused the same way. **A resolver may not declare either at all**, because it is acquired before
+any pin exists. A chunk that declares a source or a language beside `exec` or `provision` needs
+`api = 2`, which `daukle 0.8.0` is the first to provide.
+
 ## What `api` is for, and when to raise it
 
 `api = 1` says which plugin api your plugin was written against. **daukle refuses an api HIGHER

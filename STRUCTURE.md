@@ -145,17 +145,18 @@ the registry and the one stub source `test_resolve.c:75` injects to watch a plug
 Neither touches `src/plugin/resolve.c`, and a change that does touch it for a new source or language is the
 signal that the seam was bypassed.
 
-**A source or a language plugin may not declare `exec`.** `lua_declare_language` and
-`lua_declare_source` in `src/config/config_declare.c` both refuse with "daukle.exec is available only
-to a toolchain or publisher plugin" when `fr_lua_verbs_env_declared_exec` (`src/lua/lua_verbs.c`)
-reports that the environment the plugin's chunk is running in included `exec`. The flag is reset at
-the top of every `fr_lua_verbs_push_env` call, so it can never carry a stale answer from a previously
-loaded plugin. **A toolchain or a publisher plugin may declare `exec`, and both kinds exist**:
-`daukle/java` and `daukle/cmake` are toolchains, and `D-4` shipped publishing.
+**A source's `load` and a language's `apply` may not RUN `exec` or `provision`, though their chunk
+may declare them** (`D-133`, api 2). `fr_lua_dispatch_source_load` and
+`fr_lua_dispatch_language_apply` bracket their `lua_pcall` with
+`fr_lua_enter_process_free_callback` and its `leave`, a depth counter in `src/config/config_lua.c`,
+and `verb_exec` and `verb_provision` refuse naming the phase while it is non-zero. So one chunk may
+hold a source and a publisher. **Only a resolver is refused at declaration**:
+`lua_declare_resolver` in `src/config/config_declare.c` raises "daukle.exec is available only to a
+toolchain or publisher plugin" when `fr_lua_verbs_env_declared_exec` (`src/lua/lua_verbs.c`) reports
+`exec` in the chunk's environment, because a resolver is acquired before any pin exists.
 
-That check fires when a plugin says what kind it is, which is too late on its own: a plugin that
-calls `daukle.exec` at the top of its chunk and declares afterwards has already run the program. So
-`verb_exec` refuses again at the call itself, for the whole of any plugin's **top-level chunk**
+A plugin that calls `daukle.exec` at the top of its chunk would run the program before any callback
+asked for it, so `verb_exec` refuses at the call itself for the whole of any plugin's **top-level chunk**
 (`fr_lua_plugin_exec_is_refused` in `src/config/config_lua.c`, which returns `plugin_chunk_running`).
 **The rule is temporal, not about kind**: exec is refused while a chunk is declaring and allowed
 inside the task callback that runs later. The two together are what make the refusal fail closed.
