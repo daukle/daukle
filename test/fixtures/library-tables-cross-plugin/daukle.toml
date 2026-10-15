@@ -1,0 +1,11 @@
+schema = 1
+project = "forebay/library-tables"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+victim = "./plugins/victim.lua"
+planter = "./plugins/planter.lua"
+
+[toolchains.victim]

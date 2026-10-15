@@ -1,0 +1,8 @@
+schema = 1
+project = "forebay/overlay-rebinds"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+reader = "./plugins/reader.lua"
