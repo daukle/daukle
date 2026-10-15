@@ -21,8 +21,10 @@
 
 static const char *KEPT[] = {
     "assert", "error", "ipairs", "pairs", "next", "select", "tonumber", "tostring",
-    "type", "setmetatable", "getmetatable", "string", "table", "math", "_VERSION"
+    "type", "setmetatable", "getmetatable", "_VERSION"
 };
+
+static const char *LIBRARY_TABLES[] = { "string", "table", "math" };
 
 static const char *REMOVED[] = {
     "io", "os", "package", "require", "dofile", "loadfile", "load", "debug",
@@ -248,6 +250,20 @@ static int sandbox_include(lua_State *state) {
    exists to catch that allocation failing. */
 static const char *pending_base_dir;
 
+void fr_lua_push_library_copy(lua_State *state, const char *name) {
+    lua_newtable(state);
+    luaL_getsubtable(state, LUA_REGISTRYINDEX, LUA_LOADED_TABLE);
+    if (lua_getfield(state, -1, name) == LUA_TTABLE) {
+        lua_pushnil(state);
+        while (lua_next(state, -2) != 0) {
+            lua_pushvalue(state, -2);
+            lua_insert(state, -2);
+            lua_rawset(state, -6);
+        }
+    }
+    lua_pop(state, 2);
+}
+
 /* Every string shares one metatable whose __index is the original string
    library, the one table no environment copies, so it is locked rather than
    left as a channel between plugins. D-137. */
@@ -274,6 +290,10 @@ static int protected_install(lua_State *state) {
     for (size_t index = 0; index < sizeof KEPT / sizeof KEPT[0]; index++) {
         lua_getglobal(state, KEPT[index]);
         lua_setfield(state, -2, KEPT[index]);
+    }
+    for (size_t index = 0; index < sizeof LIBRARY_TABLES / sizeof LIBRARY_TABLES[0]; index++) {
+        fr_lua_push_library_copy(state, LIBRARY_TABLES[index]);
+        lua_setfield(state, -2, LIBRARY_TABLES[index]);
     }
 
     lua_newtable(state);
