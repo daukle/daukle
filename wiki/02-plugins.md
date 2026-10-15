@@ -36,7 +36,10 @@ deliberate resolve, and page 4 covers it.
 [plugins]
 # only the dependency writer, and only its grant
 cmake = { resolver = "github", coordinate = "daukle/cmake@^1", modules = ["deps"] }
+```
 
+```toml
+[plugins]
 # the toolchain AND the dependency writer
 cmake = { resolver = "github", coordinate = "daukle/cmake@^1", modules = ["main", "deps"] }
 ```
@@ -46,7 +49,8 @@ depending on one never grants what another needs: the line above that names only
 `region` and not the toolchain's `exec`. `"main"` is the plugin's `plugin.lua`; any other name is
 `modules/<name>.lua` inside the plugin's published archive. **With no `modules` key, only
 `plugin.lua` loads**, exactly as before. The artifact is fetched and checked once, however many of
-its modules the line names, and `config print` shows a row per module as `<label>/<module>`.
+its modules the line names, and `config print` shows a row per module as `<label>/<module>`. A `requires` override on the line reaches whichever named module
+declares that alias, and one that no named module declares is refused by name.
 
 ## Writing one
 

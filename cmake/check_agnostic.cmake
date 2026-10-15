@@ -9,7 +9,7 @@ set(CORE_FILES
     plugin/plugin_deps.c plugin/plugin_deps.h archive/archive.c archive/archive.h archive/archive_internal.h
     archive/archive_tar.c archive/archive_zip.c archive/unpack.c archive/unpack.h
     provision/provision.c provision/provision.h exec/toolreport.c exec/toolreport.h
-    util/tree.c util/tree.h plugin/plugin_report.c plugin/plugins_internal.h
+    util/tree.c util/tree.h plugin/plugin_report.c plugin/plugins_internal.h plugin/plugins_load.c
     lua/lua_modules.c lua/lua_modules.h config/config_lua_internal.h config/config_dispatch.c
     config/config_dispatch_resolve.c config/config_dispatch_language.c
     cli/cli_internal.h cli/cli_add.c cli/cli_config.c cli/cli_plugins.c cli/cli_tasks.c
