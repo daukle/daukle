@@ -12,9 +12,7 @@
 #include <unistd.h>
 #endif
 
-typedef void (*child_visitor)(const char *child_path, int is_directory, int is_link);
-
-static void for_each_child(const char *directory, child_visitor visit) {
+void fr_list_directory(const char *directory, fr_directory_visitor visit, void *context) {
 #ifdef _WIN32
     char pattern[1024];
     int written = snprintf(pattern, sizeof pattern, "%s/*", directory);
@@ -25,12 +23,9 @@ static void for_each_child(const char *directory, child_visitor visit) {
     if (handle == INVALID_HANDLE_VALUE) return;
     do {
         if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) continue;
-        char child[1024];
-        int child_written = snprintf(child, sizeof child, "%s/%s", directory, found.cFileName);
-        if (child_written < 0 || (size_t) child_written >= sizeof child) continue;
         int is_directory = (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         int is_link = (found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-        visit(child, is_directory, is_link);
+        visit(found.cFileName, is_directory, is_link, context);
     } while (FindNextFileA(handle, &found));
     FindClose(handle);
 #else
@@ -45,7 +40,7 @@ static void for_each_child(const char *directory, child_visitor visit) {
         struct stat info;
         if (lstat(child, &info) != 0) continue;
         int is_link = S_ISLNK(info.st_mode);
-        visit(child, !is_link && S_ISDIR(info.st_mode), is_link);
+        visit(entry->d_name, !is_link && S_ISDIR(info.st_mode), is_link, context);
     }
     closedir(dir);
 #endif
@@ -55,7 +50,10 @@ static void for_each_child(const char *directory, child_visitor visit) {
    opening a junction or a directory symlink for listing follows it
    transparently, which is exactly how an unguarded sweep deletes whatever the
    link points at instead of the link itself. */
-static void remove_child(const char *child_path, int is_directory, int is_link) {
+static void remove_child(const char *name, int is_directory, int is_link, void *context) {
+    char child_path[1024];
+    int written = snprintf(child_path, sizeof child_path, "%s/%s", (const char *) context, name);
+    if (written < 0 || (size_t) written >= sizeof child_path) return;
     if (is_link) {
 #ifdef _WIN32
         if (is_directory) RemoveDirectoryA(child_path); else remove(child_path);
@@ -69,7 +67,7 @@ static void remove_child(const char *child_path, int is_directory, int is_link) 
 }
 
 void fr_remove_tree(const char *path) {
-    for_each_child(path, remove_child);
+    fr_list_directory(path, remove_child, (void *) path);
 #ifdef _WIN32
     RemoveDirectoryA(path);
 #else

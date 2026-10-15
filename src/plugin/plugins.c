@@ -243,6 +243,20 @@ int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const c
     return status;
 }
 
+/* config print reports a module as "<label>/<module>", so that spelling names
+   the entry too: the modules share one fetched artifact, and clearing it is
+   all an update of one of them can mean. */
+static int label_names_entry(const fr_plugin_entry *entry, const char *label) {
+    if (strcmp(entry->label, label) == 0) return 1;
+    size_t label_length = strlen(entry->label);
+    if (strncmp(label, entry->label, label_length) != 0 || label[label_length] != '/') return 0;
+    const char *module = label + label_length + 1;
+    for (size_t index = 0; index < entry->module_count; index++) {
+        if (strcmp(entry->modules[index], module) == 0) return 1;
+    }
+    return 0;
+}
+
 int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
                             const fr_resolver_entry *resolvers, size_t resolver_count,
                             const char *label, size_t *out_removed_count, fr_error *err) {
@@ -258,7 +272,7 @@ int fr_plugins_update_cache(const fr_plugin_entry *entries, size_t count,
 
     for (size_t index = 0; index < count && status == FR_OK; index++) {
         const fr_plugin_entry *entry = &entries[index];
-        if (label != NULL && strcmp(entry->label, label) != 0) continue;
+        if (label != NULL && !label_names_entry(entry, label)) continue;
         matched = 1;
 
         if (entry->kind == FR_PLUGIN_URL) {

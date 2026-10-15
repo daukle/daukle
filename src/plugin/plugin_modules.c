@@ -4,13 +4,22 @@
 #include "lua/lua_sandbox.h"
 #include "project/region.h"
 #include "util/error.h"
+#include "util/tree.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define ENTRY_MEMBER "plugin.lua"
+#define MODULES_DIRECTORY "modules"
+#define MAIN_MODULE "main"
 #define MAX_CACHED FR_TAR_MAX_MEMBERS
+
+/* "main" names plugin.lua on a [plugins] line, so a modules/main.lua is a file
+   no line can ever reach, and saying so at load is the only time its author
+   finds out. */
+#define UNREACHABLE_MAIN_REFUSAL "the plugin carries " MODULES_DIRECTORY "/" MAIN_MODULE ".lua," \
+    " which can never load: the module \"" MAIN_MODULE "\" is " ENTRY_MEMBER ", so rename it"
 
 typedef enum { SOURCE_CHUNK, SOURCE_ARCHIVE, SOURCE_DIRECTORY } source_kind;
 
@@ -72,11 +81,80 @@ int fr_plugin_source_open_bytes(const char *bytes, size_t length, fr_plugin_sour
                 free(source);
                 return FR_ERR;
             }
+            if (strcmp(name, MODULES_DIRECTORY "/" MAIN_MODULE ".lua") == 0) {
+                fr_error_set(err, UNREACHABLE_MAIN_REFUSAL);
+                free(source);
+                return FR_ERR;
+            }
         }
     }
 
     *out = source;
     return FR_OK;
+}
+
+/* Resolving canonicalises, and canonicalising a path that does not exist
+   fails, so a resolve that succeeds is the existence check. */
+static int directory_carries_unreachable_main(const fr_plugin_source *source) {
+    char relative[1024];
+    int written = snprintf(relative, sizeof relative, "%s/" MODULES_DIRECTORY "/" MAIN_MODULE ".lua",
+                           source->directory);
+    if (written < 0 || (size_t) written >= sizeof relative) return 0;
+    char *resolved = NULL;
+    fr_error ignored;
+    if (fr_lua_sandbox_resolve(source->state, relative, &resolved, &ignored) != FR_OK) return 0;
+    free(resolved);
+    return 1;
+}
+
+typedef struct {
+    const char *wanted;
+    int found;
+    char names[256];
+    size_t filled;
+} module_listing;
+
+static void note_module(module_listing *listing, const char *file_name) {
+    if (!ends_with_lua(file_name)) return;
+    size_t name_length = strlen(file_name) - 4;
+    if (strlen(listing->wanted) == name_length
+        && strncmp(file_name, listing->wanted, name_length) == 0) {
+        listing->found = 1;
+    }
+    size_t room = sizeof listing->names - listing->filled;
+    int written = snprintf(listing->names + listing->filled, room, "%s%.*s",
+                           listing->filled == 0 ? "" : ", ", (int) name_length, file_name);
+    if (written < 0 || (size_t) written >= room) {
+        listing->names[listing->filled] = '\0';
+        return;
+    }
+    listing->filled += (size_t) written;
+}
+
+static void note_directory_module(const char *name, int is_directory, int is_link, void *context) {
+    (void) is_link;
+    if (!is_directory) note_module(context, name);
+}
+
+static void list_modules(const fr_plugin_source *source, module_listing *listing) {
+    if (source->kind == SOURCE_ARCHIVE) {
+        const size_t prefix_length = sizeof MODULES_DIRECTORY;
+        for (size_t index = 0; index < source->archive.count; index++) {
+            const char *name = source->archive.members[index].name;
+            if (strncmp(name, MODULES_DIRECTORY "/", prefix_length) != 0) continue;
+            if (strchr(name + prefix_length, '/') != NULL) continue;
+            note_module(listing, name + prefix_length);
+        }
+        return;
+    }
+    char relative[1024];
+    int written = snprintf(relative, sizeof relative, "%s/" MODULES_DIRECTORY, source->directory);
+    if (written < 0 || (size_t) written >= sizeof relative) return;
+    char *resolved = NULL;
+    fr_error ignored;
+    if (fr_lua_sandbox_resolve_dir(source->state, relative, &resolved, &ignored) != FR_OK) return;
+    fr_list_directory(resolved, note_directory_module, listing);
+    free(resolved);
 }
 
 int fr_plugin_source_open_directory(lua_State *state, const char *relative_directory,
@@ -98,6 +176,12 @@ int fr_plugin_source_open_directory(lua_State *state, const char *relative_direc
     }
     memcpy(source->directory, relative_directory, length + 1);
     source->state = state;
+
+    if (directory_carries_unreachable_main(source)) {
+        fr_error_set(err, UNREACHABLE_MAIN_REFUSAL);
+        fr_plugin_source_close(source);
+        return FR_ERR;
+    }
 
     *out = source;
     return FR_OK;
@@ -172,101 +256,6 @@ int fr_plugin_source_entry(fr_plugin_source *source, const char **out_text, size
     return FR_OK;
 }
 
-typedef enum {
-    MODULE_NAME_OK,
-    MODULE_NAME_EMPTY,
-    MODULE_NAME_ESCAPES,
-    MODULE_NAME_HAS_COLON,
-    MODULE_NAME_HAS_LUA_SUFFIX,
-    MODULE_NAME_HAS_BACKSLASH,
-    MODULE_NAME_TRAILING_SLASH,
-    MODULE_NAME_TOO_LONG
-} module_name_problem;
-
-/* One rule set, read once: fr_plugin_module_name_check and fr_plugin_export_name_check word the
-   same problem for two different readers (an author who wrote a require call, and one who wrote an
-   exports entry) rather than checking it twice. */
-static module_name_problem module_name_problem_of(const char *name) {
-    size_t length = strlen(name);
-    if (length == 0) return MODULE_NAME_EMPTY;
-    /* Before the colon rule below, because a windows drive letter carries one
-       too and "C:/x" is an escape rather than a coordinate. */
-    if (fr_lua_sandbox_climbs_out(name)) return MODULE_NAME_ESCAPES;
-    if (strchr(name, ':') != NULL) return MODULE_NAME_HAS_COLON;
-    if (ends_with_lua(name)) return MODULE_NAME_HAS_LUA_SUFFIX;
-    if (strchr(name, '\\') != NULL) return MODULE_NAME_HAS_BACKSLASH;
-    if (name[length - 1] == '/') return MODULE_NAME_TRAILING_SLASH;
-    if (length + 4 > FR_TAR_MAX_NAME) return MODULE_NAME_TOO_LONG;
-    return MODULE_NAME_OK;
-}
-
-/* Every refusal says what to write instead, because the caller is a plugin
-   author reading one line of output. */
-int fr_plugin_module_name_check(const char *name, fr_error *err) {
-    size_t length = strlen(name);
-    switch (module_name_problem_of(name)) {
-    case MODULE_NAME_OK:
-        return FR_OK;
-    case MODULE_NAME_EMPTY:
-        fr_error_set(err, "daukle.require was given an empty module name");
-        return FR_ERR;
-    case MODULE_NAME_ESCAPES:
-        fr_error_set(err, "daukle.require(\"%s\"): a module name may not leave the plugin", name);
-        return FR_ERR;
-    case MODULE_NAME_HAS_COLON:
-        fr_error_set(err, "daukle.require(\"%s\"): a module name may contain at most one \":\","
-                          " which separates a plugin from its module", name);
-        return FR_ERR;
-    case MODULE_NAME_HAS_LUA_SUFFIX:
-        fr_error_set(err, "daukle.require takes a module name: write \"%.*s\" without the \".lua\"",
-                     (int) (length - 4), name);
-        return FR_ERR;
-    case MODULE_NAME_HAS_BACKSLASH:
-        fr_error_set(err, "daukle.require(\"%s\"): a module name separates with \"/\"", name);
-        return FR_ERR;
-    case MODULE_NAME_TRAILING_SLASH:
-        fr_error_set(err, "daukle.require(\"%s\"): a module name does not end in \"/\"", name);
-        return FR_ERR;
-    case MODULE_NAME_TOO_LONG:
-        fr_error_set(err, "daukle.require was given a module name longer than %d bytes",
-                     FR_TAR_MAX_NAME - 4);
-        return FR_ERR;
-    }
-    return FR_OK;
-}
-
-int fr_plugin_export_name_check(const char *name, fr_error *err) {
-    size_t length = strlen(name);
-    switch (module_name_problem_of(name)) {
-    case MODULE_NAME_OK:
-        return FR_OK;
-    case MODULE_NAME_EMPTY:
-        fr_error_set(err, "exports names an empty module name");
-        return FR_ERR;
-    case MODULE_NAME_ESCAPES:
-        fr_error_set(err, "the export \"%s\" may not leave the plugin", name);
-        return FR_ERR;
-    case MODULE_NAME_HAS_COLON:
-        fr_error_set(err, "the export \"%s\" may contain at most one \":\", which separates a"
-                          " plugin from its module", name);
-        return FR_ERR;
-    case MODULE_NAME_HAS_LUA_SUFFIX:
-        fr_error_set(err, "an export name is written without the \".lua\" suffix: write \"%.*s\"",
-                     (int) (length - 4), name);
-        return FR_ERR;
-    case MODULE_NAME_HAS_BACKSLASH:
-        fr_error_set(err, "the export \"%s\" separates with \"/\"", name);
-        return FR_ERR;
-    case MODULE_NAME_TRAILING_SLASH:
-        fr_error_set(err, "the export \"%s\" does not end in \"/\"", name);
-        return FR_ERR;
-    case MODULE_NAME_TOO_LONG:
-        fr_error_set(err, "an export name may not be longer than %d bytes", FR_TAR_MAX_NAME - 4);
-        return FR_ERR;
-    }
-    return FR_OK;
-}
-
 static void report_missing(const fr_plugin_source *source, const char *file_name, fr_error *err) {
     char listed[256];
     size_t filled = 0;
@@ -316,8 +305,20 @@ int fr_plugin_source_module_entry(fr_plugin_source *source, const char *module,
                      module);
         return FR_ERR;
     }
+    module_listing listing = { module, 0, "", 0 };
+    list_modules(source, &listing);
+    if (!listing.found) {
+        if (listing.filled == 0) {
+            fr_error_set(err, "there is no module \"%s\": the plugin has no modules, only its "
+                              ENTRY_MEMBER, module);
+        } else {
+            fr_error_set(err, "there is no module \"%s\": the plugin's modules are %s", module,
+                         listing.names);
+        }
+        return FR_ERR;
+    }
     char member_name[FR_TAR_MAX_NAME + 1];
-    snprintf(member_name, sizeof member_name, "modules/%s", module);
+    snprintf(member_name, sizeof member_name, MODULES_DIRECTORY "/%s", module);
     return fr_plugin_source_member(source, member_name, out_text, out_length, err);
 }
 

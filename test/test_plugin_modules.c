@@ -98,12 +98,50 @@ TEST an_archive_serves_a_named_module_as_an_entry(void) {
     int main_matched = main_status == FR_OK && text_length == 8
                        && memcmp(text, "return 1", 8) == 0;
     int missing = fr_plugin_source_module_entry(source, "nope", &text, &text_length, &err);
-    int named = missing == FR_ERR && strstr(err.message, "modules/nope.lua") != NULL;
+    int named = missing == FR_ERR
+                && strstr(err.message, "there is no module \"nope\": the plugin's modules are deps")
+                   != NULL;
     fr_plugin_source_close(source);
 
     ASSERT(deps_matched);
     ASSERT(main_matched);
     ASSERTm(err.message, named);
+    PASS();
+}
+
+TEST an_archive_with_no_modules_says_so_when_one_is_named(void) {
+    size_t length = build_archive();
+    fr_plugin_source *source = NULL;
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_plugin_source_open_bytes(archive_bytes, length, &source, &err));
+
+    const char *text = NULL;
+    size_t text_length = 0;
+    int status = fr_plugin_source_module_entry(source, "deps", &text, &text_length, &err);
+    static char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+    fr_plugin_source_close(source);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "there is no module \"deps\": the plugin has no modules, only"
+                                     " its plugin.lua") != NULL);
+    PASS();
+}
+
+/* "main" is plugin.lua on a [plugins] line, so modules/main.lua could never
+   load and its author would never be told. D-139. */
+TEST an_archive_carrying_modules_main_is_refused(void) {
+    static char bytes[8192];
+    memset(bytes, 0, sizeof bytes);
+    size_t offset = fr_test_tar_append(bytes, 0, "plugin.lua", '0', "return 1", 8);
+    offset = fr_test_tar_append(bytes, offset, "modules/main.lua", '0', "return 2", 8);
+    size_t length = fr_test_tar_end(bytes, offset);
+
+    fr_plugin_source *source = NULL;
+    fr_error err;
+    ASSERT_EQ(FR_ERR, fr_plugin_source_open_bytes(bytes, length, &source, &err));
+    ASSERTm(err.message, strstr(err.message, "the plugin carries modules/main.lua, which can never"
+                                             " load") != NULL);
     PASS();
 }
 
@@ -355,6 +393,8 @@ int main(int argc, char **argv) {
     RUN_TEST(an_archive_serves_its_entry_member);
     RUN_TEST(an_archive_serves_a_module);
     RUN_TEST(an_archive_serves_a_named_module_as_an_entry);
+    RUN_TEST(an_archive_with_no_modules_says_so_when_one_is_named);
+    RUN_TEST(an_archive_carrying_modules_main_is_refused);
     RUN_TEST(an_archive_without_an_entry_member_is_refused);
     RUN_TEST(an_archive_carrying_something_other_than_lua_is_refused);
     RUN_TEST(an_archive_member_that_climbs_out_is_refused);

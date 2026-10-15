@@ -6,6 +6,7 @@ set(CORE_FILES
     util/types.h project/sync.c project/sync.h cli/main.c cli/cli.c cli/cli.h config/config.c config/config.h
     project/derived.c project/derived.h project/generate.c project/generate.h project/tasks.c project/tasks.h
     plugin/plugin_fetch.c plugin/plugin_fetch.h archive/tar.c archive/tar.h plugin/plugin_modules.c plugin/plugin_modules.h
+    plugin/plugin_module_names.c
     plugin/plugin_deps.c plugin/plugin_deps.h archive/archive.c archive/archive.h archive/archive_internal.h
     archive/archive_tar.c archive/archive_zip.c archive/unpack.c archive/unpack.h
     provision/provision.c provision/provision.h exec/toolreport.c exec/toolreport.h

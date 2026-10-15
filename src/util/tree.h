@@ -11,4 +11,12 @@
    check; this function only walks and unlinks. */
 void fr_remove_tree(const char *path);
 
+typedef void (*fr_directory_visitor)(const char *name, int is_directory, int is_link,
+                                     void *context);
+
+/* Calls visit once per entry of directory, skipping "." and "..", in no
+   particular order; a directory that cannot be opened visits nothing. name is
+   the bare entry name and is valid only during the call. */
+void fr_list_directory(const char *directory, fr_directory_visitor visit, void *context);
+
 #endif

@@ -74,6 +74,21 @@ static int refuse_an_override_no_module_declares(const fr_plugin_entry *entry,
     return FR_OK;
 }
 
+/* The source only knows its own files, so the [plugins] label that names
+   the module is added here, where a reader can find the line to fix. */
+static int named_module_entry(const fr_plugin_entry *entry, const acquired_artifact *artifact,
+                              const char *module, const char **out_text, size_t *out_length,
+                              fr_error *err) {
+    if (fr_plugin_source_module_entry(artifact->source, module, out_text, out_length, err)
+        == FR_OK) {
+        return FR_OK;
+    }
+    char reason[sizeof err->message];
+    snprintf(reason, sizeof reason, "%s", err->message);
+    fr_error_set(err, "plugin \"%s\": %s", entry->label, reason);
+    return FR_ERR;
+}
+
 /* One entry chunk of an acquired artifact, run with the grant its OWN
    declaration names. A module reports under "<label>/<module>", so config
    print shows one row per grant. */
@@ -84,7 +99,7 @@ static int load_chunk(const fr_plugin_entry *entry, const char *module,
     size_t chunk_length = 0;
     int status = module == NULL
         ? fr_plugin_source_entry(artifact->source, &chunk, &chunk_length, err)
-        : fr_plugin_source_module_entry(artifact->source, module, &chunk, &chunk_length, err);
+        : named_module_entry(entry, artifact, module, &chunk, &chunk_length, err);
     if (status != FR_OK) return FR_ERR;
 
     int is_main = module == NULL || strcmp(module, FR_PLUGIN_MAIN_MODULE) == 0;
@@ -141,8 +156,7 @@ static int collect_declared_aliases(const fr_plugin_entry *entry,
     for (size_t index = 0; index < entry->module_count; index++) {
         const char *chunk = NULL;
         size_t chunk_length = 0;
-        if (fr_plugin_source_module_entry(artifact->source, entry->modules[index], &chunk,
-                                          &chunk_length, err)
+        if (named_module_entry(entry, artifact, entry->modules[index], &chunk, &chunk_length, err)
             != FR_OK) {
             return FR_ERR;
         }
