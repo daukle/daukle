@@ -49,8 +49,15 @@ depending on one never grants what another needs: the line above that names only
 `region` and not the toolchain's `exec`. `"main"` is the plugin's `plugin.lua`; any other name is
 `modules/<name>.lua` inside the plugin's published archive. **With no `modules` key, only
 `plugin.lua` loads**, exactly as before. The artifact is fetched and checked once, however many of
-its modules the line names, and `config print` shows a row per module as `<label>/<module>`. A `requires` override on the line reaches whichever named module
+its modules the line names, and `config print` shows a row per module as `<label>/<module>`, which
+`daukle plugin update` also accepts. A `requires` override on the line reaches whichever named module
 declares that alias, and one that no named module declares is refused by name.
+
+**Since `daukle 0.9.1`**, a module the plugin does not carry is refused naming the line and the
+modules it does carry. A name is matched exactly, case included, and two names on one line that
+differ only in case are refused. A plugin that carries a `modules/main.lua` is refused too, because
+`"main"` always means `plugin.lua` and that file could never load, and a `[plugins]` key may not
+contain `/`.
 
 ## Writing one
 
@@ -137,8 +144,9 @@ publisher's `publish`.** The named refusals above come first because they tell y
 are in; beneath them, any call from outside those two callbacks is refused with `daukle.exec is
 available only inside a task or publish callback`. **A plugin may not set a `__gc` finalizer**
 either, since one runs at whatever moment Lua collects garbage, outside every callback:
-`setmetatable` refuses a metatable carrying `__gc`. `__close` is unaffected, because a
-to-be-closed variable runs at scope exit, inside the callback that declared it.
+`setmetatable` refuses a metatable carrying `__gc`, and since `daukle 0.9.1` so does the one in the
+project's own `daukle.lua`. `__close` is unaffected, because a to-be-closed variable runs at scope
+exit, inside the callback that declared it.
 
 ## What `api` is for, and when to raise it
 
