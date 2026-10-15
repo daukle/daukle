@@ -215,6 +215,68 @@ int fr_plugins_acquire_source(const fr_plugin_entry *entry, const fr_resolver_en
     return FR_OK;
 }
 
+typedef struct {
+    const char *origin;
+    const char *resolved;
+    const char *digest;
+    fr_plugin_source *source;
+} acquired_artifact;
+
+/* One entry chunk of an acquired artifact, run with the grant its OWN
+   declaration names. A module reports under "<label>/<module>", so config
+   print shows one row per grant. */
+static int load_chunk(const fr_plugin_entry *entry, const char *module,
+                      const acquired_artifact *artifact, const fr_resolver_entry *resolvers,
+                      size_t resolver_count, fr_error *err) {
+    const char *chunk = NULL;
+    size_t chunk_length = 0;
+    int status = module == NULL
+        ? fr_plugin_source_entry(artifact->source, &chunk, &chunk_length, err)
+        : fr_plugin_source_module_entry(artifact->source, module, &chunk, &chunk_length, err);
+    if (status != FR_OK) return FR_ERR;
+
+    int is_main = module == NULL || strcmp(module, FR_PLUGIN_MAIN_MODULE) == 0;
+    char label[256];
+    snprintf(label, sizeof label, is_main ? "%s" : "%s/%s", entry->label, module);
+    fr_plugin_entry reported = *entry;
+    reported.label = label;
+
+    lua_State *state = fr_lua_runtime_state();
+    fr_plugin_declaration declaration;
+    memset(&declaration, 0, sizeof declaration);
+    declaration.kind = "plugin";
+    declaration.label = label;
+    status = fr_plugins_declaration_read(state, chunk, chunk_length, artifact->origin,
+                                         &declaration, err);
+
+    fr_plugin_deps *deps = NULL;
+    if (status == FR_OK) {
+        status = fr_plugin_deps_acquire(&declaration, entry->overrides, resolvers, resolver_count,
+                                        &deps, err);
+    }
+    if (status == FR_OK) {
+        fr_lua_verbs_set_declared_env((const char *const *) declaration.env,
+                                      declaration.env_count);
+        fr_lua_declare_set_required_aliases(declaration.requires, declaration.requires_count);
+        status = fr_lua_plugin_load(chunk, chunk_length, artifact->origin,
+                                    (const char *const *) declaration.uses,
+                                    declaration.uses_count, artifact->source, deps, err);
+        fr_lua_declare_set_required_aliases(NULL, 0);
+        fr_lua_verbs_set_declared_env(NULL, 0);
+    }
+    if (status == FR_OK) {
+        status = fr_plugins_report_append(&reported, artifact->origin, artifact->resolved,
+                                          artifact->digest, &declaration, err);
+    }
+    if (status == FR_OK) status = fr_plugins_report_append_dependencies(deps, err);
+
+    fr_plugin_deps_close(deps);
+    fr_plugins_free_declaration(&declaration);
+    return status;
+}
+
+/* The digest covers the whole artifact, so it is fetched and checked once
+   however many of its entry chunks the line names. */
 static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
                     size_t resolver_count, fr_error *err) {
     char *origin = NULL;
@@ -229,46 +291,16 @@ static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resol
         return FR_ERR;
     }
 
-    /* The digest above covers the whole artifact; what RUNS is its entry, which
-       for an archive is one member of it. */
-    const char *chunk = NULL;
-    size_t chunk_length = 0;
-    int status = fr_plugin_source_entry(source, &chunk, &chunk_length, err);
-
-    lua_State *state = fr_lua_runtime_state();
-    fr_plugin_declaration declaration;
-    memset(&declaration, 0, sizeof declaration);
-    declaration.kind = "plugin";
-    declaration.label = entry->label;
-    if (status == FR_OK) {
-        status = fr_plugins_declaration_read(state, chunk, chunk_length, origin, &declaration,
-                                             err);
+    acquired_artifact artifact = { origin, resolved, digest, source };
+    int status = FR_OK;
+    if (entry->module_count == 0) {
+        status = load_chunk(entry, NULL, &artifact, resolvers, resolver_count, err);
+    }
+    for (size_t index = 0; status == FR_OK && index < entry->module_count; index++) {
+        status = load_chunk(entry, entry->modules[index], &artifact, resolvers, resolver_count,
+                            err);
     }
 
-    fr_plugin_deps *deps = NULL;
-    if (status == FR_OK) {
-        status = fr_plugin_deps_acquire(&declaration, entry->overrides, resolvers, resolver_count,
-                                        &deps, err);
-    }
-    if (status == FR_OK) {
-        fr_lua_verbs_set_declared_env((const char *const *) declaration.env,
-                                      declaration.env_count);
-        fr_lua_declare_set_required_aliases(declaration.requires, declaration.requires_count);
-        status = fr_lua_plugin_load(chunk, chunk_length, origin,
-                                    (const char *const *) declaration.uses,
-                                    declaration.uses_count, source, deps, err);
-        fr_lua_declare_set_required_aliases(NULL, 0);
-        fr_lua_verbs_set_declared_env(NULL, 0);
-    }
-    if (status == FR_OK) {
-        status = fr_plugins_report_append(entry, origin, resolved, digest, &declaration, err);
-    }
-    if (status == FR_OK) {
-        status = fr_plugins_report_append_dependencies(deps, err);
-    }
-
-    fr_plugin_deps_close(deps);
-    fr_plugins_free_declaration(&declaration);
     fr_plugin_source_close(source);
     free(text);
     free(origin);

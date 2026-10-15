@@ -33,6 +33,11 @@ int fr_plugin_source_open_directory(lua_State *state, const char *relative_direc
 int fr_plugin_source_entry(fr_plugin_source *source, const char **out_text, size_t *out_length,
                            fr_error *err);
 
+/* The entry chunk a [plugins] line's "modules" names: plugin.lua for "main",
+   modules/<name>.lua otherwise. Borrowed like fr_plugin_source_entry's. */
+int fr_plugin_source_module_entry(fr_plugin_source *source, const char *module,
+                                  const char **out_text, size_t *out_length, fr_error *err);
+
 /* module_name is a module name and not a file name: ".lua" is appended here and
    may not be written by the caller, so one module has one spelling. */
 int fr_plugin_source_member(fr_plugin_source *source, const char *module_name,
