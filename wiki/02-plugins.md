@@ -107,6 +107,14 @@ refused the same way. **A resolver may not declare either at all**, because it i
 any pin exists. A chunk that declares a source or a language beside `exec` or `provision` needs
 `api = 2`, which `daukle 0.8.0` is the first to provide.
 
+**And anywhere else, too: since `daukle 0.8.1` the two verbs run ONLY inside a task's `run` or a
+publisher's `publish`.** The named refusals above come first because they tell you which phase you
+are in; beneath them, any call from outside those two callbacks is refused with `daukle.exec is
+available only inside a task or publish callback`. **A plugin may not set a `__gc` finalizer**
+either, since one runs at whatever moment Lua collects garbage, outside every callback:
+`setmetatable` refuses a metatable carrying `__gc`. `__close` is unaffected, because a
+to-be-closed variable runs at scope exit, inside the callback that declared it.
+
 ## What `api` is for, and when to raise it
 
 `api = 1` says which plugin api your plugin was written against. **daukle refuses an api HIGHER

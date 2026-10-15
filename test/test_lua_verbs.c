@@ -31,6 +31,16 @@ static char *test_verb_dup(const char *text) {
     return copy;
 }
 
+/* daukle.exec and daukle.provision run only inside a task or publish dispatch,
+   so a verb test that means to reach them opens that window around its chunk. */
+static int run_in_task(lua_State *state, const char *code, const char *name, int env,
+                       fr_error *err) {
+    fr_lua_enter_task_dispatch();
+    int status = fr_lua_run_in_env(state, code, name, env, err);
+    fr_lua_leave_task_dispatch();
+    return status;
+}
+
 TEST a_declared_verb_is_present(void) {
     fr_error err;
     fr_registry *registry = fr_registry_create();
@@ -124,7 +134,7 @@ TEST tool_resolves_and_exec_runs_what_it_resolved(void) {
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
     int env = lua_gettop(state);
 
-    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+    ASSERT_EQ(FR_OK, run_in_task(state,
         "local t = daukle.tool('test_lua_verbs')\n"
         "result = daukle.exec(t, { '--exec-child', '0', 'hi' }, { capture = true })",
         "=t", env, &err));
@@ -152,7 +162,7 @@ TEST exec_raises_on_a_nonzero_exit_by_default(void) {
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
     int env = lua_gettop(state);
 
-    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+    ASSERT_EQ(FR_ERR, run_in_task(state,
         "local t = daukle.tool('test_lua_verbs')\n"
         "daukle.exec(t, { '--exec-child', '4' })",
         "=t", env, &err));
@@ -174,7 +184,7 @@ TEST exec_returns_the_code_when_check_is_false(void) {
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
     int env = lua_gettop(state);
 
-    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+    ASSERT_EQ(FR_OK, run_in_task(state,
         "local t = daukle.tool('test_lua_verbs')\n"
         "code = daukle.exec(t, { '--exec-child', '4' }, { check = false }).code",
         "=t", env, &err));
@@ -199,7 +209,7 @@ TEST exec_passes_an_env_addition_to_the_child(void) {
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
     int env = lua_gettop(state);
 
-    int status = fr_lua_run_in_env(state,
+    int status = run_in_task(state,
         "local t = daukle.tool('test_lua_verbs')\n"
         "out = daukle.exec(t, { '--exec-env', 'DAUKLE_PLUGIN_TOKEN' },"
         " { capture = true, env = { DAUKLE_PLUGIN_TOKEN = 'from-the-plugin' } }).stdout",
@@ -246,7 +256,7 @@ TEST verbose_exec_traces_the_command_without_its_environment(void) {
     int status = FR_ERR;
     if (captured == 0) {
         fr_lua_verbs_set_verbose(1);
-        status = fr_lua_run_in_env(state,
+        status = run_in_task(state,
             "local t = daukle.tool('test_lua_verbs')\n"
             "out = daukle.exec(t, { '--exec-env', 'DAUKLE_PLUGIN_TOKEN' },"
             " { capture = true, env = { DAUKLE_PLUGIN_TOKEN = 'a-real-looking-secret',"
@@ -307,7 +317,7 @@ TEST exec_refuses_an_option_key_it_does_not_know(void) {
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
     int env = lua_gettop(state);
 
-    int status = fr_lua_run_in_env(state,
+    int status = run_in_task(state,
         "local t = daukle.tool('test_lua_verbs')\n"
         "daukle.exec(t, { '--exec-child', '0' }, { environment = { A = 'b' } })",
         "=t", env, &err);
@@ -333,9 +343,145 @@ TEST exec_refuses_anything_that_is_not_a_tool_handle(void) {
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
     int env = lua_gettop(state);
 
-    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+    ASSERT_EQ(FR_ERR, run_in_task(state,
         "daukle.exec('/bin/sh', { '-c', 'echo no' })", "=t", env, &err));
     ASSERT(strstr(err.message, "must be a tool handle") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST exec_outside_a_task_or_publish_callback_is_refused(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.exec(daukle.tool('test_lua_verbs'), { '--exec-child', '0' })",
+        "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message,
+        "daukle.exec is available only inside a task or publish callback") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST provision_outside_a_task_or_publish_callback_is_refused(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "provision" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, "daukle.provision{}", "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message,
+        "daukle.provision is available only inside a task or publish callback") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST setmetatable_refuses_a_finalizer(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "setmetatable({}, { __gc = function() end })", "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message,
+        "a plugin may not set a __gc finalizer; it would run outside any callback") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST setmetatable_without_a_finalizer_still_works(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "local t = setmetatable({}, { __index = function() return 1 end })\n"
+        "indexed = t.anything\n"
+        "local u = setmetatable(setmetatable({}, {}), nil)\n"
+        "cleared = getmetatable(u) == nil\n"
+        "returned = setmetatable(u, {}) == u",
+        "=t", env, &err));
+    lua_getfield(state, env, "indexed");
+    ASSERT_EQ(1, (int) lua_tointeger(state, -1));
+    lua_getfield(state, env, "cleared");
+    ASSERT(lua_toboolean(state, -1));
+    lua_getfield(state, env, "returned");
+    ASSERT(lua_toboolean(state, -1));
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST setmetatable_still_raises_on_a_protected_metatable_and_a_bad_argument(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "local t = setmetatable({}, { __metatable = 'locked' })\n"
+        "setmetatable(t, {})", "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message, "protected metatable") != NULL);
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, "setmetatable({}, 5)", "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message, "nil or table") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* Lua 5.4 marks an object for finalization only when its metatable carries
+   __gc at setmetatable time (manual 2.5.3), so a __gc added afterwards must
+   never run; this pins that rather than trusting the manual. */
+TEST a_finalizer_added_after_setmetatable_never_runs(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "local t = setmetatable({}, {})\n"
+        "getmetatable(t).__gc = function() finalized = true end\n"
+        "t = nil", "=t", env, &err));
+    lua_gc(state, LUA_GCCOLLECT);
+    lua_gc(state, LUA_GCCOLLECT);
+    lua_getfield(state, env, "finalized");
+    ASSERT(lua_isnil(state, -1));
 
     lua_settop(state, 0);
     fr_registry_destroy(registry);
@@ -483,7 +629,7 @@ TEST tool_refuses_a_bare_string_second_argument_permanently(void) {
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
     int env = lua_gettop(state);
 
-    int refused = fr_lua_run_in_env(state,
+    int refused = run_in_task(state,
         "daukle.tool('test_lua_verbs', '>=13')", "=t", env, &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
 
@@ -595,7 +741,7 @@ TEST exec_runs_in_a_cwd_inside_the_project_directory(void) {
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
     int env = lua_gettop(state);
 
-    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+    ASSERT_EQ(FR_OK, run_in_task(state,
         "local t = daukle.tool('test_lua_verbs')\n"
         "result = daukle.exec(t, { '--exec-child', '0', 'in-test' }, "
         "{ capture = true, cwd = 'test' })",
@@ -621,7 +767,7 @@ TEST exec_refuses_a_cwd_outside_the_project_directory(void) {
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
     int env = lua_gettop(state);
 
-    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+    ASSERT_EQ(FR_ERR, run_in_task(state,
         "local t = daukle.tool('test_lua_verbs')\n"
         "daukle.exec(t, { '--exec-child', '0' }, { cwd = '../..' })",
         "=t", env, &err));
@@ -647,7 +793,7 @@ TEST exec_accepts_an_argv_well_past_the_guaranteed_lua_stack(void) {
     ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
     int env = lua_gettop(state);
 
-    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+    ASSERT_EQ(FR_OK, run_in_task(state,
         "local t = daukle.tool('test_lua_verbs')\n"
         "local argv = { '--exec-child', '0' }\n"
         "for i = 1, 254 do argv[#argv + 1] = 'a' .. i end\n"
@@ -1605,7 +1751,7 @@ TEST provision_refuses_an_unknown_key_by_name(void) {
     fr_error err;
     err.message[0] = '\0';
     int refused = state != NULL
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "',"
                " version = '21' }", "=t", env, &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
@@ -1628,7 +1774,7 @@ TEST provision_refuses_a_missing_sha256(void) {
     fr_error err;
     err.message[0] = '\0';
     int refused = state != NULL
-        && fr_lua_run_in_env(state, "daukle.provision{ url = '" PROVISION_URL "' }", "=t", env,
+        && run_in_task(state, "daukle.provision{ url = '" PROVISION_URL "' }", "=t", env,
                              &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
 
@@ -1653,7 +1799,7 @@ TEST provision_refuses_a_literal_header_value(void) {
     fr_error err;
     err.message[0] = 0;
     int refused = state != NULL
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "',"
                " headers = { Authorization = 'Bearer hunter2' } }", "=t", env, &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
@@ -1681,7 +1827,7 @@ TEST provision_refuses_a_header_naming_an_undeclared_variable(void) {
     fr_error err;
     err.message[0] = 0;
     int refused = state != NULL
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "',"
                " headers = { Authorization = { env = 'DAUKLE_TOKEN' } } }", "=t", env, &err)
            == FR_ERR;
@@ -1708,7 +1854,7 @@ TEST provision_refuses_a_header_format_with_two_specifiers(void) {
     fr_error err;
     err.message[0] = 0;
     int refused = state != NULL
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "',"
                " headers = { X = { env = 'DAUKLE_TEST_ORDINARY', format = '%s %s' } } }",
                "=t", env, &err) == FR_ERR;
@@ -1739,7 +1885,7 @@ TEST provision_reads_its_fields_raw(void) {
     fr_error err;
     err.message[0] = '\0';
     int refused = state != NULL
-        && fr_lua_run_in_env(state, chunk, "=t", env, &err) == FR_ERR;
+        && run_in_task(state, chunk, "=t", env, &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
 
     int consulted = -1;
@@ -1773,17 +1919,17 @@ TEST a_root_handle_refuses_a_member_that_climbs_out(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int climb_refused = rooted
-        && fr_lua_run_in_env(state, "root:tool('../../../windows/system32/cmd')", "=t", env,
+        && run_in_task(state, "root:tool('../../../windows/system32/cmd')", "=t", env,
                              &err) == FR_ERR;
     snprintf(climb_message, sizeof climb_message, "%s", err.message);
 
     int drive_refused = rooted
-        && fr_lua_run_in_env(state, "root:tool('c:/x')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:tool('c:/x')", "=t", env, &err) == FR_ERR;
     snprintf(drive_message, sizeof drive_message, "%s", err.message);
 
     if (state != NULL) lua_settop(state, 0);
@@ -1816,12 +1962,12 @@ TEST a_root_handle_refuses_a_batch_file(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int refused = rooted
-        && fr_lua_run_in_env(state, "root:tool('bin/thing.bat')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:tool('bin/thing.bat')", "=t", env, &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
 
     if (state != NULL) lua_settop(state, 0);
@@ -1852,14 +1998,14 @@ TEST a_root_handle_does_not_guess_an_extension(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int named_exactly = rooted
-        && fr_lua_run_in_env(state, "exact = root:tool('bin/java.exe')", "=t", env, &err) == FR_OK;
+        && run_in_task(state, "exact = root:tool('bin/java.exe')", "=t", env, &err) == FR_OK;
     int guessed = named_exactly
-        && fr_lua_run_in_env(state, "root:tool('bin/java')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:tool('bin/java')", "=t", env, &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
 
     if (state != NULL) lua_settop(state, 0);
@@ -1891,14 +2037,14 @@ TEST a_root_handle_refuses_a_member_spelled_with_a_backslash(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     /* The member names the file that really is there, so only its spelling can
        be what the refusal is about. */
     int refused = rooted
-        && fr_lua_run_in_env(state, "root:tool('bin\\\\java.exe')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:tool('bin\\\\java.exe')", "=t", env, &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
 
     if (state != NULL) lua_settop(state, 0);
@@ -1942,14 +2088,14 @@ TEST a_root_handle_is_absolute_from_a_relative_cache_directory(void) {
     int env = pushed ? lua_gettop(state) : 0;
 
     int rooted = pushed && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     /* bin/java.exe holds four bytes of text, so starting it always fails. On a
        Windows session with no desktop it also used to hang: see start_process. */
     int failed_to_start = rooted
-        && fr_lua_run_in_env(state, "daukle.exec(root:tool('bin/java.exe'), {})", "=t", env,
+        && run_in_task(state, "daukle.exec(root:tool('bin/java.exe'), {})", "=t", env,
                              &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
 
@@ -1988,7 +2134,7 @@ TEST an_artifact_names_a_pinned_file_it_did_not_unpack(void) {
     fr_error err;
     err.message[0] = '\0';
     int named = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "named = daukle.artifact{ url = '" ARTIFACT_URL "', sha256 = '" ARTIFACT_PIN "' }\n"
                "kind = type(named)\n", "=t", env, &err) == FR_OK;
     snprintf(message, sizeof message, "%s", err.message);
@@ -2256,12 +2402,12 @@ TEST a_root_dir_names_a_directory(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int named = rooted
-        && fr_lua_run_in_env(state, "named = root:dir('lib')\nbare = root:dir()\n", "=t", env,
+        && run_in_task(state, "named = root:dir('lib')\nbare = root:dir()\n", "=t", env,
                              &err) == FR_OK;
     snprintf(message, sizeof message, "%s", err.message);
 
@@ -2320,16 +2466,16 @@ TEST a_root_dir_and_a_root_path_refuse_each_others_shape(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int dir_refused_a_file = rooted
-        && fr_lua_run_in_env(state, "root:dir('lib/cli.js')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:dir('lib/cli.js')", "=t", env, &err) == FR_ERR;
     snprintf(dir_message, sizeof dir_message, "%s", err.message);
 
     int path_refused_a_directory = rooted
-        && fr_lua_run_in_env(state, "root:path('lib')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:path('lib')", "=t", env, &err) == FR_ERR;
     snprintf(path_message, sizeof path_message, "%s", err.message);
 
     if (state != NULL) lua_settop(state, 0);
@@ -2363,16 +2509,16 @@ TEST a_root_dir_refuses_a_member_that_climbs_out(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int climbed = rooted
-        && fr_lua_run_in_env(state, "root:dir('../../..')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:dir('../../..')", "=t", env, &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
 
     int backslashed = rooted
-        && fr_lua_run_in_env(state, "root:dir('lib\\\\nested')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:dir('lib\\\\nested')", "=t", env, &err) == FR_ERR;
 
     if (state != NULL) lua_settop(state, 0);
     fr_registry_destroy(registry);
@@ -2407,12 +2553,12 @@ TEST a_root_path_names_a_member_no_plugin_could_run(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int named = rooted
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "named = root:path('lib/cli.js')\n"
                "kind = type(named)\n", "=t", env, &err) == FR_OK;
     snprintf(message, sizeof message, "%s", err.message);
@@ -2474,12 +2620,12 @@ TEST a_named_path_is_a_string_that_exec_still_refuses(void) {
     int env = pushed ? lua_gettop(state) : 0;
 
     int rooted = pushed && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int refused = rooted
-        && fr_lua_run_in_env(state, "daukle.exec(root:path('lib/cli.js'), {})", "=t", env,
+        && run_in_task(state, "daukle.exec(root:path('lib/cli.js'), {})", "=t", env,
                              &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
 
@@ -2521,17 +2667,17 @@ TEST a_root_tool_and_a_root_path_disagree_about_a_script(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int tool_result = rooted
-        ? fr_lua_run_in_env(state, "tooled = root:tool('lib/cli.js')", "=t", env, &err)
+        ? run_in_task(state, "tooled = root:tool('lib/cli.js')", "=t", env, &err)
         : FR_OK;
     snprintf(message, sizeof message, "%s", err.message);
 
     int path_named = rooted
-        && fr_lua_run_in_env(state, "named = root:path('lib/cli.js')", "=t", env, &err) == FR_OK;
+        && run_in_task(state, "named = root:path('lib/cli.js')", "=t", env, &err) == FR_OK;
 
     if (state != NULL) lua_settop(state, 0);
     fr_registry_destroy(registry);
@@ -2569,21 +2715,21 @@ TEST a_root_path_refuses_what_a_root_tool_refuses(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int climb_refused = rooted
-        && fr_lua_run_in_env(state, "root:path('../../../windows/system32/cmd')", "=t", env,
+        && run_in_task(state, "root:path('../../../windows/system32/cmd')", "=t", env,
                              &err) == FR_ERR;
     snprintf(climb_message, sizeof climb_message, "%s", err.message);
 
     int backslash_refused = rooted
-        && fr_lua_run_in_env(state, "root:path('lib\\\\cli.js')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:path('lib\\\\cli.js')", "=t", env, &err) == FR_ERR;
     snprintf(backslash_message, sizeof backslash_message, "%s", err.message);
 
     int empty_refused = rooted
-        && fr_lua_run_in_env(state, "root:path('')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:path('')", "=t", env, &err) == FR_ERR;
     snprintf(empty_message, sizeof empty_message, "%s", err.message);
 
     if (state != NULL) lua_settop(state, 0);
@@ -2621,12 +2767,12 @@ TEST a_root_path_refuses_a_member_that_is_not_there(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int refused = rooted
-        && fr_lua_run_in_env(state, "root:path('lib/absent.js')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:path('lib/absent.js')", "=t", env, &err) == FR_ERR;
     snprintf(message, sizeof message, "%s", err.message);
 
     if (state != NULL) lua_settop(state, 0);
@@ -2661,16 +2807,16 @@ TEST a_root_path_names_a_batch_file_that_a_root_tool_refuses(void) {
     fr_error err;
     err.message[0] = '\0';
     int rooted = state != NULL && prepared
-        && fr_lua_run_in_env(state,
+        && run_in_task(state,
                "root = daukle.provision{ url = '" PROVISION_URL "', sha256 = '" PROVISION_PIN "' }",
                "=t", env, &err) == FR_OK;
 
     int tool_refused = rooted
-        && fr_lua_run_in_env(state, "root:tool('bin/thing.bat')", "=t", env, &err) == FR_ERR;
+        && run_in_task(state, "root:tool('bin/thing.bat')", "=t", env, &err) == FR_ERR;
     snprintf(tool_message, sizeof tool_message, "%s", err.message);
 
     int path_named = rooted
-        && fr_lua_run_in_env(state, "named = root:path('bin/thing.bat')", "=t", env, &err) == FR_OK;
+        && run_in_task(state, "named = root:path('bin/thing.bat')", "=t", env, &err) == FR_OK;
 
     if (state != NULL) lua_settop(state, 0);
     fr_registry_destroy(registry);
@@ -2781,6 +2927,12 @@ int main(int argc, char **argv) {
     RUN_TEST(verbose_exec_traces_the_command_without_its_environment);
     RUN_TEST(exec_refuses_an_option_key_it_does_not_know);
     RUN_TEST(exec_refuses_anything_that_is_not_a_tool_handle);
+    RUN_TEST(exec_outside_a_task_or_publish_callback_is_refused);
+    RUN_TEST(provision_outside_a_task_or_publish_callback_is_refused);
+    RUN_TEST(setmetatable_refuses_a_finalizer);
+    RUN_TEST(setmetatable_without_a_finalizer_still_works);
+    RUN_TEST(setmetatable_still_raises_on_a_protected_metatable_and_a_bad_argument);
+    RUN_TEST(a_finalizer_added_after_setmetatable_never_runs);
     RUN_TEST(tool_names_what_it_could_not_find);
     RUN_TEST(tool_refuses_a_name_that_climbs_out);
     RUN_TEST(tool_refuses_an_absolute_looking_name);

@@ -174,6 +174,10 @@ int fr_lua_verb_provision(lua_State *state) {
         return luaL_error(state, "daukle.provision is not available while %s; call it from a"
                                  " task or publish callback", phase);
     }
+    if (!fr_lua_task_dispatch_is_running()) {
+        return luaL_error(state, "daukle.provision is available only inside a task or publish"
+                                 " callback");
+    }
     luaL_checktype(state, 1, LUA_TTABLE);
     refuse_an_unknown_provision_field(state, "daukle.provision");
 

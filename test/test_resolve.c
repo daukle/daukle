@@ -166,6 +166,12 @@ TEST a_source_load_may_not_provision(void) {
     PASS();
 }
 
+TEST a_source_may_not_set_a_finalizer(void) {
+    ASSERT(resolve_fails_naming("test/fixtures/source-sets-gc", "./plugins/gc-path.lua",
+                                "a plugin may not set a __gc finalizer"));
+    PASS();
+}
+
 TEST deduplicates_a_module_reached_twice(void) {
     fr_manifest manifest; fr_error err;
     read_fixture("test/fixtures/consumer-dup/daukle.toml", &manifest, &err);
@@ -307,6 +313,7 @@ int main(int argc, char **argv) {
     RUN_TEST(deduplicates_a_module_reached_twice);
     RUN_TEST(a_source_load_may_not_exec);
     RUN_TEST(a_source_load_may_not_provision);
+    RUN_TEST(a_source_may_not_set_a_finalizer);
     RUN_TEST(rejects_a_version_outside_the_range);
     RUN_TEST(reports_a_module_absent_from_the_language);
     RUN_TEST(reports_an_unknown_module_by_name);

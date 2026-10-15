@@ -521,6 +521,21 @@ TEST a_plugin_execing_before_it_declares_is_refused_at_the_call(void) {
     PASS();
 }
 
+TEST a_chunk_may_not_set_a_finalizer(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/chunk-sets-gc/daukle.toml",
+                                          registry, &manifest, &err));
+    ASSERT(strstr(err.message, "a plugin may not set a __gc finalizer") != NULL);
+
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 /* The per-kind gates fire when daukle.language and its siblings are CALLED, so
    a chunk that provisions at its top level has already fetched and unpacked a
    tree by then, during `daukle check` and `daukle config print`. Asserting the
@@ -3079,6 +3094,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_source_plugin_may_declare_exec);
     RUN_TEST(a_chunk_may_declare_a_source_beside_a_toolchain_with_exec);
     RUN_TEST(a_plugin_execing_before_it_declares_is_refused_at_the_call);
+    RUN_TEST(a_chunk_may_not_set_a_finalizer);
     RUN_TEST(a_plugin_provisioning_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_language_plugin_declaring_tool_but_not_exec_still_loads);
     RUN_TEST(a_verb_uses_does_not_know_is_refused);
