@@ -560,15 +560,19 @@ typedef struct {
     char message[512];
 } modules_loaded;
 
-static modules_loaded load_plugin_modules(const char *manifest_name) {
-    modules_loaded out = { 0, 0, FR_ERR, "" };
+/* Static rather than returned by value: greatest keeps the message pointer an
+   ASSERTm hands it, so a message in a caller's local would dangle. */
+static const modules_loaded *load_plugin_modules(const char *manifest_name) {
+    static modules_loaded out;
+    memset(&out, 0, sizeof out);
+    out.status = FR_ERR;
     char manifest_path[256];
     snprintf(manifest_path, sizeof manifest_path, "test/fixtures/plugin-modules/%s",
              manifest_name);
     fr_error err;
     err.message[0] = '\0';
     fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, &err) != FR_OK) return out;
+    if (fr_build_registry(&registry, &err) != FR_OK) return &out;
 
     fr_manifest manifest;
     out.status = fr_config_load_file(manifest_path, registry, &manifest, &err);
@@ -580,68 +584,68 @@ static modules_loaded load_plugin_modules(const char *manifest_name) {
     snprintf(out.message, sizeof out.message, "%s", err.message);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
-    return out;
+    return &out;
 }
 
 TEST a_plugin_entry_without_modules_loads_only_its_main_chunk(void) {
-    modules_loaded loaded = load_plugin_modules("daukle-none.toml");
-    ASSERTm(loaded.message, loaded.status == FR_OK);
-    ASSERT(loaded.toolchain);
-    ASSERT(!loaded.deps);
+    const modules_loaded *loaded = load_plugin_modules("daukle-none.toml");
+    ASSERTm(loaded->message, loaded->status == FR_OK);
+    ASSERT(loaded->toolchain);
+    ASSERT(!loaded->deps);
     PASS();
 }
 
 /* The point of a module is a narrower grant, so naming one must not also run
    the main chunk and its grant. D-134. */
 TEST naming_a_module_loads_that_module_alone(void) {
-    modules_loaded loaded = load_plugin_modules("daukle-deps.toml");
-    ASSERTm(loaded.message, loaded.status == FR_OK);
-    ASSERT(!loaded.toolchain);
-    ASSERT(loaded.deps);
+    const modules_loaded *loaded = load_plugin_modules("daukle-deps.toml");
+    ASSERTm(loaded->message, loaded->status == FR_OK);
+    ASSERT(!loaded->toolchain);
+    ASSERT(loaded->deps);
     PASS();
 }
 
 TEST main_names_the_main_chunk_beside_a_module(void) {
-    modules_loaded loaded = load_plugin_modules("daukle-both.toml");
-    ASSERTm(loaded.message, loaded.status == FR_OK);
-    ASSERT(loaded.toolchain);
-    ASSERT(loaded.deps);
+    const modules_loaded *loaded = load_plugin_modules("daukle-both.toml");
+    ASSERTm(loaded->message, loaded->status == FR_OK);
+    ASSERT(loaded->toolchain);
+    ASSERT(loaded->deps);
     PASS();
 }
 
 TEST a_module_holds_its_own_grant_and_not_the_main_chunks(void) {
-    modules_loaded loaded = load_plugin_modules("daukle-greedy.toml");
-    ASSERT_EQ(FR_ERR, loaded.status);
-    ASSERTm(loaded.message, strstr(loaded.message, "daukle.write was not declared in uses") != NULL);
+    const modules_loaded *loaded = load_plugin_modules("daukle-greedy.toml");
+    ASSERT_EQ(FR_ERR, loaded->status);
+    ASSERTm(loaded->message, strstr(loaded->message, "daukle.write was not declared in uses") != NULL);
     PASS();
 }
 
 TEST an_unknown_module_is_refused_naming_what_the_plugin_carries(void) {
-    modules_loaded loaded = load_plugin_modules("daukle-unknown.toml");
-    ASSERT_EQ(FR_ERR, loaded.status);
-    ASSERTm(loaded.message, strstr(loaded.message, "modules/nope") != NULL);
+    const modules_loaded *loaded = load_plugin_modules("daukle-unknown.toml");
+    ASSERT_EQ(FR_ERR, loaded->status);
+    ASSERTm(loaded->message, strstr(loaded->message, "modules/nope") != NULL);
     PASS();
 }
 
 TEST a_single_file_plugin_has_no_modules_to_name(void) {
-    modules_loaded loaded = load_plugin_modules("daukle-file.toml");
-    ASSERT_EQ(FR_ERR, loaded.status);
-    ASSERTm(loaded.message, strstr(loaded.message, "has no module \"deps\" to load") != NULL);
-    ASSERTm(loaded.message, strstr(loaded.message, "daukle.require") == NULL);
+    const modules_loaded *loaded = load_plugin_modules("daukle-file.toml");
+    ASSERT_EQ(FR_ERR, loaded->status);
+    ASSERTm(loaded->message, strstr(loaded->message, "has no module \"deps\" to load") != NULL);
+    ASSERTm(loaded->message, strstr(loaded->message, "daukle.require") == NULL);
     PASS();
 }
 
 TEST an_empty_modules_list_is_refused(void) {
-    modules_loaded loaded = load_plugin_modules("daukle-empty.toml");
-    ASSERT_EQ(FR_ERR, loaded.status);
-    ASSERTm(loaded.message, strstr(loaded.message, "\"modules\" names no module") != NULL);
+    const modules_loaded *loaded = load_plugin_modules("daukle-empty.toml");
+    ASSERT_EQ(FR_ERR, loaded->status);
+    ASSERTm(loaded->message, strstr(loaded->message, "\"modules\" names no module") != NULL);
     PASS();
 }
 
 TEST a_module_named_twice_is_refused(void) {
-    modules_loaded loaded = load_plugin_modules("daukle-twice.toml");
-    ASSERT_EQ(FR_ERR, loaded.status);
-    ASSERTm(loaded.message, strstr(loaded.message, "names \"deps\" twice") != NULL);
+    const modules_loaded *loaded = load_plugin_modules("daukle-twice.toml");
+    ASSERT_EQ(FR_ERR, loaded->status);
+    ASSERTm(loaded->message, strstr(loaded->message, "names \"deps\" twice") != NULL);
     PASS();
 }
 
