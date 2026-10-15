@@ -546,7 +546,7 @@ TEST a_chunk_may_not_set_a_finalizer(void) {
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/chunk-sets-gc/daukle.toml",
                                           registry, &manifest, &err));
-    ASSERT(strstr(err.message, "a plugin may not set a __gc finalizer") != NULL);
+    ASSERT(strstr(err.message, "a daukle configuration may not set a __gc finalizer") != NULL);
 
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();

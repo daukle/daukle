@@ -43,6 +43,28 @@ static int removed_name(lua_State *state) {
     return 1;
 }
 
+int fr_lua_sandbox_setmetatable(lua_State *state) {
+    int metatable_type = lua_type(state, 2);
+    luaL_checktype(state, 1, LUA_TTABLE);
+    luaL_argexpected(state, metatable_type == LUA_TNIL || metatable_type == LUA_TTABLE, 2,
+                     "nil or table");
+    if (metatable_type == LUA_TTABLE) {
+        lua_pushliteral(state, "__gc");
+        int has_finalizer = lua_rawget(state, 2) != LUA_TNIL;
+        lua_pop(state, 1);
+        if (has_finalizer) {
+            return luaL_error(state, "a daukle configuration may not set a __gc finalizer; it would"
+                                     " run outside any callback");
+        }
+    }
+    if (luaL_getmetafield(state, 1, "__metatable") != LUA_TNIL) {
+        return luaL_error(state, "cannot change a protected metatable");
+    }
+    lua_settop(state, 2);
+    lua_setmetatable(state, 1);
+    return 1;
+}
+
 int fr_lua_sandbox_climbs_out(const char *relative_path) {
     if (relative_path[0] == '/' || relative_path[0] == '\\') return 1;
     if (relative_path[0] != '\0' && relative_path[1] == ':') return 1;
@@ -295,6 +317,8 @@ static int protected_install(lua_State *state) {
         fr_lua_push_library_copy(state, LIBRARY_TABLES[index]);
         lua_setfield(state, -2, LIBRARY_TABLES[index]);
     }
+    lua_pushcfunction(state, fr_lua_sandbox_setmetatable);
+    lua_setfield(state, -2, "setmetatable");
 
     lua_newtable(state);
     lua_pushcfunction(state, removed_name);

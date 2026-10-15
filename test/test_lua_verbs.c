@@ -406,7 +406,8 @@ TEST setmetatable_refuses_a_finalizer(void) {
     ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
         "setmetatable({}, { __gc = function() end })", "=t", env, &err));
     ASSERTm(err.message, strstr(err.message,
-        "a plugin may not set a __gc finalizer; it would run outside any callback") != NULL);
+        "t:1: a daukle configuration may not set a __gc finalizer; it would run outside any"
+        " callback") != NULL);
 
     lua_settop(state, 0);
     fr_registry_destroy(registry);
@@ -453,14 +454,60 @@ TEST setmetatable_still_raises_on_a_protected_metatable_and_a_bad_argument(void)
     ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
         "local t = setmetatable({}, { __metatable = 'locked' })\n"
         "setmetatable(t, {})", "=t", env, &err));
-    ASSERTm(err.message, strstr(err.message, "protected metatable") != NULL);
+    ASSERTm(err.message, strstr(err.message, "t:2: cannot change a protected metatable") != NULL);
     ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, "setmetatable({}, 5)", "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message, "t:1: bad argument #2") != NULL);
     ASSERTm(err.message, strstr(err.message, "nil or table") != NULL);
 
     lua_settop(state, 0);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     PASS();
+}
+
+/* setmetatable admits __close because a to-be-closed variable runs it
+   synchronously at scope exit, inside whatever window the scope is in, unlike
+   a finalizer. This pins both halves of that claim. D-139. */
+TEST a_close_handler_runs_inside_the_window_its_scope_is_in(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    const char *closing_scope =
+        "local closing = setmetatable({}, { __close = function()\n"
+        "  closed = daukle.exec(daukle.tool('test_lua_verbs'),\n"
+        "                       { '--exec-child', '0', 'closing' }, { capture = true }).stdout\n"
+        "end })\n"
+        "do local guard <close> = closing end";
+    ASSERT_EQ(FR_OK, run_in_task(state, closing_scope, "=t", env, &err));
+    lua_getfield(state, env, "closed");
+    ASSERT(lua_tostring(state, -1) != NULL && strstr(lua_tostring(state, -1), "[closing]") != NULL);
+    lua_pop(state, 1);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, closing_scope, "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message,
+        "daukle.exec is available only inside a task or publish callback") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* The positive control: a garbage table whose __gc was present when the C API
+   set its metatable, which the sandbox cannot refuse, so it must run. */
+static void push_table_finalized_from_c(lua_State *state, int env) {
+    lua_newtable(state);
+    lua_newtable(state);
+    lua_getfield(state, env, "control");
+    lua_setfield(state, -2, "__gc");
+    lua_setmetatable(state, -2);
+    lua_pop(state, 1);
 }
 
 /* Lua 5.4 marks an object for finalization only when its metatable carries
@@ -477,9 +524,14 @@ TEST a_finalizer_added_after_setmetatable_never_runs(void) {
     ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
         "local t = setmetatable({}, {})\n"
         "getmetatable(t).__gc = function() finalized = true end\n"
-        "t = nil", "=t", env, &err));
+        "t = nil\n"
+        "control = function() control_finalized = true end", "=t", env, &err));
+    push_table_finalized_from_c(state, env);
     lua_gc(state, LUA_GCCOLLECT);
     lua_gc(state, LUA_GCCOLLECT);
+    lua_getfield(state, env, "control_finalized");
+    ASSERTm("the control finalizer never ran, so these collections prove nothing",
+            lua_toboolean(state, -1));
     lua_getfield(state, env, "finalized");
     ASSERT(lua_isnil(state, -1));
 
@@ -3021,6 +3073,7 @@ int main(int argc, char **argv) {
     RUN_TEST(setmetatable_without_a_finalizer_still_works);
     RUN_TEST(setmetatable_still_raises_on_a_protected_metatable_and_a_bad_argument);
     RUN_TEST(a_finalizer_added_after_setmetatable_never_runs);
+    RUN_TEST(a_close_handler_runs_inside_the_window_its_scope_is_in);
     RUN_TEST(a_plugin_replacing_a_library_function_does_not_reach_another_plugin);
     RUN_TEST(a_library_environment_gets_its_own_library_tables);
     RUN_TEST(the_string_metatable_is_locked_and_methods_still_work);
