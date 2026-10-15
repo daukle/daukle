@@ -147,6 +147,9 @@ int fr_lua_verb_exec(lua_State *state) {
         return luaL_error(state, "daukle.exec is not available while %s; call it from a task or"
                                  " publish callback", phase);
     }
+    if (!fr_lua_task_dispatch_is_running()) {
+        return luaL_error(state, "daukle.exec is available only inside a task or publish callback");
+    }
     if (luaL_testudata(state, 1, FR_TOOL_HANDLE) == NULL) {
         return luaL_error(state, "daukle.exec argument 1 must be a tool handle from daukle.tool");
     }

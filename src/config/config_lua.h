@@ -50,16 +50,21 @@ void fr_lua_declare_set_required_aliases(const fr_plugin_requirement *requires, 
    load phase is open. */
 fr_registry *fr_lua_registering_registry(void);
 
-/* True while a plugin chunk is running, which is exactly when daukle.exec must
-   refuse: a plugin that execs at the top of its chunk would run the program
-   during `daukle check`, before any callback asked for it. This refusal covers
-   the whole chunk, for every kind, and stays that way rather than narrowing to
-   the kinds that may not exec: that is a fail-open hole found and closed once
-   already, and narrowing it would reopen it for whichever kind was judged safe.
-   Generation opens a second window, see fr_lua_generation_is_running, and a
-   source's load or a language's apply a third, see
-   fr_lua_process_free_callback_phase. */
+/* True while a plugin chunk is running, so daukle.exec can name that phase in
+   its refusal. Generation, see fr_lua_generation_is_running, and a source's
+   load or a language's apply, see fr_lua_process_free_callback_phase, are the
+   other named windows. None of them is the refusal of record: that is
+   fr_lua_task_dispatch_is_running, checked after them. */
 int fr_lua_plugin_exec_is_refused(void);
+
+/* daukle.exec and daukle.provision run only while this is true, which is only
+   inside fr_lua_dispatch_task_run, a task's run or a publisher's publish. A
+   floor rather than a list of refused windows, so code running where nobody
+   named a window, as a finalizer once did, is refused by default. D-135.
+   enter and leave are public so a verb's unit test can open the window. */
+int fr_lua_task_dispatch_is_running(void);
+void fr_lua_enter_task_dispatch(void);
+void fr_lua_leave_task_dispatch(void);
 
 /* A source's load and a language's apply run on every command, often for a
    dependency the user did not write, so neither may start a process even when

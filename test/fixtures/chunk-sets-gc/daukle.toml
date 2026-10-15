@@ -1,0 +1,8 @@
+schema = 1
+project = "forebay/chunk-sets-gc"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+gc = "./plugins/gc-toolchain.lua"

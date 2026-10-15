@@ -144,6 +144,38 @@ void fr_lua_verbs_set_manifest_name(const char *name) {
     pending_manifest_name = name;
 }
 
+/* Lua 5.4 marks an object for finalization only if its metatable holds __gc
+   when setmetatable is called (manual 2.5.3), so refusing it here is the whole
+   route: a finalizer would run plugin code at an arbitrary allocation, outside
+   every callback and gate. A raw read, so a metatable's own __index cannot hide
+   one. Everything else is the base function, called unchanged. D-135. */
+static int setmetatable_without_finalizers(lua_State *state) {
+    if (lua_type(state, 2) == LUA_TTABLE) {
+        lua_pushliteral(state, "__gc");
+        int has_finalizer = lua_rawget(state, 2) != LUA_TNIL;
+        lua_pop(state, 1);
+        if (has_finalizer) {
+            return luaL_error(state, "a plugin may not set a __gc finalizer; it would run outside"
+                                     " any callback");
+        }
+    }
+    lua_pushvalue(state, lua_upvalueindex(1));
+    lua_insert(state, 1);
+    lua_call(state, lua_gettop(state) - 1, LUA_MULTRET);
+    return lua_gettop(state);
+}
+
+static void push_base_globals(lua_State *state) {
+    lua_newtable(state);
+    for (size_t index = 0; index < sizeof BASE / sizeof BASE[0]; index++) {
+        lua_getglobal(state, BASE[index]);
+        lua_setfield(state, -2, BASE[index]);
+    }
+    lua_getglobal(state, "setmetatable");
+    lua_pushcclosure(state, setmetatable_without_finalizers, 1);
+    lua_setfield(state, -2, "setmetatable");
+}
+
 static int protected_push_env(lua_State *state) {
     /* getmetatable and setmetatable are both base globals a plugin keeps, and
        this metatable is shared by every state, so leaving it reachable would
@@ -166,11 +198,7 @@ static int protected_push_env(lua_State *state) {
     lua_setfield(state, -2, "__index");
     lua_pop(state, 1);
 
-    lua_newtable(state);
-    for (size_t index = 0; index < sizeof BASE / sizeof BASE[0]; index++) {
-        lua_getglobal(state, BASE[index]);
-        lua_setfield(state, -2, BASE[index]);
-    }
+    push_base_globals(state);
 
     lua_newtable(state);
     fr_lua_verbs_install_registration(state);
@@ -213,11 +241,7 @@ static int protected_push_library_env(lua_State *state) {
     const char *dependent = lua_tostring(state, 1);
     const char *member = lua_tostring(state, 2);
 
-    lua_newtable(state);
-    for (size_t index = 0; index < sizeof BASE / sizeof BASE[0]; index++) {
-        lua_getglobal(state, BASE[index]);
-        lua_setfield(state, -2, BASE[index]);
-    }
+    push_base_globals(state);
 
     lua_newtable(state);
     lua_pushcfunction(state, fr_lua_verbs_require_function());

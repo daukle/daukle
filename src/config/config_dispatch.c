@@ -178,6 +178,20 @@ int fr_lua_generation_is_running(void) {
     return generation_is_running;
 }
 
+static int task_dispatch_depth;
+
+void fr_lua_enter_task_dispatch(void) {
+    task_dispatch_depth++;
+}
+
+void fr_lua_leave_task_dispatch(void) {
+    task_dispatch_depth--;
+}
+
+int fr_lua_task_dispatch_is_running(void) {
+    return task_dispatch_depth > 0;
+}
+
 static const char *task_cwd;
 
 const char *fr_lua_task_cwd(void) {
@@ -335,7 +349,9 @@ int fr_lua_dispatch_task_run(void *state, const fr_task_run_context *context, fr
     fr_lua_set_task_cwd(context->derived_dir_relative);
     fr_lua_set_task_generated_dir(context->generated_dir_relative);
     lua_pushcfunction(fr_lua_runtime_state(), protected_task_run);
+    fr_lua_enter_task_dispatch();
     int status = lua_pcall(fr_lua_runtime_state(), 0, 0, 0);
+    fr_lua_leave_task_dispatch();
     fr_lua_set_task_generated_dir(NULL);
     fr_lua_set_task_cwd(NULL);
     task_context = NULL;
