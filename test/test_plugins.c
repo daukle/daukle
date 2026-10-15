@@ -553,6 +553,97 @@ TEST a_chunk_may_not_set_a_finalizer(void) {
     PASS();
 }
 
+typedef struct {
+    int toolchain;
+    int deps;
+    int status;
+    char message[512];
+} modules_loaded;
+
+static modules_loaded load_plugin_modules(const char *manifest_name) {
+    modules_loaded out = { 0, 0, FR_ERR, "" };
+    char manifest_path[256];
+    snprintf(manifest_path, sizeof manifest_path, "test/fixtures/plugin-modules/%s",
+             manifest_name);
+    fr_error err;
+    err.message[0] = '\0';
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, &err) != FR_OK) return out;
+
+    fr_manifest manifest;
+    out.status = fr_config_load_file(manifest_path, registry, &manifest, &err);
+    if (out.status == FR_OK) {
+        out.toolchain = fr_registry_toolchain(registry, "daukle.toolchain/modular") != NULL;
+        out.deps = fr_registry_language(registry, "daukle.language/modular-deps") != NULL;
+        fr_manifest_free(&manifest);
+    }
+    snprintf(out.message, sizeof out.message, "%s", err.message);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    return out;
+}
+
+TEST a_plugin_entry_without_modules_loads_only_its_main_chunk(void) {
+    modules_loaded loaded = load_plugin_modules("daukle-none.toml");
+    ASSERTm(loaded.message, loaded.status == FR_OK);
+    ASSERT(loaded.toolchain);
+    ASSERT(!loaded.deps);
+    PASS();
+}
+
+/* The point of a module is a narrower grant, so naming one must not also run
+   the main chunk and its grant. D-134. */
+TEST naming_a_module_loads_that_module_alone(void) {
+    modules_loaded loaded = load_plugin_modules("daukle-deps.toml");
+    ASSERTm(loaded.message, loaded.status == FR_OK);
+    ASSERT(!loaded.toolchain);
+    ASSERT(loaded.deps);
+    PASS();
+}
+
+TEST main_names_the_main_chunk_beside_a_module(void) {
+    modules_loaded loaded = load_plugin_modules("daukle-both.toml");
+    ASSERTm(loaded.message, loaded.status == FR_OK);
+    ASSERT(loaded.toolchain);
+    ASSERT(loaded.deps);
+    PASS();
+}
+
+TEST a_module_holds_its_own_grant_and_not_the_main_chunks(void) {
+    modules_loaded loaded = load_plugin_modules("daukle-greedy.toml");
+    ASSERT_EQ(FR_ERR, loaded.status);
+    ASSERTm(loaded.message, strstr(loaded.message, "daukle.write was not declared in uses") != NULL);
+    PASS();
+}
+
+TEST an_unknown_module_is_refused_naming_what_the_plugin_carries(void) {
+    modules_loaded loaded = load_plugin_modules("daukle-unknown.toml");
+    ASSERT_EQ(FR_ERR, loaded.status);
+    ASSERTm(loaded.message, strstr(loaded.message, "modules/nope") != NULL);
+    PASS();
+}
+
+TEST a_single_file_plugin_has_no_modules_to_name(void) {
+    modules_loaded loaded = load_plugin_modules("daukle-file.toml");
+    ASSERT_EQ(FR_ERR, loaded.status);
+    ASSERTm(loaded.message, strstr(loaded.message, "single file") != NULL);
+    PASS();
+}
+
+TEST an_empty_modules_list_is_refused(void) {
+    modules_loaded loaded = load_plugin_modules("daukle-empty.toml");
+    ASSERT_EQ(FR_ERR, loaded.status);
+    ASSERTm(loaded.message, strstr(loaded.message, "\"modules\" names no module") != NULL);
+    PASS();
+}
+
+TEST a_module_named_twice_is_refused(void) {
+    modules_loaded loaded = load_plugin_modules("daukle-twice.toml");
+    ASSERT_EQ(FR_ERR, loaded.status);
+    ASSERTm(loaded.message, strstr(loaded.message, "names \"deps\" twice") != NULL);
+    PASS();
+}
+
 /* The per-kind gates fire when daukle.language and its siblings are CALLED, so
    a chunk that provisions at its top level has already fetched and unpacked a
    tree by then, during `daukle check` and `daukle config print`. Asserting the
@@ -3112,6 +3203,14 @@ int main(int argc, char **argv) {
     RUN_TEST(a_chunk_may_declare_a_source_beside_a_toolchain_with_exec);
     RUN_TEST(a_plugin_execing_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_chunk_may_not_set_a_finalizer);
+    RUN_TEST(a_plugin_entry_without_modules_loads_only_its_main_chunk);
+    RUN_TEST(naming_a_module_loads_that_module_alone);
+    RUN_TEST(main_names_the_main_chunk_beside_a_module);
+    RUN_TEST(a_module_holds_its_own_grant_and_not_the_main_chunks);
+    RUN_TEST(an_unknown_module_is_refused_naming_what_the_plugin_carries);
+    RUN_TEST(a_single_file_plugin_has_no_modules_to_name);
+    RUN_TEST(an_empty_modules_list_is_refused);
+    RUN_TEST(a_module_named_twice_is_refused);
     RUN_TEST(a_plugin_gets_the_real_libraries_whatever_the_overlay_rebinds);
     RUN_TEST(a_plugin_provisioning_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_language_plugin_declaring_tool_but_not_exec_still_loads);
