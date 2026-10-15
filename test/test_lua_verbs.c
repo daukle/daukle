@@ -343,6 +343,142 @@ TEST exec_refuses_anything_that_is_not_a_tool_handle(void) {
     PASS();
 }
 
+TEST exec_outside_a_task_or_publish_callback_is_refused(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "tool", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "daukle.exec(daukle.tool('test_lua_verbs'), { '--exec-child', '0' })",
+        "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message,
+        "daukle.exec is available only inside a task or publish callback") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST provision_outside_a_task_or_publish_callback_is_refused(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+
+    const char *verbs[] = { "provision" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, "daukle.provision{}", "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message,
+        "daukle.provision is available only inside a task or publish callback") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST setmetatable_refuses_a_finalizer(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "setmetatable({}, { __gc = function() end })", "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message,
+        "a plugin may not set a __gc finalizer; it would run outside any callback") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST setmetatable_without_a_finalizer_still_works(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "local t = setmetatable({}, { __index = function() return 1 end })\n"
+        "indexed = t.anything\n"
+        "local u = setmetatable(setmetatable({}, {}), nil)\n"
+        "cleared = getmetatable(u) == nil\n"
+        "returned = setmetatable(u, {}) == u",
+        "=t", env, &err));
+    lua_getfield(state, env, "indexed");
+    ASSERT_EQ(1, (int) lua_tointeger(state, -1));
+    lua_getfield(state, env, "cleared");
+    ASSERT(lua_toboolean(state, -1));
+    lua_getfield(state, env, "returned");
+    ASSERT(lua_toboolean(state, -1));
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST setmetatable_still_raises_on_a_protected_metatable_and_a_bad_argument(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state,
+        "local t = setmetatable({}, { __metatable = 'locked' })\n"
+        "setmetatable(t, {})", "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message, "protected metatable") != NULL);
+    ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, "setmetatable({}, 5)", "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message, "nil or table") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* Lua 5.4 marks an object for finalization only when its metatable carries
+   __gc at setmetatable time (manual 2.5.3), so a __gc added afterwards must
+   never run; this pins that rather than trusting the manual. */
+TEST a_finalizer_added_after_setmetatable_never_runs(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "local t = setmetatable({}, {})\n"
+        "getmetatable(t).__gc = function() finalized = true end\n"
+        "t = nil", "=t", env, &err));
+    lua_gc(state, LUA_GCCOLLECT);
+    lua_gc(state, LUA_GCCOLLECT);
+    lua_getfield(state, env, "finalized");
+    ASSERT(lua_isnil(state, -1));
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 TEST tool_names_what_it_could_not_find(void) {
     fr_error err;
     fr_registry *registry = fr_registry_create();
@@ -2781,6 +2917,12 @@ int main(int argc, char **argv) {
     RUN_TEST(verbose_exec_traces_the_command_without_its_environment);
     RUN_TEST(exec_refuses_an_option_key_it_does_not_know);
     RUN_TEST(exec_refuses_anything_that_is_not_a_tool_handle);
+    RUN_TEST(exec_outside_a_task_or_publish_callback_is_refused);
+    RUN_TEST(provision_outside_a_task_or_publish_callback_is_refused);
+    RUN_TEST(setmetatable_refuses_a_finalizer);
+    RUN_TEST(setmetatable_without_a_finalizer_still_works);
+    RUN_TEST(setmetatable_still_raises_on_a_protected_metatable_and_a_bad_argument);
+    RUN_TEST(a_finalizer_added_after_setmetatable_never_runs);
     RUN_TEST(tool_names_what_it_could_not_find);
     RUN_TEST(tool_refuses_a_name_that_climbs_out);
     RUN_TEST(tool_refuses_an_absolute_looking_name);
