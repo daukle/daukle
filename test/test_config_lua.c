@@ -1556,14 +1556,11 @@ TEST reading_a_variable_core_does_not_use_needs_no_declaration(void) {
     PASS();
 }
 
-/* Three separate tests, not a loop over the three kinds: child spec 8 found
-   that the exec refusal lives in daukle.language and daukle.source
-   individually, so daukle.resolver refused nothing until it carried the same
-   check on its own. A loop would keep passing the day a fourth kind is added
-   without one; deleting one kind's check here must turn exactly one test red. */
-TEST a_language_plugin_declaring_provision_is_refused(void) {
+/* A language or a source may declare provision since D-133, which withholds
+   it from load and apply at run time instead; a resolver still may not. */
+TEST a_language_plugin_may_declare_provision(void) {
     static char message[512];
-    fr_error err;
+    fr_error err = { "" };
     fr_registry *registry = fr_registry_create();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = load_declaring_provision(
@@ -1573,15 +1570,13 @@ TEST a_language_plugin_declaring_provision_is_refused(void) {
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
-    ASSERT_EQm(message, FR_ERR, status);
-    ASSERTm(message, strstr(message, "provision") != NULL);
-    ASSERTm(message, strstr(message, "toolchain") != NULL);
+    ASSERT_EQm(message, FR_OK, status);
     PASS();
 }
 
-TEST a_source_plugin_declaring_provision_is_refused(void) {
+TEST a_source_plugin_may_declare_provision(void) {
     static char message[512];
-    fr_error err;
+    fr_error err = { "" };
     fr_registry *registry = fr_registry_create();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = load_declaring_provision(
@@ -1591,8 +1586,7 @@ TEST a_source_plugin_declaring_provision_is_refused(void) {
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
-    ASSERT_EQm(message, FR_ERR, status);
-    ASSERTm(message, strstr(message, "provision") != NULL);
+    ASSERT_EQm(message, FR_OK, status);
     PASS();
 }
 
@@ -1613,7 +1607,7 @@ TEST a_resolver_plugin_declaring_provision_is_refused(void) {
     PASS();
 }
 
-/* The positive case, and it is not optional: without it, all three refusals
+/* The positive case, and it is not optional: without it, the resolver refusal
    above would pass against an implementation that refuses "provision" to
    every kind, which would make the capability unreachable. */
 TEST a_toolchain_plugin_declaring_provision_loads(void) {
@@ -2730,8 +2724,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_hostile_metatable_returning_a_function_is_never_used_as_resolve);
     RUN_TEST(a_chunk_declaring_no_resolver_reports_none_declared);
     RUN_TEST(a_refused_resolver_chunk_reports_none_declared);
-    RUN_TEST(a_language_plugin_declaring_provision_is_refused);
-    RUN_TEST(a_source_plugin_declaring_provision_is_refused);
+    RUN_TEST(a_language_plugin_may_declare_provision);
+    RUN_TEST(a_source_plugin_may_declare_provision);
     RUN_TEST(a_resolver_plugin_declaring_provision_is_refused);
     RUN_TEST(a_toolchain_plugin_declaring_provision_loads);
     RUN_TEST(a_module_supplies_what_the_entry_chunk_requires);

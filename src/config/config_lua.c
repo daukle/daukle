@@ -250,6 +250,21 @@ int fr_lua_plugin_exec_is_refused(void) {
     return plugin_chunk_running;
 }
 
+static int process_free_callback_depth;
+static const char *process_free_callback_phase;
+
+void fr_lua_enter_process_free_callback(const char *phase) {
+    if (process_free_callback_depth++ == 0) process_free_callback_phase = phase;
+}
+
+void fr_lua_leave_process_free_callback(void) {
+    if (--process_free_callback_depth == 0) process_free_callback_phase = NULL;
+}
+
+const char *fr_lua_process_free_callback_phase(void) {
+    return process_free_callback_phase;
+}
+
 int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
                        const char *const *verbs, size_t verb_count, fr_plugin_source *source,
                        fr_plugin_deps *deps, fr_error *err) {

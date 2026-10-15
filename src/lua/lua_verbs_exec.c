@@ -142,6 +142,11 @@ int fr_lua_verb_exec(lua_State *state) {
         return luaL_error(state, "daukle.exec is not available while a plugin chunk is"
                                  " loading; call it from a task or publish callback");
     }
+    const char *phase = fr_lua_process_free_callback_phase();
+    if (phase != NULL) {
+        return luaL_error(state, "daukle.exec is not available while %s; call it from a task or"
+                                 " publish callback", phase);
+    }
     if (luaL_testudata(state, 1, FR_TOOL_HANDLE) == NULL) {
         return luaL_error(state, "daukle.exec argument 1 must be a tool handle from daukle.tool");
     }

@@ -49,7 +49,9 @@ int fr_lua_dispatch_source_load(void *state, const char *project, const cJSON *b
         (const char *const *) ((const fr_lua_plugin_slot *) state)->env,
         ((const fr_lua_plugin_slot *) state)->env_count);
     lua_pushcfunction(fr_lua_runtime_state(), protected_source_load);
+    fr_lua_enter_process_free_callback("a source loads");
     int status = lua_pcall(fr_lua_runtime_state(), 0, 0, 0);
+    fr_lua_leave_process_free_callback();
     source_context = NULL;
     fr_lua_verbs_set_declared_env(NULL, 0);
 

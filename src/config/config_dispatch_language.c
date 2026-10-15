@@ -79,7 +79,9 @@ int fr_lua_dispatch_language_apply(void *state, const fr_consumer *consumer,
         (const char *const *) ((const fr_lua_plugin_slot *) state)->env,
         ((const fr_lua_plugin_slot *) state)->env_count);
     lua_pushcfunction(fr_lua_runtime_state(), protected_language_apply);
+    fr_lua_enter_process_free_callback("a language applies");
     int status = lua_pcall(fr_lua_runtime_state(), 0, 0, 0);
+    fr_lua_leave_process_free_callback();
     apply_context = NULL;
     fr_lua_verbs_set_declared_env(NULL, 0);
 
