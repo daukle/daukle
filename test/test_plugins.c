@@ -645,6 +645,41 @@ TEST a_module_named_twice_is_refused(void) {
     PASS();
 }
 
+static int load_override_fixture(const char *manifest_name, char *message, size_t size) {
+    char manifest_path[256];
+    snprintf(manifest_path, sizeof manifest_path, "test/fixtures/plugin-modules-overrides/%s",
+             manifest_name);
+    fr_error err;
+    err.message[0] = '\0';
+    fr_registry *registry = NULL;
+    if (fr_build_registry(&registry, &err) != FR_OK) return FR_ERR;
+    fr_manifest manifest;
+    int status = fr_config_load_file(manifest_path, registry, &manifest, &err);
+    if (status == FR_OK) fr_manifest_free(&manifest);
+    snprintf(message, size, "%s", err.message);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    return status;
+}
+
+/* One [plugins] line names several modules but carries one requires table, so
+   an override applies to whichever named module declares that alias. */
+TEST an_override_applies_to_the_module_that_declares_its_alias(void) {
+    static char message[512];
+    int status = load_override_fixture("daukle-both.toml", message, sizeof message);
+    ASSERTm(message, status == FR_OK);
+    PASS();
+}
+
+TEST an_override_no_named_module_declares_is_refused(void) {
+    static char message[512];
+    int status = load_override_fixture("daukle-typo.toml", message, sizeof message);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "requires[\"nothere\"] overrides an alias none of the"
+                                     " modules it names declares") != NULL);
+    PASS();
+}
+
 /* The per-kind gates fire when daukle.language and its siblings are CALLED, so
    a chunk that provisions at its top level has already fetched and unpacked a
    tree by then, during `daukle check` and `daukle config print`. Asserting the
@@ -3212,6 +3247,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_single_file_plugin_has_no_modules_to_name);
     RUN_TEST(an_empty_modules_list_is_refused);
     RUN_TEST(a_module_named_twice_is_refused);
+    RUN_TEST(an_override_applies_to_the_module_that_declares_its_alias);
+    RUN_TEST(an_override_no_named_module_declares_is_refused);
     RUN_TEST(a_plugin_gets_the_real_libraries_whatever_the_overlay_rebinds);
     RUN_TEST(a_plugin_provisioning_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_language_plugin_declaring_tool_but_not_exec_still_loads);
