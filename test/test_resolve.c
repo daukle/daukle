@@ -168,7 +168,7 @@ TEST a_source_load_may_not_provision(void) {
 
 TEST a_source_may_not_set_a_finalizer(void) {
     ASSERT(resolve_fails_naming("test/fixtures/source-sets-gc", "./plugins/gc-path.lua",
-                                "a plugin may not set a __gc finalizer"));
+                                "a daukle configuration may not set a __gc finalizer"));
     PASS();
 }
 

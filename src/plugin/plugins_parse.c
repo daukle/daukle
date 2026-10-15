@@ -104,11 +104,23 @@ static int module_name_is_plain(const char *name) {
     return 1;
 }
 
-static int module_already_named(const fr_plugin_entry *out, const char *name) {
-    for (size_t index = 0; index < out->module_count; index++) {
-        if (strcmp(out->modules[index], name) == 0) return 1;
+static int equal_ignoring_ascii_case(const char *left, const char *right) {
+    for (; *left != '\0' && *right != '\0'; left++, right++) {
+        char folded_left = (*left >= 'A' && *left <= 'Z') ? (char) (*left + 32) : *left;
+        char folded_right = (*right >= 'A' && *right <= 'Z') ? (char) (*right + 32) : *right;
+        if (folded_left != folded_right) return 0;
     }
-    return 0;
+    return *left == *right;
+}
+
+/* Case-blind, because two names differing only in case are one file on a
+   case-insensitive file system, and loading it twice fails there as a
+   capability collision that names neither. */
+static const char *module_already_named(const fr_plugin_entry *out, const char *name) {
+    for (size_t index = 0; index < out->module_count; index++) {
+        if (equal_ignoring_ascii_case(out->modules[index], name)) return out->modules[index];
+    }
+    return NULL;
 }
 
 static int parse_modules(const char *label, const cJSON *member, fr_plugin_entry *out,
@@ -130,9 +142,16 @@ static int parse_modules(const char *label, const cJSON *member, fr_plugin_entry
                               " digits, - and _, at most 32 long", label);
             return FR_ERR;
         }
-        if (module_already_named(out, item->valuestring)) {
+        const char *earlier = module_already_named(out, item->valuestring);
+        if (earlier != NULL && strcmp(earlier, item->valuestring) == 0) {
             fr_error_set(err, "plugin \"%s\": \"modules\" names \"%s\" twice", label,
                          item->valuestring);
+            return FR_ERR;
+        }
+        if (earlier != NULL) {
+            fr_error_set(err, "plugin \"%s\": \"modules\" names \"%s\" and \"%s\", which differ"
+                              " only in case and are one file on a case-insensitive file system",
+                         label, earlier, item->valuestring);
             return FR_ERR;
         }
         if (out->module_count == FR_PLUGIN_MAX_MODULES) {
@@ -255,6 +274,12 @@ int fr_plugins_parse(const struct cJSON *document, const fr_resolver_entry *reso
     const cJSON *member = NULL;
     cJSON_ArrayForEach(member, plugins) {
         const char *label = member->string;
+        if (strchr(label, '/') != NULL) {
+            fr_error_set(err, "plugin \"%s\": a [plugins] key may not contain \"/\", which names"
+                              " one module of a plugin, as in \"<plugin>/<module>\"", label);
+            fr_plugins_free(entries, count);
+            return FR_ERR;
+        }
         count = count + 1;
 
         fr_plugin_entry *slot = &entries[count - 1];

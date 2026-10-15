@@ -230,6 +230,23 @@ TEST refuses_to_change_its_own_metatable(void) {
     PASS();
 }
 
+/* The project's daukle.lua gets the same setmetatable every plugin gets, so a
+   finalizer cannot run project code outside any callback either. D-139. */
+TEST refuses_a_finalizer_in_the_project_overlay(void) {
+    fr_error err;
+    lua_State *state = sandboxed(&err);
+    ASSERT_EQ(FR_ERR, fr_lua_run(state, "local kept = {}\nsetmetatable(kept, { __gc = function() end })",
+                                 "daukle.lua", &err));
+    ASSERTm(err.message, strstr(err.message, "daukle.lua:2: a daukle configuration may not set a"
+                                             " __gc finalizer") != NULL);
+    ASSERT_EQ(FR_OK, fr_lua_run(state, "plain = setmetatable({}, { __index = { hit = 1 } }).hit",
+                                "daukle.lua", &err));
+    lua_getglobal(state, "plain");
+    ASSERT_EQ(1, (int) lua_tointeger(state, -1));
+    fr_lua_close(state);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -246,5 +263,6 @@ int main(int argc, char **argv) {
     RUN_TEST(refuses_an_include_that_escapes_through_a_reparse_point);
     RUN_TEST(refuses_an_include_whose_target_only_shares_a_path_prefix);
     RUN_TEST(refuses_to_change_its_own_metatable);
+    RUN_TEST(refuses_a_finalizer_in_the_project_overlay);
     GREATEST_MAIN_END();
 }

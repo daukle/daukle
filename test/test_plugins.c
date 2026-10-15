@@ -546,7 +546,7 @@ TEST a_chunk_may_not_set_a_finalizer(void) {
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/chunk-sets-gc/daukle.toml",
                                           registry, &manifest, &err));
-    ASSERT(strstr(err.message, "a plugin may not set a __gc finalizer") != NULL);
+    ASSERT(strstr(err.message, "a daukle configuration may not set a __gc finalizer") != NULL);
 
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
@@ -562,13 +562,13 @@ typedef struct {
 
 /* Static rather than returned by value: greatest keeps the message pointer an
    ASSERTm hands it, so a message in a caller's local would dangle. */
-static const modules_loaded *load_plugin_modules(const char *manifest_name) {
+static const modules_loaded *load_plugin_modules_in(const char *fixture,
+                                                    const char *manifest_name) {
     static modules_loaded out;
     memset(&out, 0, sizeof out);
     out.status = FR_ERR;
     char manifest_path[256];
-    snprintf(manifest_path, sizeof manifest_path, "test/fixtures/plugin-modules/%s",
-             manifest_name);
+    snprintf(manifest_path, sizeof manifest_path, "test/fixtures/%s/%s", fixture, manifest_name);
     fr_error err;
     err.message[0] = '\0';
     fr_registry *registry = NULL;
@@ -585,6 +585,10 @@ static const modules_loaded *load_plugin_modules(const char *manifest_name) {
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
     return &out;
+}
+
+static const modules_loaded *load_plugin_modules(const char *manifest_name) {
+    return load_plugin_modules_in("plugin-modules", manifest_name);
 }
 
 TEST a_plugin_entry_without_modules_loads_only_its_main_chunk(void) {
@@ -623,7 +627,38 @@ TEST a_module_holds_its_own_grant_and_not_the_main_chunks(void) {
 TEST an_unknown_module_is_refused_naming_what_the_plugin_carries(void) {
     const modules_loaded *loaded = load_plugin_modules("daukle-unknown.toml");
     ASSERT_EQ(FR_ERR, loaded->status);
-    ASSERTm(loaded->message, strstr(loaded->message, "modules/nope") != NULL);
+    ASSERTm(loaded->message, strstr(loaded->message,
+        "plugin \"modular\": there is no module \"nope\": the plugin's modules are ") != NULL);
+    ASSERTm(loaded->message, strstr(loaded->message, "deps") != NULL);
+    ASSERTm(loaded->message, strstr(loaded->message, "greedy") != NULL);
+    PASS();
+}
+
+/* Two names one case-insensitive file system holds as one file would load it
+   twice there and fail as a capability collision naming neither. D-139. */
+TEST modules_differing_only_in_case_are_refused(void) {
+    const modules_loaded *loaded = load_plugin_modules("daukle-case.toml");
+    ASSERT_EQ(FR_ERR, loaded->status);
+    ASSERTm(loaded->message, strstr(loaded->message, "names \"deps\" and \"Deps\", which differ"
+                                                     " only in case") != NULL);
+    PASS();
+}
+
+/* config print names a module's row "<plugin>/<module>", so a key spelt that
+   way would be two different things in one listing. D-139. */
+TEST a_plugin_key_holding_a_slash_is_refused(void) {
+    const modules_loaded *loaded = load_plugin_modules("daukle-slash.toml");
+    ASSERT_EQ(FR_ERR, loaded->status);
+    ASSERTm(loaded->message, strstr(loaded->message, "may not contain \"/\"") != NULL);
+    PASS();
+}
+
+TEST a_plugin_directory_carrying_modules_main_is_refused(void) {
+    const modules_loaded *loaded = load_plugin_modules_in("plugin-modules-unreachable",
+                                                          "daukle.toml");
+    ASSERT_EQ(FR_ERR, loaded->status);
+    ASSERTm(loaded->message, strstr(loaded->message, "the plugin carries modules/main.lua, which"
+                                                     " can never load") != NULL);
     PASS();
 }
 
@@ -2611,6 +2646,32 @@ TEST fr_plugins_update_cache_with_no_label_touches_only_the_given_entries(void) 
     PASS();
 }
 
+/* config print shows a module's row as "<plugin>/<module>", so update must
+   accept that label for a module the line names, and only for one it names.
+   A path entry has nothing to clear, so matching is what is asserted. D-139. */
+TEST fr_plugins_update_cache_accepts_the_label_config_print_shows_a_module(void) {
+    static fr_error err;
+    cJSON *document = cJSON_Parse(
+        "{\"plugins\":{\"m\":{\"path\":\"./plugins\",\"modules\":[\"deps\"]}}}");
+    fr_plugin_entry *entries = NULL;
+    size_t count = 0;
+    int parsed = fr_plugins_parse(document, NULL, 0, &entries, &count, &err);
+    size_t removed_count = 0;
+    int named_module = parsed == FR_OK
+        ? fr_plugins_update_cache(entries, count, NULL, 0, "m/deps", &removed_count, &err) : FR_ERR;
+    int unnamed_module = parsed == FR_OK
+        ? fr_plugins_update_cache(entries, count, NULL, 0, "m/other", &removed_count, &err)
+        : FR_OK;
+    fr_plugins_free(entries, count);
+    cJSON_Delete(document);
+
+    ASSERT_EQ(FR_OK, parsed);
+    ASSERT_EQ(FR_OK, named_module);
+    ASSERT_EQ(FR_ERR, unnamed_module);
+    ASSERTm(err.message, strstr(err.message, "no plugin named \"m/other\"") != NULL);
+    PASS();
+}
+
 /* The other half of the honesty fix: a label matching a REAL fetched entry must
    report removed_count 1, not just the local no-op case reporting 0. */
 TEST fr_plugins_update_cache_with_a_label_matching_a_url_entry_removes_it(void) {
@@ -3249,6 +3310,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_module_holds_its_own_grant_and_not_the_main_chunks);
     RUN_TEST(an_unknown_module_is_refused_naming_what_the_plugin_carries);
     RUN_TEST(a_single_file_plugin_has_no_modules_to_name);
+    RUN_TEST(modules_differing_only_in_case_are_refused);
+    RUN_TEST(a_plugin_key_holding_a_slash_is_refused);
+    RUN_TEST(a_plugin_directory_carrying_modules_main_is_refused);
     RUN_TEST(an_empty_modules_list_is_refused);
     RUN_TEST(a_module_named_twice_is_refused);
     RUN_TEST(an_override_applies_to_the_module_that_declares_its_alias);
@@ -3310,6 +3374,7 @@ int main(int argc, char **argv) {
     RUN_TEST(plugin_update_re_resolves_and_takes_the_new_url);
     RUN_TEST(plugin_update_persists_the_fresh_url_with_the_cache_disabled);
     RUN_TEST(fr_plugins_update_cache_with_no_label_touches_only_the_given_entries);
+    RUN_TEST(fr_plugins_update_cache_accepts_the_label_config_print_shows_a_module);
     RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_url_entry_removes_it);
     RUN_TEST(fr_plugins_update_cache_with_an_unknown_label_errors_naming_it);
     RUN_TEST(fr_plugins_update_cache_with_a_label_matching_a_local_entry_is_not_an_error);

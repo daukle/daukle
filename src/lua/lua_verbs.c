@@ -145,27 +145,6 @@ void fr_lua_verbs_set_manifest_name(const char *name) {
     pending_manifest_name = name;
 }
 
-/* Lua 5.4 marks an object for finalization only if its metatable holds __gc
-   when setmetatable is called (manual 2.5.3), so refusing it here is the whole
-   route: a finalizer would run plugin code at an arbitrary allocation, outside
-   every callback and gate. A raw read, so a metatable's own __index cannot hide
-   one. Everything else is the base function, called unchanged. D-135. */
-static int setmetatable_without_finalizers(lua_State *state) {
-    if (lua_type(state, 2) == LUA_TTABLE) {
-        lua_pushliteral(state, "__gc");
-        int has_finalizer = lua_rawget(state, 2) != LUA_TNIL;
-        lua_pop(state, 1);
-        if (has_finalizer) {
-            return luaL_error(state, "a plugin may not set a __gc finalizer; it would run outside"
-                                     " any callback");
-        }
-    }
-    lua_pushvalue(state, lua_upvalueindex(1));
-    lua_insert(state, 1);
-    lua_call(state, lua_gettop(state) - 1, LUA_MULTRET);
-    return lua_gettop(state);
-}
-
 static const char *LIBRARY_TABLES[] = { "string", "table", "math" };
 
 static void push_base_globals(lua_State *state) {
@@ -178,8 +157,7 @@ static void push_base_globals(lua_State *state) {
         fr_lua_push_library_copy(state, LIBRARY_TABLES[index]);
         lua_setfield(state, -2, LIBRARY_TABLES[index]);
     }
-    lua_getglobal(state, "setmetatable");
-    lua_pushcclosure(state, setmetatable_without_finalizers, 1);
+    lua_pushcfunction(state, fr_lua_sandbox_setmetatable);
     lua_setfield(state, -2, "setmetatable");
 }
 

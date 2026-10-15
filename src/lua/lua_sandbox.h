@@ -22,6 +22,16 @@ int fr_lua_sandbox_install(lua_State *state, const char *base_dir, char **out_ca
    caller owns *out. */
 int fr_lua_sandbox_canonical_dir(const char *path, char **out, fr_error *err);
 
+/* setmetatable for every environment daukle builds, the project's daukle.lua
+   and each plugin's alike. It refuses a metatable carrying __gc, because Lua
+   5.4 marks an object for finalization only if __gc is present when
+   setmetatable is called (manual 2.5.3), and a finalizer would run code at an
+   arbitrary allocation, outside every callback and gate (D-135).
+   @implNote it re-implements the base function rather than calling it, so the
+   base's own errors still name the caller's file and line: called through
+   lua_call, luaL_where(1) names this C function instead (D-139). */
+int fr_lua_sandbox_setmetatable(lua_State *state);
+
 /* Pushes a fresh shallow copy of the standard library NAME ("string",
    "table" or "math"), read from the registry's loaded-library table rather
    than from the globals, which a project's daukle.lua may have rebound to
