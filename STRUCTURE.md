@@ -159,7 +159,8 @@ A plugin that calls `daukle.exec` at the top of its chunk would run the program 
 asked for it, so `verb_exec` refuses at the call itself for the whole of any plugin's **top-level chunk**
 (`fr_lua_plugin_exec_is_refused` in `src/config/config_lua.c`, which returns `plugin_chunk_running`).
 **The rule is temporal, not about kind**: exec is refused while a chunk is declaring and allowed
-inside the task callback that runs later. The two together are what make the refusal fail closed.
+inside the task callback that runs later. **No gate is fail closed**: a `__gc` finalizer runs after
+each one has closed, which is `D-135`.
 
 **A plugin may not name another plugin it did not declare a dependency on.** Three routes reach
 across that boundary and all three are now refused. Declaring a task `other:x` is refused by
