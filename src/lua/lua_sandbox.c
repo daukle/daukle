@@ -248,11 +248,25 @@ static int sandbox_include(lua_State *state) {
    exists to catch that allocation failing. */
 static const char *pending_base_dir;
 
+/* Every string shares one metatable whose __index is the original string
+   library, the one table no environment copies, so it is locked rather than
+   left as a channel between plugins. D-137. */
+static void lock_the_string_metatable(lua_State *state) {
+    lua_pushliteral(state, "");
+    if (lua_getmetatable(state, -1)) {
+        lua_pushboolean(state, 0);
+        lua_setfield(state, -2, "__metatable");
+        lua_pop(state, 1);
+    }
+    lua_pop(state, 1);
+}
+
 static int protected_install(lua_State *state) {
     const char *canonical_base = pending_base_dir;
 
     lua_pushstring(state, canonical_base);
     lua_setfield(state, LUA_REGISTRYINDEX, FR_SANDBOX_BASE_DIR);
+    lock_the_string_metatable(state);
 
     /* Read every kept name out of the CURRENT globals before installing the
        replacement: swap the table first and this loop reads back nils. */

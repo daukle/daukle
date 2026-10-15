@@ -165,11 +165,32 @@ static int setmetatable_without_finalizers(lua_State *state) {
     return lua_gettop(state);
 }
 
+static const char *LIBRARY_TABLES[] = { "string", "table", "math" };
+
+static void push_library_copy(lua_State *state, const char *name) {
+    lua_newtable(state);
+    lua_getglobal(state, name);
+    lua_pushnil(state);
+    while (lua_next(state, -2) != 0) {
+        lua_pushvalue(state, -2);
+        lua_insert(state, -2);
+        lua_rawset(state, -5);
+    }
+    lua_pop(state, 1);
+}
+
+/* @implNote string, table and math are copied rather than shared: every plugin
+   runs in one lua_State, so a shared library table would let one plugin's
+   function run inside another plugin's task, under that task's grant. D-137. */
 static void push_base_globals(lua_State *state) {
     lua_newtable(state);
     for (size_t index = 0; index < sizeof BASE / sizeof BASE[0]; index++) {
         lua_getglobal(state, BASE[index]);
         lua_setfield(state, -2, BASE[index]);
+    }
+    for (size_t index = 0; index < sizeof LIBRARY_TABLES / sizeof LIBRARY_TABLES[0]; index++) {
+        push_library_copy(state, LIBRARY_TABLES[index]);
+        lua_setfield(state, -2, LIBRARY_TABLES[index]);
     }
     lua_getglobal(state, "setmetatable");
     lua_pushcclosure(state, setmetatable_without_finalizers, 1);
