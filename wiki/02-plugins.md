@@ -27,6 +27,27 @@ That is worth stating plainly because it is the property everything else rests o
 succeeded once succeeds the same way forever, or it fails loudly.** The one exception is a
 deliberate resolve, and page 4 covers it.
 
+## Depending on part of a plugin
+
+**A plugin may ship MODULES, and a project names the ones it loads.** Since `daukle 0.9.0` a
+`[plugins]` entry takes `modules`:
+
+```toml
+[plugins]
+# only the dependency writer, and only its grant
+cmake = { resolver = "github", coordinate = "daukle/cmake@^1", modules = ["deps"] }
+
+# the toolchain AND the dependency writer
+cmake = { resolver = "github", coordinate = "daukle/cmake@^1", modules = ["main", "deps"] }
+```
+
+**Each module declares its own `daukle.plugin{}`, so each carries its own `uses` and `env`**, and
+depending on one never grants what another needs: the line above that names only `deps` gets
+`region` and not the toolchain's `exec`. `"main"` is the plugin's `plugin.lua`; any other name is
+`modules/<name>.lua` inside the plugin's published archive. **With no `modules` key, only
+`plugin.lua` loads**, exactly as before. The artifact is fetched and checked once, however many of
+its modules the line names, and `config print` shows a row per module as `<label>/<module>`.
+
 ## Writing one
 
 A plugin is a Lua file. This is a complete one:
