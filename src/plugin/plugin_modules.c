@@ -306,6 +306,21 @@ int fr_plugin_source_member(fr_plugin_source *source, const char *module_name,
     return FR_OK;
 }
 
+int fr_plugin_source_module_entry(fr_plugin_source *source, const char *module,
+                                  const char **out_text, size_t *out_length, fr_error *err) {
+    if (strcmp(module, "main") == 0) {
+        return fr_plugin_source_entry(source, out_text, out_length, err);
+    }
+    if (source->kind == SOURCE_CHUNK) {
+        fr_error_set(err, "this plugin is a single file, so it has no module \"%s\" to load",
+                     module);
+        return FR_ERR;
+    }
+    char member_name[FR_TAR_MAX_NAME + 1];
+    snprintf(member_name, sizeof member_name, "modules/%s", module);
+    return fr_plugin_source_member(source, member_name, out_text, out_length, err);
+}
+
 void fr_plugin_source_close(fr_plugin_source *source) {
     if (source == NULL) return;
     for (size_t index = 0; index < source->cached_count; index++) free(source->cached[index].text);

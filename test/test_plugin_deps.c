@@ -769,6 +769,30 @@ TEST an_override_naming_its_own_requires_is_refused_as_reserved(void) {
     PASS();
 }
 
+/* An override reaches only a dependency's declaration, never its modules, so
+   a "modules" key there would be read and do nothing. D-134. */
+TEST an_override_naming_modules_is_refused(void) {
+    static char message[512];
+    char source[512];
+    serve_two_plugins();
+    dependent_source(source, sizeof source, "java", "https://x/java.lua", JAVA_DIGEST);
+    char overrides_json[512];
+    snprintf(overrides_json, sizeof overrides_json,
+            "{\"java\":{\"url\":\"https://x/java.lua\",\"sha256\":\"%s\",\"modules\":[\"x\"]}}",
+            JAVA_DIGEST);
+    cJSON *overrides = cJSON_Parse(overrides_json);
+
+    fr_plugin_deps *deps = NULL;
+    int status = acquire_with_overrides(".", source, overrides, &deps, message, sizeof message);
+    cJSON_Delete(overrides);
+    fr_plugin_deps_close(deps);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "requires[\"java\"] names modules") != NULL);
+    PASS();
+}
+
 /* A malformed override value is refused inside fr_plugins_parse_entry, whose
    messages read "plugin \"%s\": ...": the label passed there must not be the
    bare alias, or the reader is sent looking for a [plugins.java] entry that
@@ -1064,6 +1088,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_manifest_override_replaces_what_the_author_named);
     RUN_TEST(an_override_naming_an_alias_the_dependent_does_not_declare_is_refused);
     RUN_TEST(an_override_naming_its_own_requires_is_refused_as_reserved);
+    RUN_TEST(an_override_naming_modules_is_refused);
     RUN_TEST(a_malformed_override_value_is_refused_naming_the_override_not_the_alias);
     RUN_TEST(an_override_whose_pin_does_not_match_is_refused_naming_the_override_not_the_alias);
     RUN_TEST(a_path_override_reads_a_local_directory);

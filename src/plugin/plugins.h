@@ -12,6 +12,9 @@ typedef struct fr_plugin_source fr_plugin_source; /* plugin_modules.h owns the r
 
 typedef enum { FR_PLUGIN_PATH, FR_PLUGIN_URL, FR_PLUGIN_RESOLVED } fr_plugin_kind;
 
+#define FR_PLUGIN_MAX_MODULES 16
+#define FR_PLUGIN_MAIN_MODULE "main"
+
 typedef struct {
     char *label;
     fr_plugin_kind kind;
@@ -28,6 +31,11 @@ typedef struct {
        fr_plugins_free (and fr_plugins_free_entry) must not free this, because
        it is not owned here. */
     const struct cJSON *overrides;
+    /* The entry chunks to load, by module name, where "main" is plugin.lua and
+       any other name is modules/<name>.lua. Zero means plugin.lua alone. Each
+       loads as its own chunk with its own grant. D-134. */
+    char *modules[FR_PLUGIN_MAX_MODULES];
+    size_t module_count;
 } fr_plugin_entry;
 
 /* One reported plugin, holding copies of everything an fr_plugin_entry held:

@@ -77,6 +77,36 @@ TEST an_archive_serves_a_module(void) {
     PASS();
 }
 
+/* A published plugin is a tar, and a [plugins] line's "modules" reaches its
+   modules/<name>.lua members as entry chunks; "main" is plugin.lua. D-134. */
+TEST an_archive_serves_a_named_module_as_an_entry(void) {
+    static char bytes[8192];
+    memset(bytes, 0, sizeof bytes);
+    size_t offset = fr_test_tar_append(bytes, 0, "plugin.lua", '0', "return 1", 8);
+    offset = fr_test_tar_append(bytes, offset, "modules/deps.lua", '0', "return 33", 9);
+    size_t length = fr_test_tar_end(bytes, offset);
+
+    fr_plugin_source *source = NULL;
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_plugin_source_open_bytes(bytes, length, &source, &err));
+
+    const char *text = NULL;
+    size_t text_length = 0;
+    int deps = fr_plugin_source_module_entry(source, "deps", &text, &text_length, &err);
+    int deps_matched = deps == FR_OK && text_length == 9 && memcmp(text, "return 33", 9) == 0;
+    int main_status = fr_plugin_source_module_entry(source, "main", &text, &text_length, &err);
+    int main_matched = main_status == FR_OK && text_length == 8
+                       && memcmp(text, "return 1", 8) == 0;
+    int missing = fr_plugin_source_module_entry(source, "nope", &text, &text_length, &err);
+    int named = missing == FR_ERR && strstr(err.message, "modules/nope.lua") != NULL;
+    fr_plugin_source_close(source);
+
+    ASSERT(deps_matched);
+    ASSERT(main_matched);
+    ASSERTm(err.message, named);
+    PASS();
+}
+
 TEST an_archive_without_an_entry_member_is_refused(void) {
     memset(archive_bytes, 0, sizeof archive_bytes);
     size_t offset = fr_test_tar_append(archive_bytes, 0, "lib/greeting.lua", '0', "return 1", 8);
@@ -324,6 +354,7 @@ int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(an_archive_serves_its_entry_member);
     RUN_TEST(an_archive_serves_a_module);
+    RUN_TEST(an_archive_serves_a_named_module_as_an_entry);
     RUN_TEST(an_archive_without_an_entry_member_is_refused);
     RUN_TEST(an_archive_carrying_something_other_than_lua_is_refused);
     RUN_TEST(an_archive_member_that_climbs_out_is_refused);

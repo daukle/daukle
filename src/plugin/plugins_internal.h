@@ -17,6 +17,11 @@ int fr_plugins_declaration_read(lua_State *state, const char *text, size_t lengt
                                 const char *origin, fr_plugin_declaration *declaration,
                                 fr_error *err);
 
+/* Acquires one [plugins] entry's artifact once and runs each entry chunk it
+   names, plugin.lua alone when it names none. plugins_load.c. */
+int fr_plugins_load_entry(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
+                          size_t resolver_count, fr_error *err);
+
 /* What the load pass in plugins.c needs from the report in plugin_report.c, and
    nothing else: the report's storage stays private to that file, so a caller
    cannot append a row by writing one. Everything the rest of the program reads
