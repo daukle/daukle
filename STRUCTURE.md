@@ -168,10 +168,11 @@ inside the task callback that runs later.
 phase. Code running in a window nobody named is therefore refused by default. **The plugin
 environment's `setmetatable` refuses a metatable carrying `__gc`** (`setmetatable_without_finalizers`
 in `src/lua/lua_verbs.c`), which closes the one route to plugin code running asynchronously: every
-metatable core creates is `__metatable`-protected and has no `__gc`. `D-135`. **It does not close a
-SYNCHRONOUS route**: `string`, `table` and `math` are one shared, writable table each across every
-plugin environment, so one plugin's function can still run inside another's task, under that task's
-grant. That is `D-137`.
+metatable core creates is `__metatable`-protected and has no `__gc`. `D-135`. **The synchronous
+route is closed too**: every plugin and library environment gets its own copy of `string`, `table`
+and `math` (`push_base_globals`), and the string metatable, whose `__index` is the one uncopied
+library table, is locked (`lock_the_string_metatable` in `src/lua/lua_sandbox.c`). So no plugin's
+function can be planted where another plugin's task will call it. `D-137`.
 
 **A plugin may not name another plugin it did not declare a dependency on.** Three routes reach
 across that boundary and all three are now refused. Declaring a task `other:x` is refused by
