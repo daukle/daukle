@@ -169,10 +169,12 @@ phase. Code running in a window nobody named is therefore refused by default. **
 environment's `setmetatable` refuses a metatable carrying `__gc`** (`setmetatable_without_finalizers`
 in `src/lua/lua_verbs.c`), which closes the one route to plugin code running asynchronously: every
 metatable core creates is `__metatable`-protected and has no `__gc`. `D-135`. **The synchronous
-route is closed too**: every plugin and library environment gets its own copy of `string`, `table`
-and `math` (`push_base_globals`), and the string metatable, whose `__index` is the one uncopied
-library table, is locked (`lock_the_string_metatable` in `src/lua/lua_sandbox.c`). So no plugin's
-function can be planted where another plugin's task will call it. `D-137`.
+route is closed too**: every plugin and library environment, and the project's own `daukle.lua`,
+gets its own copy of `string`, `table` and `math` (`fr_lua_push_library_copy` in
+`src/lua/lua_sandbox.c`), copied from the registry's loaded libraries rather than from globals the
+`daukle.lua` that runs first may have rebound. The string metatable, whose `__index` is the one
+uncopied library, is locked (`lock_the_string_metatable`). So no Lua code can plant a function
+where another plugin's task will call it. `D-137`.
 
 **A plugin may not name another plugin it did not declare a dependency on.** Three routes reach
 across that boundary and all three are now refused. Declaring a task `other:x` is refused by
