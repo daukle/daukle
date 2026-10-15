@@ -112,6 +112,7 @@ typedef struct {
     int found;
     char names[256];
     size_t filled;
+    int truncated;
 } module_listing;
 
 static void note_module(module_listing *listing, const char *file_name) {
@@ -121,11 +122,13 @@ static void note_module(module_listing *listing, const char *file_name) {
         && strncmp(file_name, listing->wanted, name_length) == 0) {
         listing->found = 1;
     }
+    if (listing->truncated) return;
     size_t room = sizeof listing->names - listing->filled;
     int written = snprintf(listing->names + listing->filled, room, "%s%.*s",
                            listing->filled == 0 ? "" : ", ", (int) name_length, file_name);
     if (written < 0 || (size_t) written >= room) {
         listing->names[listing->filled] = '\0';
+        listing->truncated = 1;
         return;
     }
     listing->filled += (size_t) written;
@@ -305,15 +308,15 @@ int fr_plugin_source_module_entry(fr_plugin_source *source, const char *module,
                      module);
         return FR_ERR;
     }
-    module_listing listing = { module, 0, "", 0 };
+    module_listing listing = { module, 0, "", 0, 0 };
     list_modules(source, &listing);
     if (!listing.found) {
         if (listing.filled == 0) {
             fr_error_set(err, "there is no module \"%s\": the plugin has no modules, only its "
                               ENTRY_MEMBER, module);
         } else {
-            fr_error_set(err, "there is no module \"%s\": the plugin's modules are %s", module,
-                         listing.names);
+            fr_error_set(err, "there is no module \"%s\": the plugin's modules are %s%s", module,
+                         listing.names, listing.truncated ? ", ..." : "");
         }
         return FR_ERR;
     }

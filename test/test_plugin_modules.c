@@ -109,6 +109,38 @@ TEST an_archive_serves_a_named_module_as_an_entry(void) {
     PASS();
 }
 
+/* The listing has a fixed size, so a long one must say it was cut rather than
+   read as complete, and a module past the cut must still be found. */
+TEST a_long_module_listing_says_it_was_cut(void) {
+    static char bytes[32768];
+    memset(bytes, 0, sizeof bytes);
+    size_t offset = fr_test_tar_append(bytes, 0, "plugin.lua", '0', "return 1", 8);
+    char member[64];
+    for (int index = 0; index < 10; index++) {
+        snprintf(member, sizeof member, "modules/a-rather-long-module-name-number-%d.lua", index);
+        offset = fr_test_tar_append(bytes, offset, member, '0', "return 2", 8);
+    }
+    size_t length = fr_test_tar_end(bytes, offset);
+
+    fr_plugin_source *source = NULL;
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_plugin_source_open_bytes(bytes, length, &source, &err));
+    const char *text = NULL;
+    size_t text_length = 0;
+    int missing = fr_plugin_source_module_entry(source, "absent", &text, &text_length, &err);
+    static char message[512];
+    snprintf(message, sizeof message, "%s", err.message);
+    int last = fr_plugin_source_module_entry(source, "a-rather-long-module-name-number-9", &text,
+                                             &text_length, &err);
+    fr_plugin_source_close(source);
+
+    ASSERT_EQ(FR_ERR, missing);
+    size_t message_length = strlen(message);
+    ASSERTm(message, message_length > 5 && strcmp(message + message_length - 5, ", ...") == 0);
+    ASSERT_EQm(err.message, FR_OK, last);
+    PASS();
+}
+
 TEST an_archive_with_no_modules_says_so_when_one_is_named(void) {
     size_t length = build_archive();
     fr_plugin_source *source = NULL;
@@ -394,6 +426,7 @@ int main(int argc, char **argv) {
     RUN_TEST(an_archive_serves_a_module);
     RUN_TEST(an_archive_serves_a_named_module_as_an_entry);
     RUN_TEST(an_archive_with_no_modules_says_so_when_one_is_named);
+    RUN_TEST(a_long_module_listing_says_it_was_cut);
     RUN_TEST(an_archive_carrying_modules_main_is_refused);
     RUN_TEST(an_archive_without_an_entry_member_is_refused);
     RUN_TEST(an_archive_carrying_something_other_than_lua_is_refused);
