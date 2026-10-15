@@ -626,7 +626,8 @@ TEST an_unknown_module_is_refused_naming_what_the_plugin_carries(void) {
 TEST a_single_file_plugin_has_no_modules_to_name(void) {
     modules_loaded loaded = load_plugin_modules("daukle-file.toml");
     ASSERT_EQ(FR_ERR, loaded.status);
-    ASSERTm(loaded.message, strstr(loaded.message, "single file") != NULL);
+    ASSERTm(loaded.message, strstr(loaded.message, "has no module \"deps\" to load") != NULL);
+    ASSERTm(loaded.message, strstr(loaded.message, "daukle.require") == NULL);
     PASS();
 }
 
