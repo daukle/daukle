@@ -3,6 +3,7 @@
 
 #include "config/config_lua.h"
 #include "lua/lua_modules.h"
+#include "lua/lua_sandbox.h"
 #include "lua/luax.h"
 #include "util/error.h"
 
@@ -13,7 +14,7 @@
 
 static const char *BASE[] = {
     "assert", "error", "ipairs", "pairs", "next", "select", "tonumber", "tostring",
-    "type", "setmetatable", "getmetatable", "string", "table", "math", "_VERSION"
+    "type", "setmetatable", "getmetatable", "_VERSION"
 };
 
 static const char *KNOWN_VERBS[] = {
@@ -165,11 +166,17 @@ static int setmetatable_without_finalizers(lua_State *state) {
     return lua_gettop(state);
 }
 
+static const char *LIBRARY_TABLES[] = { "string", "table", "math" };
+
 static void push_base_globals(lua_State *state) {
     lua_newtable(state);
     for (size_t index = 0; index < sizeof BASE / sizeof BASE[0]; index++) {
         lua_getglobal(state, BASE[index]);
         lua_setfield(state, -2, BASE[index]);
+    }
+    for (size_t index = 0; index < sizeof LIBRARY_TABLES / sizeof LIBRARY_TABLES[0]; index++) {
+        fr_lua_push_library_copy(state, LIBRARY_TABLES[index]);
+        lua_setfield(state, -2, LIBRARY_TABLES[index]);
     }
     lua_getglobal(state, "setmetatable");
     lua_pushcclosure(state, setmetatable_without_finalizers, 1);

@@ -521,6 +521,23 @@ TEST a_plugin_execing_before_it_declares_is_refused_at_the_call(void) {
     PASS();
 }
 
+/* The project's daukle.lua runs before any plugin loads and may rebind the
+   library globals to anything; a plugin must still get the real libraries. */
+TEST a_plugin_gets_the_real_libraries_whatever_the_overlay_rebinds(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+
+    fr_manifest manifest;
+    int status = fr_config_load_file("test/fixtures/overlay-rebinds-libraries/daukle.toml",
+                                     registry, &manifest, &err);
+    if (status == FR_OK) fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    ASSERTm(err.message, status == FR_OK);
+    PASS();
+}
+
 TEST a_chunk_may_not_set_a_finalizer(void) {
     fr_error err;
     fr_registry *registry = NULL;
@@ -3095,6 +3112,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_chunk_may_declare_a_source_beside_a_toolchain_with_exec);
     RUN_TEST(a_plugin_execing_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_chunk_may_not_set_a_finalizer);
+    RUN_TEST(a_plugin_gets_the_real_libraries_whatever_the_overlay_rebinds);
     RUN_TEST(a_plugin_provisioning_before_it_declares_is_refused_at_the_call);
     RUN_TEST(a_language_plugin_declaring_tool_but_not_exec_still_loads);
     RUN_TEST(a_verb_uses_does_not_know_is_refused);
