@@ -215,67 +215,6 @@ int fr_plugins_acquire_source(const fr_plugin_entry *entry, const fr_resolver_en
     return FR_OK;
 }
 
-static int load_one(const fr_plugin_entry *entry, const fr_resolver_entry *resolvers,
-                    size_t resolver_count, fr_error *err) {
-    char *origin = NULL;
-    char *text = NULL;
-    char *resolved = NULL;
-    size_t length = 0;
-    char digest[65];
-    fr_plugin_source *source = NULL;
-    if (fr_plugins_acquire_source(entry, resolvers, resolver_count, &text, &length, &origin,
-                                  &resolved, digest, &source, err)
-        != FR_OK) {
-        return FR_ERR;
-    }
-
-    /* The digest above covers the whole artifact; what RUNS is its entry, which
-       for an archive is one member of it. */
-    const char *chunk = NULL;
-    size_t chunk_length = 0;
-    int status = fr_plugin_source_entry(source, &chunk, &chunk_length, err);
-
-    lua_State *state = fr_lua_runtime_state();
-    fr_plugin_declaration declaration;
-    memset(&declaration, 0, sizeof declaration);
-    declaration.kind = "plugin";
-    declaration.label = entry->label;
-    if (status == FR_OK) {
-        status = fr_plugins_declaration_read(state, chunk, chunk_length, origin, &declaration,
-                                             err);
-    }
-
-    fr_plugin_deps *deps = NULL;
-    if (status == FR_OK) {
-        status = fr_plugin_deps_acquire(&declaration, entry->overrides, resolvers, resolver_count,
-                                        &deps, err);
-    }
-    if (status == FR_OK) {
-        fr_lua_verbs_set_declared_env((const char *const *) declaration.env,
-                                      declaration.env_count);
-        fr_lua_declare_set_required_aliases(declaration.requires, declaration.requires_count);
-        status = fr_lua_plugin_load(chunk, chunk_length, origin,
-                                    (const char *const *) declaration.uses,
-                                    declaration.uses_count, source, deps, err);
-        fr_lua_declare_set_required_aliases(NULL, 0);
-        fr_lua_verbs_set_declared_env(NULL, 0);
-    }
-    if (status == FR_OK) {
-        status = fr_plugins_report_append(entry, origin, resolved, digest, &declaration, err);
-    }
-    if (status == FR_OK) {
-        status = fr_plugins_report_append_dependencies(deps, err);
-    }
-
-    fr_plugin_deps_close(deps);
-    fr_plugins_free_declaration(&declaration);
-    fr_plugin_source_close(source);
-    free(text);
-    free(origin);
-    free(resolved);
-    return status;
-}
-
 int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const char *base_dir,
                     fr_error *err) {
     fr_plugins_report_clear();
@@ -295,7 +234,7 @@ int fr_plugins_load(fr_registry *registry, const struct cJSON *document, const c
     if (status == FR_OK && count > 0) {
         status = fr_lua_runtime_begin(base_dir, registry, err);
         for (size_t index = 0; index < count && status == FR_OK; index++) {
-            status = load_one(&entries[index], resolvers, resolver_count, err);
+            status = fr_plugins_load_entry(&entries[index], resolvers, resolver_count, err);
         }
     }
 

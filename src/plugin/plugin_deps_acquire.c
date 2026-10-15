@@ -312,6 +312,12 @@ static int validate_overrides(const fr_plugin_declaration *declaration, const cJ
                          label, alias, declared_aliases);
             return FR_ERR;
         }
+        if (cJSON_IsObject(entry) && cJSON_GetObjectItemCaseSensitive(entry, "modules") != NULL) {
+            fr_error_set(err, "plugin \"%s\": requires[\"%s\"] names modules, which an override"
+                              " cannot use: only a dependency's declaration is read, never its"
+                              " modules", label, alias);
+            return FR_ERR;
+        }
         if (cJSON_IsObject(entry) && cJSON_GetObjectItemCaseSensitive(entry, "requires") != NULL) {
             fr_error_set(err, "plugin \"%s\": requires[\"%s\"] names its own requires, which is"
                               " reserved: [plugins.%s.requires.%s.requires] is not a supported"

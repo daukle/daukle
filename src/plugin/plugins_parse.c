@@ -62,7 +62,7 @@ static int parse_string_form(const char *label, const char *value,
    "asset" reads as doing something because the resolver really does read a key
    of that name, just never from here. D-44. */
 static const char *const PLUGIN_ENTRY_KEYS[] = {
-    "requires", "sha256", "path", "url", "resolver", "coordinate"
+    "requires", "sha256", "path", "url", "resolver", "coordinate", "modules"
 };
 
 static int plugin_entry_key_is_known(const char *name) {
@@ -85,10 +85,64 @@ static int refuse_an_unknown_entry_key(const char *label, const cJSON *member, f
                               " nothing. Declare a second resolver carrying it", label);
         } else {
             fr_error_set(err, "plugin \"%s\": \"%s\" is not a key a plugin entry defines; it"
-                              " takes path, url, resolver, coordinate, sha256 and requires",
-                         label, field->string);
+                              " takes path, url, resolver, coordinate, sha256, requires and"
+                              " modules", label, field->string);
         }
         return FR_ERR;
+    }
+    return FR_OK;
+}
+
+static int module_name_is_plain(const char *name) {
+    if (name[0] == '\0' || strlen(name) > 32) return 0;
+    for (const char *cursor = name; *cursor != '\0'; cursor++) {
+        char c = *cursor;
+        int plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                    || c == '-' || c == '_';
+        if (!plain) return 0;
+    }
+    return 1;
+}
+
+static int module_already_named(const fr_plugin_entry *out, const char *name) {
+    for (size_t index = 0; index < out->module_count; index++) {
+        if (strcmp(out->modules[index], name) == 0) return 1;
+    }
+    return 0;
+}
+
+static int parse_modules(const char *label, const cJSON *member, fr_plugin_entry *out,
+                         fr_error *err) {
+    const cJSON *list = cJSON_GetObjectItemCaseSensitive(member, "modules");
+    if (list == NULL) return FR_OK;
+    if (!cJSON_IsArray(list)) {
+        fr_error_set(err, "plugin \"%s\": \"modules\" must be a list of module names", label);
+        return FR_ERR;
+    }
+    if (cJSON_GetArraySize(list) == 0) {
+        fr_error_set(err, "plugin \"%s\": \"modules\" names no module; leave it out to load"
+                          " the plugin's main chunk", label);
+        return FR_ERR;
+    }
+    for (const cJSON *item = list->child; item != NULL; item = item->next) {
+        if (!cJSON_IsString(item) || !module_name_is_plain(item->valuestring)) {
+            fr_error_set(err, "plugin \"%s\": every \"modules\" entry is a name of letters,"
+                              " digits, - and _, at most 32 long", label);
+            return FR_ERR;
+        }
+        if (module_already_named(out, item->valuestring)) {
+            fr_error_set(err, "plugin \"%s\": \"modules\" names \"%s\" twice", label,
+                         item->valuestring);
+            return FR_ERR;
+        }
+        if (out->module_count == FR_PLUGIN_MAX_MODULES) {
+            fr_error_set(err, "plugin \"%s\": \"modules\" names more than %d modules", label,
+                         FR_PLUGIN_MAX_MODULES);
+            return FR_ERR;
+        }
+        out->modules[out->module_count] = fr_dup_string(item->valuestring);
+        if (out->modules[out->module_count] == NULL) return fr_plugins_out_of_memory(label, err);
+        out->module_count++;
     }
     return FR_OK;
 }
@@ -96,6 +150,7 @@ static int refuse_an_unknown_entry_key(const char *label, const cJSON *member, f
 static int parse_table_form(const char *label, const cJSON *member, fr_plugin_entry *out,
                             fr_error *err) {
     if (refuse_an_unknown_entry_key(label, member, err) != FR_OK) return FR_ERR;
+    if (parse_modules(label, member, out, err) != FR_OK) return FR_ERR;
 
     /* Not validated here: plugin_deps.c is the sole reader, and validating an
        absent table would tax the common case (no requires at all) for
@@ -235,6 +290,7 @@ void fr_plugins_free_entry(fr_plugin_entry *entry) {
     free(entry->resolver);
     free(entry->coordinate);
     free(entry->sha256);
+    for (size_t index = 0; index < entry->module_count; index++) free(entry->modules[index]);
     memset(entry, 0, sizeof *entry);
 }
 

@@ -1,0 +1,12 @@
+schema = 1
+project = "forebay/plugin-modules-overrides"
+version = "1.0.0"
+
+[modules]
+
+[plugins.modular]
+path = "./plugins"
+modules = ["main", "deps"]
+
+[plugins.modular.requires]
+helper = { path = "./helper" }
