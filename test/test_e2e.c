@@ -526,6 +526,29 @@ TEST a_task_runs_its_child_in_the_derived_directory(void) {
     PASS();
 }
 
+/* The D-137 reproduction without the credential: one plugin and the project's
+   own daukle.lua each replace string.format, and another plugin's task must
+   still get the library's, through a call and through a method. */
+TEST a_function_planted_in_a_library_table_never_runs_in_another_plugins_task(void) {
+    fr_error err;
+    fr_session session;
+    ASSERT_EQ(FR_OK, fr_session_open("test/fixtures/library-tables-cross-plugin/daukle.toml", 1,
+                                     &session, &err));
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "victim:check", &plan, &err));
+
+    err.message[0] = '\0';
+    int status = fr_tasks_run(&plan, &session, &err);
+
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    ASSERTm(err.message, status == FR_OK);
+    PASS();
+}
+
 /* One chunk holds a source whose load execs and a task that execs. The task
    running after the refused load is what proves the gate was left closed. */
 TEST a_task_still_execs_after_its_chunks_source_was_refused(void) {
@@ -1028,6 +1051,7 @@ int main(int argc, char **argv) {
     RUN_TEST(no_cache_bypasses_both_the_read_and_the_write);
     RUN_TEST(the_same_manifest_in_two_formats_writes_the_same_file);
     RUN_TEST(a_task_runs_its_child_in_the_derived_directory);
+    RUN_TEST(a_function_planted_in_a_library_table_never_runs_in_another_plugins_task);
     RUN_TEST(a_task_still_execs_after_its_chunks_source_was_refused);
     RUN_TEST(a_task_child_inherits_a_credential_its_plugin_declared);
     RUN_TEST(a_manifest_task_runs_a_program_from_a_real_manifest);

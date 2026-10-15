@@ -489,6 +489,94 @@ TEST a_finalizer_added_after_setmetatable_never_runs(void) {
     PASS();
 }
 
+/* Two plugins share one lua_State, so a library table they could both write
+   would let one plugin's function run inside the other's task, under that
+   task's grant. D-137. */
+TEST a_plugin_replacing_a_library_function_does_not_reach_another_plugin(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int first = lua_gettop(state);
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int second = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "string.format = function() return 'replaced' end\n"
+        "table.concat = function() return 'replaced' end\n"
+        "math.floor = function() return 'replaced' end",
+        "=first", first, &err));
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "formatted = string.format('%d', 7)\n"
+        "joined = table.concat({ 'a', 'b' })\n"
+        "floored = math.floor(2.5)",
+        "=second", second, &err));
+
+    lua_getfield(state, second, "formatted");
+    ASSERT_STR_EQ("7", lua_tostring(state, -1));
+    lua_getfield(state, second, "joined");
+    ASSERT_STR_EQ("ab", lua_tostring(state, -1));
+    lua_getfield(state, second, "floored");
+    ASSERT_EQ(2, (int) lua_tointeger(state, -1));
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST a_library_environment_gets_its_own_library_tables(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_library_env(state, "dependent", "member", &err));
+    int library = lua_gettop(state);
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int plugin = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "string.rep = function() return 'replaced' end", "=library", library, &err));
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state, "repeated = string.rep('a', 3)", "=plugin",
+                                       plugin, &err));
+    lua_getfield(state, plugin, "repeated");
+    ASSERT_STR_EQ("aaa", lua_tostring(state, -1));
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+/* A string's methods come from the one string metatable every environment
+   shares, so it must be out of reach while method calls keep working. */
+TEST the_string_metatable_is_locked_and_methods_still_work(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, NULL, 0, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
+        "locked = getmetatable('') == false\n"
+        "formatted = ('%d-%s'):format(3, 'x')\n"
+        "upper = ('abc'):upper()",
+        "=t", env, &err));
+    lua_getfield(state, env, "locked");
+    ASSERT(lua_toboolean(state, -1));
+    lua_getfield(state, env, "formatted");
+    ASSERT_STR_EQ("3-x", lua_tostring(state, -1));
+    lua_getfield(state, env, "upper");
+    ASSERT_STR_EQ("ABC", lua_tostring(state, -1));
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 TEST tool_names_what_it_could_not_find(void) {
     fr_error err;
     fr_registry *registry = fr_registry_create();
@@ -2933,6 +3021,9 @@ int main(int argc, char **argv) {
     RUN_TEST(setmetatable_without_a_finalizer_still_works);
     RUN_TEST(setmetatable_still_raises_on_a_protected_metatable_and_a_bad_argument);
     RUN_TEST(a_finalizer_added_after_setmetatable_never_runs);
+    RUN_TEST(a_plugin_replacing_a_library_function_does_not_reach_another_plugin);
+    RUN_TEST(a_library_environment_gets_its_own_library_tables);
+    RUN_TEST(the_string_metatable_is_locked_and_methods_still_work);
     RUN_TEST(tool_names_what_it_could_not_find);
     RUN_TEST(tool_refuses_a_name_that_climbs_out);
     RUN_TEST(tool_refuses_an_absolute_looking_name);

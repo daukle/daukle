@@ -22,6 +22,13 @@ int fr_lua_sandbox_install(lua_State *state, const char *base_dir, char **out_ca
    caller owns *out. */
 int fr_lua_sandbox_canonical_dir(const char *path, char **out, fr_error *err);
 
+/* Pushes a fresh shallow copy of the standard library NAME ("string",
+   "table" or "math"), read from the registry's loaded-library table rather
+   than from the globals, which a project's daukle.lua may have rebound to
+   anything before any plugin loads. Every environment gets its own copy, so
+   no environment can plant a function another one calls. D-137. */
+void fr_lua_push_library_copy(lua_State *state, const char *name);
+
 /* A copy of the canonical base this state resolves against, for the one
    caller that must CREATE a directory before it can be resolved: every
    resolve canonicalises, and canonicalising a path that does not exist yet
