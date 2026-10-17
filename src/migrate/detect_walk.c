@@ -4,6 +4,7 @@
 #include "util/tree.h"
 
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <string.h>
 
 #define DERIVED_ROOT_RELATIVE_PATH "build/daukle"
@@ -22,9 +23,11 @@ static void collect_entry(const char *name, int is_directory, int is_link, void 
     fr_detect_listing *listing = context;
     if (listing->failed) return;
     int rc;
-    if (!is_directory) {
+    if (is_link) {
+        return;
+    } else if (!is_directory) {
         rc = push_name(&listing->files, &listing->file_count, name);
-    } else if (is_link || name[0] == '.') {
+    } else if (name[0] == '.') {
         return;
     } else {
         rc = push_name(&listing->subdirectories, &listing->subdirectory_count, name);
@@ -92,6 +95,15 @@ static int walk_directory(fr_detect_run *run, const char *root, const char *rela
     return rc;
 }
 
+static int is_directory_path(const char *path) {
+    struct stat info;
+    return stat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFDIR;
+}
+
 int fr_detect_walk(fr_detect_run *run, const char *root, fr_error *err) {
+    if (!is_directory_path(root)) {
+        fr_error_set(err, "cannot detect plugins in %s: it is not a readable directory", root);
+        return FR_ERR;
+    }
     return walk_directory(run, root, "", 0, err);
 }

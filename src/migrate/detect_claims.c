@@ -58,8 +58,7 @@ typedef struct {
 
 static void probe_entry(const char *name, int is_directory, int is_link, void *context) {
     probe *state = context;
-    (void) is_link;
-    if (!is_directory && strcmp(name, state->name) == 0) state->found_regular = 1;
+    if (!is_directory && !is_link && strcmp(name, state->name) == 0) state->found_regular = 1;
 }
 
 static int is_regular_file(const char *path) {

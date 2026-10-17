@@ -172,12 +172,9 @@ int fr_detect(const char *root, const fr_catalog *catalog, const char *const *wi
     }
     int rc = fr_detect_walk(&run, root, err);
     lua_close(run.patterns);
+    if (rc == FR_OK) rc = collapse_to_outermost(out, err);
     if (rc == FR_OK) rc = add_with_at_root(catalog, with, with_count, out, err);
     if (rc != FR_OK) {
-        fr_detections_free(out);
-        return FR_ERR;
-    }
-    if (collapse_to_outermost(out, err) != FR_OK) {
         fr_detections_free(out);
         return FR_ERR;
     }

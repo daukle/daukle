@@ -24,13 +24,11 @@ typedef struct {
 /* Walks root, evaluates every catalog plugin's rules, settles claims on the
    same file (a contains match beats a name-only match, then the earlier
    catalog, and a remaining tie is an error naming every claimant unless one of
-   them is in with), adds every id in with at the root, and collapses each
-   plugin's matches to the outermost directories. An id in with that no catalog
-   lists is an error naming it. The result is sorted by catalog order, then by
-   directory.
-
-   @implNote with is applied before the collapse, so a plugin named in with and
-   also found in a subdirectory is reported once, at the root. */
+   them is in with), collapses each plugin's matches to the outermost
+   directories, and adds every id in with at the root. An id in with that no
+   catalog lists is an error naming it, and so is a root that is not a
+   directory. Links are never followed. The result is sorted by catalog order,
+   then by directory. */
 int fr_detect(const char *root, const fr_catalog *catalog, const char *const *with,
               size_t with_count, fr_detections *out, fr_error *err);
 
