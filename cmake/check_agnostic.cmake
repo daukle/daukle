@@ -24,7 +24,8 @@ set(CORE_FILES
     migrate/catalog.c migrate/catalog.h migrate/catalog_entry.c migrate/catalog_internal.h
     migrate/detect.c migrate/detect.h migrate/detect_claims.c migrate/detect_internal.h migrate/detect_walk.c
     config/toml_write.c config/toml_write.h
-    migrate/result.c migrate/result.h migrate/result_check.c migrate/merge.c migrate/merge.h)
+    migrate/result.c migrate/result.h migrate/result_check.c migrate/merge.c migrate/merge.h
+    migrate/proof.c migrate/proof.h)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"

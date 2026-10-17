@@ -2,6 +2,7 @@
 
 #include "config/jsonx.h"
 #include "config/manifest.h"
+#include "migrate/proof.h"
 #include "util/error.h"
 
 #include "cJSON.h"
@@ -144,7 +145,8 @@ static int check_compare_entry(const cJSON *entry, const char *who, fr_error *er
     if (!cJSON_IsObject(entry) || !is_string(old_path) || !is_string(new_path) || !is_string(kind)) {
         return malformed(err, who, "proof.compare", "must hold { old, new, as } entries");
     }
-    if (strcmp(kind->valuestring, "bytes") != 0 && strcmp(kind->valuestring, "archive") != 0) {
+    fr_proof_kind parsed_kind;
+    if (fr_proof_kind_parse(kind->valuestring, &parsed_kind) != FR_OK) {
         fr_error_set(err, "%s returned a malformed result: proof.compare \"as\" is \"%s\", and"
                           " must be \"bytes\" or \"archive\"", who, kind->valuestring);
         return FR_ERR;
