@@ -163,7 +163,7 @@ static void make_parent_directories(const char *target) {
     free(parent);
 }
 
-static int move_one(const char *path, fr_strbuf *moved, fr_error *err) {
+static int move_one(const char *path, fr_error *err) {
     char *target = old_home_of(path);
     if (target == NULL) {
         fr_error_set(err, "out of memory moving \"%s\" aside", path);
@@ -172,36 +172,121 @@ static int move_one(const char *path, fr_strbuf *moved, fr_error *err) {
     make_parent_directories(target);
     int status = FR_OK;
     if (rename(path, target) != 0) {
-        char *already = fr_strbuf_release(moved);
-        fr_strbuf_init(moved);
-        fr_error_set(err, "could not move \"%s\" to %s (%s); already moved there: %s", path,
-                     target, strerror(errno),
-                     already != NULL && already[0] != '\0' ? already : "nothing");
-        free(already);
+        fr_error_set(err, "could not move \"%s\" to %s (%s); what had already moved is listed"
+                          " above", path, target, strerror(errno));
         status = FR_ERR;
-    } else {
-        fr_strbuf_append_format(moved, "%s\"%s\"", moved->length == 0 ? "" : ", ", path);
     }
     free(target);
     return status;
 }
 
-/* A failed rename stops the move and names what had already gone, so the user
-   can tell which files are in build/daukle/migrate/old and which are not. */
+static void print_already_moved(const fr_migrate_state *state, size_t moved) {
+    fprintf(stderr, "daukle migrate: moving the old files stopped; already in " FR_MIGRATE_OLD_SHOWN
+                    ":%s\n", moved == 0 ? " nothing" : "");
+    for (size_t index = 0; moved > 0 && index < state->kept_count; index++) {
+        const cJSON *path = NULL;
+        cJSON_ArrayForEach(path, cJSON_GetObjectItemCaseSensitive(state->kept[index].result,
+                                                                  "owned")) {
+            if (moved == 0) break;
+            fprintf(stderr, "  %s\n", path->valuestring);
+            moved--;
+        }
+    }
+}
+
+/* fr_migrate_check_owned has refused every predictable failure before
+   anything was written, so a rename failing here is the filesystem's; every
+   path already moved is printed, since the error itself has room for one. */
 static int move_aside(const fr_migrate_state *state, fr_error *err) {
-    fr_strbuf moved;
-    fr_strbuf_init(&moved);
+    size_t moved = 0;
     for (size_t index = 0; index < state->kept_count; index++) {
         const cJSON *path = NULL;
         cJSON_ArrayForEach(path, cJSON_GetObjectItemCaseSensitive(state->kept[index].result,
                                                                   "owned")) {
-            if (move_one(path->valuestring, &moved, err) != FR_OK) {
-                fr_strbuf_free(&moved);
+            if (move_one(path->valuestring, err) != FR_OK) {
+                print_already_moved(state, moved);
                 return FR_ERR;
             }
+            moved++;
         }
     }
-    fr_strbuf_free(&moved);
+    return FR_OK;
+}
+
+static int path_exists(const char *path) {
+    return fr_cache_file_exists(path) || fr_cache_directory_exists(path);
+}
+
+static int fold(int character) {
+    return character >= 'A' && character <= 'Z' ? character - 'A' + 'a' : character;
+}
+
+/* Equal, or one a directory holding the other. Case is folded because the
+   owned-path refusal folds it: on a case-insensitive disk the two are one. */
+static int paths_nest(const char *left, const char *right) {
+    size_t index = 0;
+    while (left[index] != '\0' && right[index] != '\0'
+           && fold((unsigned char) left[index]) == fold((unsigned char) right[index])) {
+        index++;
+    }
+    if (left[index] == '\0' && right[index] == '\0') return 1;
+    if (left[index] == '\0') return right[index] == '/';
+    if (right[index] == '\0') return left[index] == '/';
+    return 0;
+}
+
+static int owned_blocker(fr_migrate_state *state, const char *label, const char *path,
+                         const char *why, fr_error *err) {
+    char source[512];
+    snprintf(source, sizeof source, "migrator %s", label);
+    return fr_blockers_add(&state->blockers, source, "owned", path, why, NULL, err);
+}
+
+static int nests_in_another(const fr_migrate_state *state, size_t kept_index,
+                            const cJSON *path) {
+    for (size_t index = 0; index <= kept_index; index++) {
+        const cJSON *other = NULL;
+        cJSON_ArrayForEach(other, cJSON_GetObjectItemCaseSensitive(state->kept[index].result,
+                                                                   "owned")) {
+            if (other == path) return 0;
+            if (paths_nest(other->valuestring, path->valuestring)) return 1;
+        }
+    }
+    return 0;
+}
+
+static int check_one_owned(fr_migrate_state *state, size_t kept_index, const cJSON *path,
+                           fr_error *err) {
+    const char *label = state->kept[kept_index].label;
+    const char *text = path->valuestring;
+    if (!path_exists(text)) {
+        return owned_blocker(state, label, text, "the migrator hands it back to be moved aside,"
+                                                 " but it does not exist", err);
+    }
+    if (nests_in_another(state, kept_index, path)) {
+        return owned_blocker(state, label, text, "it is, or lies inside, another owned path, so"
+                                                 " moving both aside cannot succeed", err);
+    }
+    char *target = old_home_of(text);
+    if (target == NULL) {
+        fr_error_set(err, "out of memory checking where \"%s\" would be moved", text);
+        return FR_ERR;
+    }
+    int taken = path_exists(target);
+    free(target);
+    if (!taken) return FR_OK;
+    return owned_blocker(state, label, text, "an earlier migration's copy already sits at its"
+                                             " place in " FR_MIGRATE_OLD_SHOWN, err);
+}
+
+int fr_migrate_check_owned(fr_migrate_state *state, fr_error *err) {
+    for (size_t index = 0; index < state->kept_count; index++) {
+        const cJSON *path = NULL;
+        cJSON_ArrayForEach(path, cJSON_GetObjectItemCaseSensitive(state->kept[index].result,
+                                                                  "owned")) {
+            if (check_one_owned(state, index, path, err) != FR_OK) return FR_ERR;
+        }
+    }
     return FR_OK;
 }
 

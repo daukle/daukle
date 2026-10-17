@@ -579,7 +579,9 @@ TEST a_seventeenth_catalog_is_usage(void) {
         argv[2 + index * 2] = "--catalog";
         argv[3 + index * 2] = "c.json";
     }
-    ASSERT_EQ(FR_CLI_USAGE, parse(2 + 17 * 2, argv).command);
+    fr_cli_options seventeen = parse(2 + 17 * 2, argv);
+    ASSERT_EQ(FR_CLI_USAGE, seventeen.command);
+    ASSERT(fr_cli_migrate_option_misused(&seventeen) == NULL);
 
     const char *sixteen[2 + 16 * 2];
     for (int index = 0; index < 2 + 16 * 2; index++) sixteen[index] = argv[index];
@@ -588,8 +590,10 @@ TEST a_seventeenth_catalog_is_usage(void) {
 }
 
 TEST migrate_takes_no_second_word(void) {
-    const char *argv[] = { "daukle", "migrate", "extra" };
-    ASSERT_EQ(FR_CLI_USAGE, parse(3, argv).command);
+    const char *argv[] = { "daukle", "migrate", "--catalog", "x", "extra" };
+    fr_cli_options options = parse(5, argv);
+    ASSERT_EQ(FR_CLI_USAGE, options.command);
+    ASSERT(fr_cli_migrate_option_misused(&options) == NULL);
     PASS();
 }
 

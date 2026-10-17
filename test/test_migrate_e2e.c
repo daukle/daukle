@@ -241,9 +241,11 @@ static int refuses_with_manifests(const char *label, const char *const *files, s
 
 TEST migrate_refuses_a_project_that_has_a_manifest(void) {
     const char *toml[] = { "daukle.toml" };
+    const char *lua[] = { "daukle.lua" };
     const char *both[] = { "daukle.toml", "daukle.lua" };
     ASSERT(refuses_with_manifests("manifest", toml, 1, "already holds"));
     ASSERT(refuses_with_manifests("manifest-toml", toml, 1, "daukle.toml"));
+    ASSERT(refuses_with_manifests("manifest-lua", lua, 1, "already holds daukle.lua;"));
     ASSERT(refuses_with_manifests("both", both, 2, "daukle.toml and daukle.lua"));
     PASS();
 }
@@ -323,17 +325,17 @@ TEST an_unclaimed_foreign_plugin_is_a_blocker(void) {
     PASS();
 }
 
-TEST a_translator_carries_a_foreign_plugin_over(void) {
-    migrate_case test_case;
-    open_case(&test_case, "translator", "hello");
-    char stub_digest[65];
+/* The stub, detected, and "releaser", detected by nothing and claiming the
+   foreign plugin org.example.release in its replaces. */
+static void serve_releaser_catalog(migrate_case *test_case, const char *stub_fixture,
+                                   const char *releaser_fixture) {
     char stub_url[256];
     char releaser_digest[65];
     char releaser_url[256];
-    serve_plugin(&test_case, "/stub.lua", FIXTURES "/plugin-foreign.lua", stub_digest, stub_url,
+    serve_plugin(test_case, "/stub.lua", stub_fixture, test_case->stub_digest, stub_url,
                  sizeof stub_url);
-    serve_plugin(&test_case, "/releaser.lua", FIXTURES "/releaser.lua", releaser_digest,
-                 releaser_url, sizeof releaser_url);
+    serve_plugin(test_case, "/releaser.lua", releaser_fixture, releaser_digest, releaser_url,
+                 sizeof releaser_url);
     char catalog[CATALOG_SIZE];
     snprintf(catalog, sizeof catalog,
              "{\"plugins\":["
@@ -341,8 +343,14 @@ TEST a_translator_carries_a_foreign_plugin_over(void) {
              "\"detect\":[{\"files\":[\"faketool.conf\"]}]},"
              "{\"id\":\"releaser\",\"asset\":{\"url\":\"%s\",\"sha256\":\"%s\"},"
              "\"replaces\":{\"faketool\":{\"plugins\":[\"org.example.release\"]}}}]}",
-             stub_url, stub_digest, releaser_url, releaser_digest);
-    fr_test_server_add_body(test_case.server, "/catalog.json", catalog);
+             stub_url, test_case->stub_digest, releaser_url, releaser_digest);
+    fr_test_server_add_body(test_case->server, "/catalog.json", catalog);
+}
+
+TEST a_translator_carries_a_foreign_plugin_over(void) {
+    migrate_case test_case;
+    open_case(&test_case, "translator", "hello");
+    serve_releaser_catalog(&test_case, FIXTURES "/plugin-foreign.lua", FIXTURES "/releaser.lua");
     run_case(&test_case);
 
     char *manifest = project_text(&test_case, "daukle.toml");
@@ -359,6 +367,96 @@ TEST a_translator_carries_a_foreign_plugin_over(void) {
     ASSERT(has_publish);
     ASSERT(from_instance);
     ASSERT(has_releaser);
+    PASS();
+}
+
+TEST a_translator_from_a_plugin_other_than_the_replacer_does_not_answer(void) {
+    migrate_case test_case;
+    open_case(&test_case, "foreigntranslator", "hello");
+    serve_releaser_catalog(&test_case, FIXTURES "/plugin-foreign-self.lua",
+                           FIXTURES "/releaser-bare.lua");
+    run_case(&test_case);
+    int status = test_case.status;
+    fr_migrate_outcome outcome = test_case.outcome;
+    int explained = printed_holds(&test_case, "releaser claims faketool org.example.release in"
+                                              " its catalog but declares no translator for it");
+    int wrote = project_file_exists(&test_case, "daukle.toml");
+    close_case(&test_case);
+
+    ASSERT_EQm(last_message, FR_OK, status);
+    ASSERT_EQm(last_message, FR_MIGRATE_BLOCKED, outcome);
+    ASSERTm(last_message, explained);
+    ASSERT_FALSE(wrote);
+    PASS();
+}
+
+typedef struct {
+    int status;
+    fr_migrate_outcome outcome;
+    int wrote;
+    int untouched;
+    int explained;
+} owned_answer;
+
+/* occupied names a file to plant in build/daukle/migrate/old first, or NULL. */
+static owned_answer run_owned_case(const char *label, const char *fixture, const char *occupied,
+                                   const char *needle) {
+    migrate_case test_case;
+    open_case(&test_case, label, "hello");
+    serve_stub_catalog(&test_case, fixture, "faketool.conf");
+    if (occupied != NULL) {
+        const char *directories[] = { "build", "build/daukle", "build/daukle/migrate",
+                                      "build/daukle/migrate/old" };
+        char path[1024];
+        for (size_t index = 0; index < sizeof directories / sizeof *directories; index++) {
+            project_path(&test_case, directories[index], path, sizeof path);
+            fr_test_make_directory(path);
+        }
+        project_path(&test_case, occupied, path, sizeof path);
+        write_bytes(path, "an earlier copy\n");
+    }
+    run_case(&test_case);
+    owned_answer answer;
+    answer.status = test_case.status;
+    answer.outcome = test_case.outcome;
+    answer.wrote = project_file_exists(&test_case, "daukle.toml");
+    answer.untouched = old_files_still_in_place(&test_case);
+    answer.explained = printed_holds(&test_case, needle);
+    close_case(&test_case);
+    return answer;
+}
+
+TEST an_owned_path_that_does_not_exist_writes_nothing(void) {
+    owned_answer answer = run_owned_case("ownedmissing", FIXTURES "/plugin-owned-missing.lua",
+                                         NULL, "absent.txt");
+    ASSERT_EQm(last_message, FR_OK, answer.status);
+    ASSERT_EQm(last_message, FR_MIGRATE_BLOCKED, answer.outcome);
+    ASSERT_FALSE(answer.wrote);
+    ASSERT(answer.untouched);
+    ASSERTm(last_message, answer.explained);
+    PASS();
+}
+
+TEST nested_owned_paths_write_nothing(void) {
+    owned_answer answer = run_owned_case("ownednested", FIXTURES "/plugin-owned-nested.lua",
+                                         NULL, "out/greeting.txt");
+    ASSERT_EQm(last_message, FR_OK, answer.status);
+    ASSERT_EQm(last_message, FR_MIGRATE_BLOCKED, answer.outcome);
+    ASSERT_FALSE(answer.wrote);
+    ASSERT(answer.untouched);
+    ASSERTm(last_message, answer.explained);
+    PASS();
+}
+
+TEST an_occupied_place_in_the_old_directory_writes_nothing(void) {
+    owned_answer answer = run_owned_case("ownedoccupied", FIXTURES "/plugin.lua",
+                                         "build/daukle/migrate/old/faketool.conf",
+                                         "an earlier migration's copy");
+    ASSERT_EQm(last_message, FR_OK, answer.status);
+    ASSERT_EQm(last_message, FR_MIGRATE_BLOCKED, answer.outcome);
+    ASSERT_FALSE(answer.wrote);
+    ASSERT(answer.untouched);
+    ASSERTm(last_message, answer.explained);
     PASS();
 }
 
@@ -481,6 +579,10 @@ int main(int argc, char **argv) {
     RUN_TEST(a_blocker_writes_nothing);
     RUN_TEST(an_unclaimed_foreign_plugin_is_a_blocker);
     RUN_TEST(a_translator_carries_a_foreign_plugin_over);
+    RUN_TEST(a_translator_from_a_plugin_other_than_the_replacer_does_not_answer);
+    RUN_TEST(an_owned_path_that_does_not_exist_writes_nothing);
+    RUN_TEST(nested_owned_paths_write_nothing);
+    RUN_TEST(an_occupied_place_in_the_old_directory_writes_nothing);
     RUN_TEST(a_candidate_with_no_asset_is_a_blocker);
     RUN_TEST(a_failed_proof_keeps_the_manifest_and_moves_nothing);
     RUN_TEST(clean_refuses_while_a_migration_is_unfinished);

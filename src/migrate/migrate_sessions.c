@@ -222,6 +222,9 @@ static int translate(fr_migrate_state *state, const fr_registry *registry,
     char where[FR_MIGRATE_TEXT_SIZE];
     snprintf(where, sizeof where, "%s %s", kept->tool, id);
     const fr_translator_plugin *translator = fr_registry_translator(registry, kept->tool, id);
+    if (translator != NULL && strcmp(translator->label, record->replacer->id) != 0) {
+        translator = NULL;
+    }
     if (translator == NULL) {
         char why[FR_MIGRATE_TEXT_SIZE];
         snprintf(why, sizeof why, "%s claims %s %s in its catalog but declares no translator for it",

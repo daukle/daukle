@@ -40,7 +40,7 @@ static int append_repeated(const char **list, size_t *count, size_t capacity, co
 }
 
 const char *fr_cli_migrate_option_misused(const fr_cli_options *options) {
-    if (options->command == FR_CLI_MIGRATE) return NULL;
+    if (options->command == FR_CLI_MIGRATE || options->command == FR_CLI_USAGE) return NULL;
     if (options->catalog_count > 0) return "--catalog";
     if (options->with_count > 0) return "--with";
     if (options->migrate_done) return "--done";

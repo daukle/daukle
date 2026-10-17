@@ -74,7 +74,8 @@ typedef struct {
 void fr_cli_parse(int argc, char **argv, fr_cli_options *out);
 
 /* The first migrate-only option (--catalog, --with, --done) given to a command
-   other than migrate, or NULL. Here rather than in main.c so test_cli can pin
+   other than migrate, or NULL. NULL as well for a run that is already a usage
+   error, so the usage text is printed rather than a misleading refusal. Here rather than in main.c so test_cli can pin
    it; main.c refuses the run by that name. */
 const char *fr_cli_migrate_option_misused(const fr_cli_options *options);
 
