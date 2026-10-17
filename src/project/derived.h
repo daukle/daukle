@@ -16,6 +16,10 @@ typedef struct {
    files is two literals that disagree the day the layout gains a level. */
 #define FR_DERIVED_ROOT_RELATIVE "../../.."
 
+/* Where migrate keeps the old tool's files below the derived root until
+   "migrate --done"; clean refuses while it exists. */
+#define FR_DERIVED_MIGRATE_OLD_NAME "migrate/old"
+
 int fr_derived_root(const char *manifest_dir, char **out_dir, fr_error *err);
 int fr_derived_dir(const char *manifest_dir, const char *toolchain, char **out_dir, fr_error *err);
 

@@ -132,6 +132,26 @@ int fr_derived_root_is_contained(const char *canonical_base, const char *canonic
     return boundary == '/' || boundary == '\\';
 }
 
+/* The files a migration moved aside live nowhere else until "migrate --done",
+   so deleting the derived root would delete the user's only copy of them. */
+static int holds_unfinished_migration(const char *root, fr_error *err) {
+    size_t length = strlen(root) + sizeof "/" FR_DERIVED_MIGRATE_OLD_NAME;
+    char *old = malloc(length);
+    if (old == NULL) {
+        fr_error_set(err, "out of memory checking for an unfinished migration");
+        return 1;
+    }
+    snprintf(old, length, "%s/%s", root, FR_DERIVED_MIGRATE_OLD_NAME);
+    int unfinished = derived_root_exists(old);
+    free(old);
+    if (unfinished) {
+        fr_error_set(err, "build/daukle/migrate/old holds the files a migration replaced; run"
+                          " \"daukle migrate --done\" to delete them, or move them out, before"
+                          " cleaning");
+    }
+    return unfinished;
+}
+
 int fr_derived_clean(const char *manifest_dir, fr_error *err) {
     char *root = NULL;
     if (fr_derived_root(manifest_dir, &root, err) != FR_OK) return FR_ERR;
@@ -142,6 +162,11 @@ int fr_derived_clean(const char *manifest_dir, fr_error *err) {
     }
 
     const char *base = (manifest_dir == NULL || manifest_dir[0] == '\0') ? "." : manifest_dir;
+
+    if (holds_unfinished_migration(root, err)) {
+        free(root);
+        return FR_ERR;
+    }
 
     if (derived_root_is_link(root)) {
         fr_error_set(err, "the derived directory for \"%s\" is a link; refusing to delete anything",

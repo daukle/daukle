@@ -117,4 +117,14 @@ run_daukle("${tarred_dir}" 1 printed config print)
 expect_text("${printed}" "plugin \"modular\": there is no module \"nope\": the plugin's modules are deps"
             "a missing module in a tar")
 
-message(STATUS "check_cli_commands: tasks, config print, plugin update and add all ran")
+set(migrate_dir "${WORK_DIR}/migrate")
+file(MAKE_DIRECTORY "${migrate_dir}")
+unset(ENV{DAUKLE_CATALOGS})
+run_daukle("${migrate_dir}" 1 printed migrate)
+expect_text("${printed}" "DAUKLE_CATALOGS" "daukle migrate with no catalog")
+run_daukle("${migrate_dir}" 1 printed migrate --done)
+expect_text("${printed}" "no unfinished migration" "daukle migrate --done with nothing to finish")
+run_daukle("${project_dir}" 2 printed tasks --catalog x)
+expect_text("${printed}" "--catalog" "a migrate option given to tasks")
+
+message(STATUS "check_cli_commands: tasks, config print, plugin update, add and migrate all ran")

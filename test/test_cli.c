@@ -548,6 +548,70 @@ TEST publish_with_two_words_is_usage(void) {
     PASS();
 }
 
+TEST migrate_collects_every_catalog_and_with_in_order(void) {
+    const char *argv[] = { "daukle", "migrate", "--catalog", "a.json", "--with", "stub",
+                           "--catalog", "https://example.test/b.json" };
+    fr_cli_options options = parse(8, argv);
+    ASSERT_EQ(FR_CLI_MIGRATE, options.command);
+    ASSERT_EQ(2u, options.catalog_count);
+    ASSERT_STR_EQ("a.json", options.catalogs[0]);
+    ASSERT_STR_EQ("https://example.test/b.json", options.catalogs[1]);
+    ASSERT_EQ(1u, options.with_count);
+    ASSERT_STR_EQ("stub", options.with[0]);
+    ASSERT_EQ(0, options.migrate_done);
+    ASSERT(fr_tasks_name_is_reserved("migrate"));
+    PASS();
+}
+
+TEST migrate_done_is_parsed(void) {
+    const char *argv[] = { "daukle", "migrate", "--done" };
+    fr_cli_options options = parse(3, argv);
+    ASSERT_EQ(FR_CLI_MIGRATE, options.command);
+    ASSERT_EQ(1, options.migrate_done);
+    PASS();
+}
+
+TEST a_seventeenth_catalog_is_usage(void) {
+    const char *argv[2 + 17 * 2];
+    argv[0] = "daukle";
+    argv[1] = "migrate";
+    for (int index = 0; index < 17; index++) {
+        argv[2 + index * 2] = "--catalog";
+        argv[3 + index * 2] = "c.json";
+    }
+    ASSERT_EQ(FR_CLI_USAGE, parse(2 + 17 * 2, argv).command);
+
+    const char *sixteen[2 + 16 * 2];
+    for (int index = 0; index < 2 + 16 * 2; index++) sixteen[index] = argv[index];
+    ASSERT_EQ(FR_CLI_MIGRATE, parse(2 + 16 * 2, sixteen).command);
+    PASS();
+}
+
+TEST migrate_takes_no_second_word(void) {
+    const char *argv[] = { "daukle", "migrate", "extra" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(3, argv).command);
+    PASS();
+}
+
+TEST a_migrate_option_on_another_command_is_named(void) {
+    const char *catalog[] = { "daukle", "tasks", "--catalog", "x" };
+    fr_cli_options catalog_options = parse(4, catalog);
+    ASSERT_STR_EQ("--catalog", fr_cli_migrate_option_misused(&catalog_options));
+
+    const char *with[] = { "daukle", "sync", "--with", "stub" };
+    fr_cli_options with_options = parse(4, with);
+    ASSERT_STR_EQ("--with", fr_cli_migrate_option_misused(&with_options));
+
+    const char *done[] = { "daukle", "clean", "--done" };
+    fr_cli_options done_options = parse(3, done);
+    ASSERT_STR_EQ("--done", fr_cli_migrate_option_misused(&done_options));
+
+    const char *migrate[] = { "daukle", "migrate", "--catalog", "x", "--with", "stub" };
+    fr_cli_options migrate_options = parse(6, migrate);
+    ASSERT(fr_cli_migrate_option_misused(&migrate_options) == NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -603,5 +667,10 @@ int main(int argc, char **argv) {
     RUN_TEST(help_names_a_word_that_is_no_command);
     RUN_TEST(help_for_a_command_prints_its_synopsis);
     RUN_TEST(help_for_an_unknown_command_prints_nothing);
+    RUN_TEST(migrate_collects_every_catalog_and_with_in_order);
+    RUN_TEST(migrate_done_is_parsed);
+    RUN_TEST(a_seventeenth_catalog_is_usage);
+    RUN_TEST(migrate_takes_no_second_word);
+    RUN_TEST(a_migrate_option_on_another_command_is_named);
     GREATEST_MAIN_END();
 }

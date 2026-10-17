@@ -20,6 +20,7 @@ typedef enum {
     FR_CLI_PUBLISH,
     FR_CLI_INIT,
     FR_CLI_HELP,
+    FR_CLI_MIGRATE,
     FR_CLI_USAGE
 } fr_cli_command;
 
@@ -62,9 +63,20 @@ typedef struct {
     /* The word "help" was given that names no command, so the caller can say
        which one rather than print the list as though nothing was asked. */
     const char *help_unknown_topic;
+    /* --catalog, repeatable, and --with, repeatable, both for migrate alone. */
+    const char *catalogs[16];
+    size_t catalog_count;
+    const char *with[16];
+    size_t with_count;
+    int migrate_done;
 } fr_cli_options;
 
 void fr_cli_parse(int argc, char **argv, fr_cli_options *out);
+
+/* The first migrate-only option (--catalog, --with, --done) given to a command
+   other than migrate, or NULL. Here rather than in main.c so test_cli can pin
+   it; main.c refuses the run by that name. */
+const char *fr_cli_migrate_option_misused(const fr_cli_options *options);
 
 /* One row of the help, and the only place a command is described. The short
    usage and `daukle help <command>` are both rendered from this table, so help

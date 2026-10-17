@@ -197,6 +197,12 @@ int main(int argc, char **argv) {
     fr_lua_verbs_set_verbose(options.verbose);
     fr_lua_verbs_set_resolving(options.resolving);
 
+    const char *misused = fr_cli_migrate_option_misused(&options);
+    if (misused != NULL) {
+        fprintf(stderr, "daukle: %s is an option of \"migrate\" alone\n", misused);
+        return 2;
+    }
+
     switch (options.command) {
         case FR_CLI_VERSION:
             printf("daukle %s\n", fr_self_version());
@@ -221,6 +227,8 @@ int main(int argc, char **argv) {
             return fr_cli_run_publish(options.publish_name, options.use_cache, options.verbose);
         case FR_CLI_INIT:
             return run_init(options.init_name, options.verbose);
+        case FR_CLI_MIGRATE:
+            return fr_cli_migrate(&options);
         case FR_CLI_HELP:
             if (options.help_topic != NULL) {
                 fr_cli_print_help(stdout, options.help_topic);
