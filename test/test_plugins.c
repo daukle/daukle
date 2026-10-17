@@ -24,6 +24,46 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define MAX_LIVE_REGISTRIES 8
+
+/* What a case built and has not yet destroyed, so teardown can free what a failed assertion skipped. */
+static fr_registry *live_registries[MAX_LIVE_REGISTRIES];
+
+static fr_registry *track_registry(fr_registry *registry) {
+    for (size_t index = 0; index < MAX_LIVE_REGISTRIES; index++) {
+        if (live_registries[index] == NULL) {
+            live_registries[index] = registry;
+            break;
+        }
+    }
+    return registry;
+}
+
+static fr_registry *create_tracked_registry(void) {
+    fr_registry *registry = fr_registry_create();
+    return registry == NULL ? NULL : track_registry(registry);
+}
+
+static int build_tracked_registry(fr_registry **out, fr_error *err) {
+    int status = fr_build_registry(out, err);
+    if (status == FR_OK) track_registry(*out);
+    return status;
+}
+
+static void destroy_tracked_registry(fr_registry *registry) {
+    for (size_t index = 0; index < MAX_LIVE_REGISTRIES; index++) {
+        if (live_registries[index] == registry) live_registries[index] = NULL;
+    }
+    fr_registry_destroy(registry);
+}
+
+static void destroy_leaked_registries(void) {
+    for (size_t index = 0; index < MAX_LIVE_REGISTRIES; index++) {
+        fr_registry_destroy(live_registries[index]);
+        live_registries[index] = NULL;
+    }
+}
+
 static cJSON *document_from(const char *json) {
     cJSON *document = cJSON_Parse(json);
     return document;
@@ -392,7 +432,7 @@ TEST fr_project_parse_refuses_a_fetched_manifest_declaring_plugins(void) {
 TEST a_local_plugin_registers_its_language(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-local/daukle.toml",
@@ -401,7 +441,7 @@ TEST a_local_plugin_registers_its_language(void) {
     ASSERT(fr_registry_language(registry, "daukle.language/hello") != NULL);
 
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -424,7 +464,7 @@ TEST sync_writes_through_a_plugin_registered_language(void) {
 TEST a_verb_a_plugin_declared_is_there_when_it_runs(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-declared-verb/daukle.toml",
@@ -433,7 +473,7 @@ TEST a_verb_a_plugin_declared_is_there_when_it_runs(void) {
     ASSERT(fr_registry_language(registry, "daukle.language/brewfile") != NULL);
 
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -443,7 +483,7 @@ TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
 
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle-unknown-source.toml",
@@ -452,7 +492,7 @@ TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
     ASSERT(fr_lua_runtime_state() == NULL);
 
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -460,14 +500,14 @@ TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
 TEST a_language_plugin_may_declare_exec(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-language-declares-exec/daukle.toml",
                                          registry, &manifest, &err));
 
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -475,14 +515,14 @@ TEST a_language_plugin_may_declare_exec(void) {
 TEST a_source_plugin_may_declare_exec(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-source-declares-exec/daukle.toml",
                                          registry, &manifest, &err));
 
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -490,14 +530,14 @@ TEST a_source_plugin_may_declare_exec(void) {
 TEST a_chunk_may_declare_a_source_beside_a_toolchain_with_exec(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/source-beside-a-toolchain/daukle.toml",
                                          registry, &manifest, &err));
 
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -507,7 +547,7 @@ TEST a_chunk_may_declare_a_source_beside_a_toolchain_with_exec(void) {
 TEST a_plugin_execing_before_it_declares_is_refused_at_the_call(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/plugin-exec-before-declaring/daukle.toml",
@@ -516,7 +556,7 @@ TEST a_plugin_execing_before_it_declares_is_refused_at_the_call(void) {
            != NULL);
     ASSERT(strstr(err.message, "must be a tool handle") == NULL);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -526,13 +566,13 @@ TEST a_plugin_execing_before_it_declares_is_refused_at_the_call(void) {
 TEST a_plugin_gets_the_real_libraries_whatever_the_overlay_rebinds(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     int status = fr_config_load_file("test/fixtures/overlay-rebinds-libraries/daukle.toml",
                                      registry, &manifest, &err);
     if (status == FR_OK) fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERTm(err.message, status == FR_OK);
     PASS();
@@ -541,14 +581,14 @@ TEST a_plugin_gets_the_real_libraries_whatever_the_overlay_rebinds(void) {
 TEST a_chunk_may_not_set_a_finalizer(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/chunk-sets-gc/daukle.toml",
                                           registry, &manifest, &err));
     ASSERT(strstr(err.message, "a daukle configuration may not set a __gc finalizer") != NULL);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -572,7 +612,7 @@ static const modules_loaded *load_plugin_modules_in(const char *fixture,
     fr_error err;
     err.message[0] = '\0';
     fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, &err) != FR_OK) return &out;
+    if (build_tracked_registry(&registry, &err) != FR_OK) return &out;
 
     fr_manifest manifest;
     out.status = fr_config_load_file(manifest_path, registry, &manifest, &err);
@@ -582,7 +622,7 @@ static const modules_loaded *load_plugin_modules_in(const char *fixture,
         fr_manifest_free(&manifest);
     }
     snprintf(out.message, sizeof out.message, "%s", err.message);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     return &out;
 }
@@ -691,12 +731,12 @@ static int load_override_fixture(const char *manifest_name, char *message, size_
     fr_error err;
     err.message[0] = '\0';
     fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, &err) != FR_OK) return FR_ERR;
+    if (build_tracked_registry(&registry, &err) != FR_OK) return FR_ERR;
     fr_manifest manifest;
     int status = fr_config_load_file(manifest_path, registry, &manifest, &err);
     if (status == FR_OK) fr_manifest_free(&manifest);
     snprintf(message, size, "%s", err.message);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     return status;
 }
@@ -727,7 +767,7 @@ TEST an_override_no_named_module_declares_is_refused(void) {
 TEST a_plugin_provisioning_before_it_declares_is_refused_at_the_call(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR,
@@ -737,7 +777,7 @@ TEST a_plugin_provisioning_before_it_declares_is_refused_at_the_call(void) {
            != NULL);
     ASSERT(strstr(err.message, "127.0.0.1") == NULL);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -746,7 +786,7 @@ TEST a_plugin_provisioning_before_it_declares_is_refused_at_the_call(void) {
 TEST a_language_plugin_declaring_tool_but_not_exec_still_loads(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-tool-only/daukle.toml",
@@ -754,19 +794,19 @@ TEST a_language_plugin_declaring_tool_but_not_exec_still_loads(void) {
     ASSERT(fr_registry_language(registry, "daukle.language/ok") != NULL);
 
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
 
 static int load_manifest(const char *file_path, fr_error *err) {
     fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, err) != FR_OK) return FR_ERR;
+    if (build_tracked_registry(&registry, err) != FR_OK) return FR_ERR;
 
     fr_manifest manifest;
     int status = fr_config_load_file(file_path, registry, &manifest, err);
     if (status == FR_OK) fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     return status;
 }
@@ -847,7 +887,7 @@ static int read_declaration_of(const char *source, fr_plugin_declaration *out, c
     message[0] = '\0';
     memset(out, 0, sizeof *out);
     fr_registry *registry = NULL;
-    int began = fr_build_registry(&registry, &err) == FR_OK
+    int began = build_tracked_registry(&registry, &err) == FR_OK
               && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = began ? fr_plugins_read_declaration(source, strlen(source), "@test", "plugin",
                                                      "p", out, &err)
@@ -950,7 +990,7 @@ TEST a_resolver_may_not_require_a_plugin(void) {
     const char *source = "daukle.plugin{ api = 1, requires = { java = { url = \"https://x/j.tar\","
                          " sha256 = \"9f86d0\" } } }";
     fr_registry *registry = NULL;
-    int began = fr_build_registry(&registry, &err) == FR_OK
+    int began = build_tracked_registry(&registry, &err) == FR_OK
               && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = began ? fr_plugins_read_declaration(source, strlen(source), "@test", "resolver",
                                                      "gh", &declaration, &err)
@@ -1056,7 +1096,7 @@ TEST a_resolver_may_not_export(void) {
     memset(&declaration, 0, sizeof declaration);
     const char *source = "daukle.plugin{ api = 1, exports = { \"lib/x\" } }";
     fr_registry *registry = NULL;
-    int began = fr_build_registry(&registry, &err) == FR_OK
+    int began = build_tracked_registry(&registry, &err) == FR_OK
               && fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = began ? fr_plugins_read_declaration(source, strlen(source), "@test", "resolver",
                                                      "gh", &declaration, &err)
@@ -1133,7 +1173,7 @@ static int github_source_load(const char *block_json, fr_error *err) {
     fr_cache_set_enabled(0);
     fr_http_fn previous = fr_http_set_backend(stub_release_asset);
 
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     cJSON *document = cJSON_Parse("{\"plugins\":{\"github\":\"./plugins/github.lua\"}}");
     int status = FR_ERR;
     if (fr_registry_add_config(registry, &FR_CONFIG_TOML, err) == FR_OK
@@ -1152,7 +1192,7 @@ static int github_source_load(const char *block_json, fr_error *err) {
         cJSON_Delete(block);
     }
     cJSON_Delete(document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
 
@@ -1264,14 +1304,14 @@ static int loads_from_url(const char *document_json, int *out_status, fr_error *
     int registered = 0;
     *out_status = FR_ERR;
 
-    if (fr_build_registry(&registry, err) == FR_OK) {
+    if (build_tracked_registry(&registry, err) == FR_OK) {
         cJSON *document = cJSON_Parse(document_json);
         if (fr_lua_runtime_begin(".", registry, err) == FR_OK) {
             *out_status = fr_plugins_load(registry, document, ".", err);
             registered = fr_registry_language(registry, "daukle.language/from-url") != NULL;
         }
         cJSON_Delete(document);
-        fr_registry_destroy(registry);
+        destroy_tracked_registry(registry);
         fr_lua_runtime_shutdown();
     }
 
@@ -1350,7 +1390,7 @@ TEST a_plugin_chunk_may_not_declare_a_resolver(void) {
     FETCH_LOG[0] = '\0';
     fr_http_fn previous = fr_http_set_backend(stub_logs_every_url);
     fr_registry *registry = NULL;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     cJSON *document = cJSON_Parse(document_json);
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = fr_plugins_load(registry, document, ".", &err);
@@ -1360,7 +1400,7 @@ TEST a_plugin_chunk_may_not_declare_a_resolver(void) {
     snprintf(log, sizeof log, "%s", FETCH_LOG);
 
     cJSON_Delete(document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
@@ -1404,7 +1444,7 @@ TEST the_headers_a_resolver_returns_reach_the_artifact_fetch(void) {
     ARTIFACT_AUTHORIZATION[0] = '\0';
     fr_http_fn previous = fr_http_set_backend(stub_records_authorization);
     fr_registry *registry = NULL;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     cJSON *document = cJSON_Parse(document_json);
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = fr_plugins_load(registry, document, ".", &err);
@@ -1412,7 +1452,7 @@ TEST the_headers_a_resolver_returns_reach_the_artifact_fetch(void) {
     snprintf(seen, sizeof seen, "%s", ARTIFACT_AUTHORIZATION);
 
     cJSON_Delete(document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
@@ -1487,12 +1527,13 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     char cache_dir[512];
     snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_github_resolver_%d",
             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
     fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
 
     release_requests = 0;
     fr_http_fn previous = fr_http_set_backend(stub_releases_index);
     fr_registry *registry = NULL;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     cJSON *document = cJSON_Parse(document_json);
 
     int began = fr_lua_runtime_begin("test/fixtures/github-resolver", registry, &err) == FR_OK;
@@ -1511,12 +1552,13 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     if (report->count == 1) snprintf(resolved, sizeof resolved, "%s", report->entries[0].resolved);
 
     cJSON_Delete(document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
     fr_http_set_backend(previous);
     fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
 
     ASSERT(built);
     ASSERT(began);
@@ -1558,12 +1600,12 @@ static int stub_release_published_later(const char *url, const fr_http_header *h
 
 static int load_github_coordinate(const char *document_json, fr_error *err) {
     fr_registry *registry = NULL;
-    int status = fr_build_registry(&registry, err);
+    int status = build_tracked_registry(&registry, err);
     cJSON *document = cJSON_Parse(document_json);
     if (status == FR_OK) status = fr_lua_runtime_begin("test/fixtures/github-resolver", registry, err);
     if (status == FR_OK) status = fr_plugins_load(registry, document, "test/fixtures/github-resolver", err);
     cJSON_Delete(document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
@@ -1580,6 +1622,7 @@ TEST the_github_resolver_does_not_cache_a_list_that_satisfies_nothing(void) {
     char cache_dir[512];
     snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_github_unsatisfied_%d",
             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
     fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
     fr_http_fn previous = fr_http_set_backend(stub_release_published_later);
 
@@ -1594,6 +1637,7 @@ TEST the_github_resolver_does_not_cache_a_list_that_satisfies_nothing(void) {
 
     fr_http_set_backend(previous);
     fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
 
     ASSERT(before_status != FR_OK);
     ASSERT(strstr(before_message, "no release of \"daukle/remote\" satisfies \"^1.2.0\"") != NULL);
@@ -1673,7 +1717,7 @@ TEST an_uppercase_pin_still_matches_the_lowercase_digest(void) {
 TEST config_print_reports_each_plugin_with_its_verbs_and_digest(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-local/daukle.toml",
@@ -1688,7 +1732,7 @@ TEST config_print_reports_each_plugin_with_its_verbs_and_digest(void) {
     ASSERT_EQ(64, (int) strlen(report->entries[1].sha256));
 
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     PASS();
@@ -1697,7 +1741,7 @@ TEST config_print_reports_each_plugin_with_its_verbs_and_digest(void) {
 TEST the_report_names_a_plugins_declared_verbs(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-declared-verb/daukle.toml",
@@ -1711,7 +1755,7 @@ TEST the_report_names_a_plugins_declared_verbs(void) {
     ASSERT_STR_EQ("env", report->entries[0].uses[0]);
 
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     PASS();
@@ -1726,14 +1770,14 @@ TEST the_report_names_a_plugins_declared_verbs(void) {
 TEST the_report_survives_the_entries_it_describes_being_freed(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-local/daukle.toml",
                                          registry, &manifest, &err));
 
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     const fr_plugin_report *report = fr_plugins_report();
@@ -1747,7 +1791,7 @@ TEST the_report_survives_the_entries_it_describes_being_freed(void) {
     fr_cache_set_enabled(0);
     fr_http_fn previous = fr_http_set_backend(stub_inline);
     fr_registry *resolved_registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&resolved_registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&resolved_registry, &err));
     cJSON *document = cJSON_Parse(
         "{\"resolvers\":{\"t\":{\"path\":\"./test/fixtures/resolver/resolver.lua\"}},"
         "\"plugins\":{\"p\":\"t:a/b\"}}");
@@ -1755,7 +1799,7 @@ TEST the_report_survives_the_entries_it_describes_being_freed(void) {
     int loaded = fr_plugins_load(resolved_registry, document, ".", &err) == FR_OK;
 
     cJSON_Delete(document);
-    fr_registry_destroy(resolved_registry);
+    destroy_tracked_registry(resolved_registry);
     fr_lua_runtime_shutdown();
     fr_resolvers_clear();
     fr_http_set_backend(previous);
@@ -1775,13 +1819,13 @@ TEST the_report_survives_the_entries_it_describes_being_freed(void) {
 TEST fr_plugins_report_clear_empties_the_report(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-local/daukle.toml",
                                          registry, &manifest, &err));
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     fr_plugins_report_clear();
@@ -1798,7 +1842,7 @@ TEST the_report_names_what_the_resolver_resolved(void) {
     static fr_error err;
     fr_http_fn previous = fr_http_set_backend(stub_inline);
     fr_registry *registry = NULL;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     cJSON *document = cJSON_Parse(
         "{\"resolvers\":{\"t\":{\"url\":\"https://x/resolver.lua\",\"sha256\":\"" INLINE_DIGEST
         "\"}},\"plugins\":{\"p\":\"t:a/b\"}}");
@@ -1814,7 +1858,7 @@ TEST the_report_names_what_the_resolver_resolved(void) {
     }
 
     cJSON_Delete(document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
@@ -1920,7 +1964,7 @@ TEST the_report_names_the_resolver_and_the_url(void) {
 
     fr_http_fn previous = fr_http_set_backend(stub_named_artifacts);
     fr_registry *registry = NULL;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     cJSON *document = cJSON_Parse(document_json);
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int loaded = fr_plugins_load(registry, document, ".", &err) == FR_OK;
@@ -1941,7 +1985,7 @@ TEST the_report_names_the_resolver_and_the_url(void) {
     }
 
     cJSON_Delete(document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
@@ -1975,6 +2019,7 @@ TEST the_report_names_a_declared_unused_resolver(void) {
     char cache_dir[512];
     snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_unused_resolver_%d",
             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
     fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
 
     fr_http_fn previous = fr_http_set_backend(stub_named_artifacts);
@@ -1982,7 +2027,7 @@ TEST the_report_names_a_declared_unused_resolver(void) {
     fr_http_set_backend(stub_refuses_every_request);
 
     fr_registry *registry = NULL;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     cJSON *document = cJSON_Parse(document_json);
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int loaded = fr_plugins_load(registry, document, ".", &err) == FR_OK;
@@ -1995,13 +2040,14 @@ TEST the_report_names_a_declared_unused_resolver(void) {
     if (unused_count == 1) snprintf(unused, sizeof unused, "%s", report->unused_resolvers[0]);
 
     cJSON_Delete(document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
     fr_plugin_fetch_discard(artifact_url);
     fr_http_set_backend(previous);
     fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
 
     ASSERT(built && began && seeded);
     ASSERTm(message, loaded);
@@ -2063,7 +2109,7 @@ static int begin_dependency_load(const char *document_json, dependency_load_sess
     fr_cache_set_enabled(0);
     session->previous_backend = fr_http_set_backend(stub_dependency_graph);
     session->registry = NULL;
-    int built = fr_build_registry(&session->registry, &err) == FR_OK;
+    int built = build_tracked_registry(&session->registry, &err) == FR_OK;
     session->document = cJSON_Parse(document_json);
     int began = built && fr_lua_runtime_begin(".", session->registry, &err) == FR_OK;
     *out_status = began ? fr_plugins_load(session->registry, session->document, ".", &err) : FR_ERR;
@@ -2073,7 +2119,7 @@ static int begin_dependency_load(const char *document_json, dependency_load_sess
 
 static void end_dependency_load(dependency_load_session *session) {
     cJSON_Delete(session->document);
-    fr_registry_destroy(session->registry);
+    destroy_tracked_registry(session->registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
@@ -2410,6 +2456,7 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     char cache_dir[512];
     snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_plugin_update_cache_%d",
             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
     fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
 
     fr_plugin_fetch_discard(fresh_url);
@@ -2417,12 +2464,12 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     fr_test_set_env("RESOLVER_TARGET", "one");
 
     fr_registry *first_registry = NULL;
-    int built_first = fr_build_registry(&first_registry, &err) == FR_OK;
+    int built_first = build_tracked_registry(&first_registry, &err) == FR_OK;
     cJSON *document = cJSON_Parse(document_json);
     int first_load = fr_lua_runtime_begin(".", first_registry, &err) == FR_OK
                   && fr_plugins_load(first_registry, document, ".", &err) == FR_OK;
     int got_one = fr_registry_language(first_registry, "daukle.language/target-one") != NULL;
-    fr_registry_destroy(first_registry);
+    destroy_tracked_registry(first_registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
@@ -2430,11 +2477,11 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     fr_test_set_env("RESOLVER_TARGET", "two");
 
     fr_registry *second_registry = NULL;
-    int built_second = fr_build_registry(&second_registry, &err) == FR_OK;
+    int built_second = build_tracked_registry(&second_registry, &err) == FR_OK;
     int second_load = fr_lua_runtime_begin(".", second_registry, &err) == FR_OK
                    && fr_plugins_load(second_registry, document, ".", &err) == FR_OK;
     int still_one = fr_registry_language(second_registry, "daukle.language/target-one") != NULL;
-    fr_registry_destroy(second_registry);
+    destroy_tracked_registry(second_registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
@@ -2449,14 +2496,14 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     fr_plugins_parse(document, resolvers, resolver_count, &entries, &count, &err);
 
     fr_registry *update_registry = NULL;
-    int update_began = fr_build_registry(&update_registry, &err) == FR_OK
+    int update_began = build_tracked_registry(&update_registry, &err) == FR_OK
                     && fr_lua_runtime_begin(".", update_registry, &err) == FR_OK;
     size_t removed = 0;
     int updated = update_began
               && fr_plugins_update_cache(entries, count, resolvers, resolver_count, NULL,
                                         &removed, &err) == FR_OK;
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(update_registry);
+    destroy_tracked_registry(update_registry);
     fr_plugins_free(entries, count);
     fr_resolvers_free(resolvers, resolver_count);
     fr_resolvers_clear();
@@ -2464,11 +2511,11 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     int served_stale = artifact_survived(fresh_url, stub_named_artifacts);
 
     fr_registry *third_registry = NULL;
-    int built_third = fr_build_registry(&third_registry, &err) == FR_OK;
+    int built_third = build_tracked_registry(&third_registry, &err) == FR_OK;
     int third_load = fr_lua_runtime_begin(".", third_registry, &err) == FR_OK
                   && fr_plugins_load(third_registry, document, ".", &err) == FR_OK;
     int got_two = fr_registry_language(third_registry, "daukle.language/target-two") != NULL;
-    fr_registry_destroy(third_registry);
+    destroy_tracked_registry(third_registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
     fr_resolvers_clear();
@@ -2478,6 +2525,7 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     cJSON_Delete(document);
     fr_test_set_env("RESOLVER_TARGET", NULL);
     fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
 
     ASSERT(built_first && built_second && built_third);
     ASSERT(first_load && second_load && third_load);
@@ -2497,7 +2545,7 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
 static int resolve_once(const fr_resolver_entry *resolver, const char *coordinate,
                         char *out_url, size_t out_size, fr_error *err) {
     fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, err) != FR_OK) return 0;
+    if (build_tracked_registry(&registry, err) != FR_OK) return 0;
 
     int status = FR_ERR;
     char *url = NULL;
@@ -2511,7 +2559,7 @@ static int resolve_once(const fr_resolver_entry *resolver, const char *coordinat
     fr_http_headers_free(&headers);
     free(url);
     free(resolved);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_resolvers_clear();
     return status == FR_OK;
@@ -2531,6 +2579,7 @@ TEST plugin_update_persists_the_fresh_url_with_the_cache_disabled(void) {
     char cache_dir[512];
     snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_update_no_cache_%d",
             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
     fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
     fr_test_set_env("RESOLVER_TARGET", "one");
 
@@ -2548,7 +2597,7 @@ TEST plugin_update_persists_the_fresh_url_with_the_cache_disabled(void) {
     fr_test_set_env("RESOLVER_TARGET", "two");
 
     fr_registry *update_registry = NULL;
-    int update_began = fr_build_registry(&update_registry, &err) == FR_OK
+    int update_began = build_tracked_registry(&update_registry, &err) == FR_OK
                     && fr_lua_runtime_begin(".", update_registry, &err) == FR_OK;
     int cache_was_enabled = fr_cache_enabled();
     fr_cache_set_enabled(0);
@@ -2558,7 +2607,7 @@ TEST plugin_update_persists_the_fresh_url_with_the_cache_disabled(void) {
                                          &removed, &err) == FR_OK;
     fr_cache_set_enabled(cache_was_enabled);
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(update_registry);
+    destroy_tracked_registry(update_registry);
     fr_resolvers_clear();
 
     char after[256] = "";
@@ -2569,6 +2618,7 @@ TEST plugin_update_persists_the_fresh_url_with_the_cache_disabled(void) {
     cJSON_Delete(document);
     fr_test_set_env("RESOLVER_TARGET", NULL);
     fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
 
     ASSERT(update_began);
     ASSERTm(err.message, updated);
@@ -2772,13 +2822,13 @@ TEST a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_
              expected);
 
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     cJSON *ok_document = cJSON_Parse(good);
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin("test/fixtures/plugin-local", registry, &err));
     ASSERT_EQ(FR_OK, fr_plugins_load(registry, ok_document, "test/fixtures/plugin-local", &err));
     ASSERT(fr_registry_language(registry, "daukle.language/hello") != NULL);
     cJSON_Delete(ok_document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     const char *wrong = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -2788,7 +2838,7 @@ TEST a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_
              wrong);
 
     fr_registry *second = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&second, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&second, &err));
     cJSON *bad_document = cJSON_Parse(bad);
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin("test/fixtures/plugin-local", second, &err));
     ASSERT_EQ(FR_ERR, fr_plugins_load(second, bad_document, "test/fixtures/plugin-local", &err));
@@ -2796,7 +2846,7 @@ TEST a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_
     ASSERT(strstr(err.message, wrong) != NULL);
     ASSERT(strstr(err.message, "hello") != NULL);
     cJSON_Delete(bad_document);
-    fr_registry_destroy(second);
+    destroy_tracked_registry(second);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -2857,7 +2907,7 @@ static int loads_directory_plugin(const char *json) {
     directory_message[0] = '\0';
 
     fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, &err) != FR_OK) return FR_ERR;
+    if (build_tracked_registry(&registry, &err) != FR_OK) return FR_ERR;
 
     cJSON *document = document_from(json);
     int status = FR_ERR;
@@ -2867,7 +2917,7 @@ static int loads_directory_plugin(const char *json) {
     snprintf(directory_message, sizeof directory_message, "%s", err.message);
 
     cJSON_Delete(document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     return status;
 }
 
@@ -2922,7 +2972,7 @@ TEST a_single_file_path_with_a_sha256_still_loads(void) {
              digest);
 
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     cJSON *document = document_from(json);
     int status = FR_ERR;
     if (fr_lua_runtime_begin("test/fixtures/plugin-local", registry, &err) == FR_OK) {
@@ -2932,7 +2982,7 @@ TEST a_single_file_path_with_a_sha256_still_loads(void) {
     snprintf(message, sizeof message, "%s", err.message);
 
     cJSON_Delete(document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_plugins_report_clear();
     fr_lua_runtime_shutdown();
 
@@ -2998,7 +3048,7 @@ static int loads_served_archive(const char *pin, int *out_registered) {
     }
 
     fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, &err) != FR_OK) return FR_ERR;
+    if (build_tracked_registry(&registry, &err) != FR_OK) return FR_ERR;
     cJSON *document = document_from(json);
 
     int status = FR_ERR;
@@ -3009,7 +3059,7 @@ static int loads_served_archive(const char *pin, int *out_registered) {
     snprintf(archive_message, sizeof archive_message, "%s", err.message);
 
     cJSON_Delete(document);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_plugins_report_clear();
     fr_lua_runtime_shutdown();
     return status;
@@ -3158,12 +3208,12 @@ TEST an_archive_whose_pin_does_not_match_is_refused_and_discarded(void) {
 static int probe_tasks_of(const char *manifest_path, char *message, size_t size) {
     fr_error err;
     fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, &err) != FR_OK) return -1;
+    if (build_tracked_registry(&registry, &err) != FR_OK) return -1;
 
     fr_manifest manifest;
     if (fr_config_load_file(manifest_path, registry, &manifest, &err) != FR_OK) {
         snprintf(message, size, "%s", err.message);
-        fr_registry_destroy(registry);
+        destroy_tracked_registry(registry);
         fr_lua_runtime_shutdown();
         return -1;
     }
@@ -3178,7 +3228,7 @@ static int probe_tasks_of(const char *manifest_path, char *message, size_t size)
         fr_tasks_set_free(&set);
     }
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     return found;
 }
@@ -3214,7 +3264,7 @@ TEST an_overlay_rooted_manifest_yields_its_plugins_table_without_loading_them(vo
     const char *manifest = "test/fixtures/lua-root-plugin/daukle.lua";
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(directory, registry, &err));
 
     const fr_config_plugin *format = fr_config_plugin_for(registry, manifest, &err);
@@ -3246,7 +3296,7 @@ TEST an_overlay_rooted_manifest_yields_its_plugins_table_without_loading_them(vo
     cJSON_Delete(document);
     fr_lua_runtime_shutdown();
     fr_resolvers_clear();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_plugins_report_clear();
 
     ASSERT(is_overlay);
@@ -3258,20 +3308,20 @@ TEST an_overlay_rooted_manifest_yields_its_plugins_table_without_loading_them(vo
 
 GREATEST_MAIN_DEFS();
 
-/* The same rescue test_config_lua.c carries, and for the same measured reason:
-   cases here assert before their cleanup, so one failure leaves the lua runtime
-   open and later cases fail against it. Changing two refusal clauses in this
-   file produced two real failures and two collateral ones, which is how the
-   need was noticed. The call is idempotent, so this is a no-op when nothing
-   leaked. */
-static void close_any_leaked_runtime(void *udata) {
+/* Most cases assert before their cleanup, and a runtime one failure left open
+   once turned two real failures into four. Every call is a no-op when the case
+   already cleaned up. */
+static void release_what_a_failed_case_left(void *udata) {
     (void) udata;
+    destroy_leaked_registries();
     fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
 }
 
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
-    GREATEST_SET_TEARDOWN_CB(close_any_leaked_runtime, NULL);
+    GREATEST_SET_TEARDOWN_CB(release_what_a_failed_case_left, NULL);
     RUN_TEST(parses_the_string_url_form);
     RUN_TEST(parses_the_table_form_with_a_pin);
     RUN_TEST(a_plugin_entry_refuses_asset_and_names_where_it_belongs);
