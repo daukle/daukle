@@ -46,6 +46,15 @@ int fr_lua_root_path(lua_State *state);
 int fr_lua_root_dir(lua_State *state);
 int fr_lua_root_tool(lua_State *state);
 
+/* Pushes a tool handle for a program already resolved to absolute, named in
+   exec's messages by the last component of member. Returns 0 with nothing
+   pushed when absolute does not fit a handle, so the caller frees what it owns
+   before raising. root:tool and daukle.built share it so a handle is built one
+   way whichever verb found the program. */
+int fr_lua_push_tool_handle(lua_State *state, const char *absolute, const char *member);
+
+int fr_lua_verb_built(lua_State *state);
+
 int fr_lua_verb_tool(lua_State *state);
 int fr_lua_verb_exec(lua_State *state);
 

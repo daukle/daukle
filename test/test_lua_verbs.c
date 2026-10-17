@@ -10,6 +10,7 @@
 #include "project/region.h"
 #include "provision/provision.h"
 #include "support.h"
+#include "exec/tool.h"
 #include "exec/toolreport.h"
 #include "project/sync.h"
 
@@ -22,6 +23,7 @@
 #include <io.h>
 #else
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 static char *test_verb_dup(const char *text) {
@@ -3018,6 +3020,352 @@ TEST provision_is_refused_while_generating(void) {
     PASS();
 }
 
+#define BUILT_DIRECTORY "build-test-built"
+#ifdef _WIN32
+#define BUILT_CHILD "bin/child.exe"
+#else
+#define BUILT_CHILD "bin/child"
+#endif
+
+static int copy_file_bytes(const char *from, const char *to) {
+    FILE *source = fopen(from, "rb");
+    if (source == NULL) return 0;
+    FILE *target = fopen(to, "wb");
+    if (target == NULL) {
+        fclose(source);
+        return 0;
+    }
+    char buffer[65536];
+    size_t count;
+    int ok = 1;
+    while ((count = fread(buffer, 1, sizeof buffer, source)) > 0) {
+        if (fwrite(buffer, 1, count, target) != count) { ok = 0; break; }
+    }
+    fclose(source);
+    if (fclose(target) != 0) ok = 0;
+    return ok;
+}
+
+/* Stands in for a build: this test binary, copied to where a toolchain would
+   have linked its program, is a runnable file that no PATH lookup finds. */
+static int place_built_child(void) {
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    char bin[] = BUILT_DIRECTORY "/bin";
+    fr_cache_make_directories(bin);
+    char *self = NULL;
+    fr_error err;
+    if (fr_tool_resolve("test_lua_verbs", &self, &err) != FR_OK) return 0;
+    int copied = copy_file_bytes(self, BUILT_DIRECTORY "/" BUILT_CHILD);
+    free(self);
+#ifndef _WIN32
+    if (copied && chmod(BUILT_DIRECTORY "/" BUILT_CHILD, 0755) != 0) copied = 0;
+#endif
+    return copied;
+}
+
+/* Runs one chunk with "built" and "exec" declared and BUILT_DIRECTORY as the
+   task's derived directory, inside a task dispatch unless in_task is zero. */
+static int run_built_chunk(const char *chunk, int in_task, char *message, size_t size) {
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    err.message[0] = '\0';
+    int status = FR_ERR;
+    if (fr_lua_runtime_begin(".", registry, &err) == FR_OK) {
+        lua_State *state = fr_lua_runtime_state();
+        const char *verbs[] = { "built", "exec" };
+        if (fr_lua_verbs_push_env(state, verbs, 2, &err) == FR_OK) {
+            int env = lua_gettop(state);
+            fr_lua_set_task_cwd(BUILT_DIRECTORY);
+            status = in_task ? run_in_task(state, chunk, "=t", env, &err)
+                             : fr_lua_run_in_env(state, chunk, "=t", env, &err);
+            fr_lua_set_task_cwd(NULL);
+        }
+        lua_settop(state, 0);
+    }
+    if (message != NULL) snprintf(message, size, "%s", err.message);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    return status;
+}
+
+TEST built_runs_what_the_build_produced_with_its_argv_intact(void) {
+    ASSERT(place_built_child());
+
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    const char *verbs[] = { "built", "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 2, &err));
+    int env = lua_gettop(state);
+
+    fr_lua_set_task_cwd(BUILT_DIRECTORY);
+    int status = run_in_task(state,
+        "local child = daukle.built('" BUILT_CHILD "')\n"
+        "result = daukle.exec(child, { '--exec-child', '3', 'two words', '$HOME', 'a;b',"
+        " '\"quoted\"', \"it's\", '' }, { capture = true, check = false })",
+        "=t", env, &err);
+    fr_lua_set_task_cwd(NULL);
+    ASSERT_EQm(err.message, FR_OK, status);
+
+    lua_getfield(state, env, "result");
+    lua_getfield(state, -1, "code");
+    ASSERT_EQ(3, (int) lua_tointeger(state, -1));
+    lua_pop(state, 1);
+    lua_getfield(state, -1, "stdout");
+    const char *stdout_text = lua_tostring(state, -1);
+    ASSERTm(stdout_text, strstr(stdout_text,
+        "[two words]\n[$HOME]\n[a;b]\n[\"quoted\"]\n[it's]\n[]\n") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    PASS();
+}
+
+TEST built_names_its_program_when_check_raises(void) {
+    ASSERT(place_built_child());
+    static char message[512];
+    int status = run_built_chunk(
+        "daukle.exec(daukle.built('" BUILT_CHILD "'), { '--exec-child', '5' })",
+        1, message, sizeof message);
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "exited with code 5") != NULL);
+    ASSERTm(message, strstr(message, "child") != NULL);
+    PASS();
+}
+
+static int built_refuses(const char *chunk, const char *expected, char *message, size_t size) {
+    int status = run_built_chunk(chunk, 1, message, size);
+    return status == FR_ERR && strstr(message, expected) != NULL;
+}
+
+TEST built_refuses_a_path_that_climbs_out(void) {
+    ASSERT(place_built_child());
+    static char message[512];
+    int nested = built_refuses("daukle.built('bin/../" BUILT_CHILD "')",
+                               "must stay inside the derived directory", message, sizeof message);
+    int bare = built_refuses("daukle.built('..')", "must stay inside the derived directory",
+                             message, sizeof message);
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    ASSERTm(message, nested);
+    ASSERTm(message, bare);
+    PASS();
+}
+
+TEST built_refuses_an_absolute_path(void) {
+    ASSERT(place_built_child());
+    static char message[512];
+    int rooted = built_refuses("daukle.built('/" BUILT_CHILD "')",
+                               "is relative to the derived directory", message, sizeof message);
+    int drive = built_refuses("daukle.built('C:/" BUILT_CHILD "')",
+                              "is relative to the derived directory", message, sizeof message);
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    ASSERTm(message, rooted);
+    ASSERTm(message, drive);
+    PASS();
+}
+
+TEST built_refuses_a_backslash(void) {
+    ASSERT(place_built_child());
+    static char message[512];
+    int refused = built_refuses("daukle.built('bin\\\\child')", "separates directories with",
+                                message, sizeof message);
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    ASSERTm(message, refused);
+    PASS();
+}
+
+TEST built_refuses_an_empty_or_dot_segment(void) {
+    ASSERT(place_built_child());
+    static char message[512];
+    int doubled = built_refuses("daukle.built('bin//child')", "an empty or \".\" segment",
+                                message, sizeof message);
+    int dotted = built_refuses("daukle.built('./" BUILT_CHILD "')", "an empty or \".\" segment",
+                               message, sizeof message);
+    int trailing = built_refuses("daukle.built('bin/')", "an empty or \".\" segment",
+                                 message, sizeof message);
+    int empty = built_refuses("daukle.built('')", "an empty or \".\" segment",
+                              message, sizeof message);
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    ASSERTm(message, doubled);
+    ASSERTm(message, dotted);
+    ASSERTm(message, trailing);
+    ASSERTm(message, empty);
+    PASS();
+}
+
+TEST built_refuses_a_control_character(void) {
+    ASSERT(place_built_child());
+    static char message[512];
+    int refused = built_refuses("daukle.built('bin/a\\nb')", "holds a control character",
+                                message, sizeof message);
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    ASSERTm(message, refused);
+    PASS();
+}
+
+TEST built_names_a_missing_file(void) {
+    ASSERT(place_built_child());
+    static char message[512];
+    int refused = built_refuses("daukle.built('bin/absent')", "holds no file \"bin/absent\"",
+                                message, sizeof message);
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    ASSERTm(message, refused);
+    PASS();
+}
+
+TEST built_refuses_a_batch_file(void) {
+    ASSERT(place_built_child());
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_file_write_text(BUILT_DIRECTORY "/bin/run.cmd", "@echo off\r\n", &err));
+    static char message[512];
+    int refused = built_refuses("daukle.built('bin/run.cmd')", "daukle cannot run a batch file,"
+                                " and \"bin/run.cmd\" resolved to", message, sizeof message);
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    ASSERTm(message, refused);
+    PASS();
+}
+
+TEST built_refuses_a_directory(void) {
+    ASSERT(place_built_child());
+    static char message[512];
+    int refused = built_refuses("daukle.built('bin')", "\"bin\" is a directory, not a program",
+                                message, sizeof message);
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    ASSERTm(message, refused);
+    PASS();
+}
+
+#ifndef _WIN32
+/* The target is inside the project, so only the derived directory's own
+   containment can refuse it, not the project's. */
+TEST built_refuses_a_link_that_leads_out_of_the_derived_directory(void) {
+    ASSERT(place_built_child());
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_file_write_text("build-test-built-outside", "x", &err));
+    ASSERT_EQ(0, symlink("../../build-test-built-outside", BUILT_DIRECTORY "/bin/escape"));
+    static char message[512];
+    int refused = built_refuses("daukle.built('bin/escape')",
+                                "\"bin/escape\" resolves outside the derived directory",
+                                message, sizeof message);
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    remove("build-test-built-outside");
+    ASSERTm(message, refused);
+    PASS();
+}
+#endif
+
+TEST built_outside_a_task_or_publish_callback_is_refused(void) {
+    ASSERT(place_built_child());
+    static char message[512];
+    int status = run_built_chunk("daukle.built('" BUILT_CHILD "')", 0, message, sizeof message);
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message,
+        "daukle.built is available only inside a task or publish callback") != NULL);
+    PASS();
+}
+
+TEST built_is_refused_in_a_process_free_callback(void) {
+    ASSERT(place_built_child());
+    static char message[512];
+    fr_lua_enter_process_free_callback("a source loads");
+    int status = run_built_chunk("daukle.built('" BUILT_CHILD "')", 1, message, sizeof message);
+    fr_lua_leave_process_free_callback();
+    fr_test_remove_tree(BUILT_DIRECTORY);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "daukle.built is not available while a source loads")
+                     != NULL);
+    PASS();
+}
+
+TEST built_is_refused_while_a_chunk_loads(void) {
+    static const char *const chunk = "daukle.built('" BUILT_CHILD "')\n";
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    err.message[0] = '\0';
+    const char *verbs[] = { "built" };
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    int loaded = began && fr_lua_plugin_load(chunk, strlen(chunk), "early.lua", verbs, 1, NULL,
+                                             NULL, &err) == FR_OK;
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(began);
+    ASSERT_FALSE(loaded);
+    ASSERTm(err.message, strstr(err.message,
+        "daukle.built is not available while a plugin chunk is loading") != NULL);
+    PASS();
+}
+
+TEST built_is_refused_while_generating(void) {
+    static char message[512];
+    static const char *const chunk =
+        "daukle.toolchain{ name = 'stub', generate = function()\n"
+        "  daukle.built('" BUILT_CHILD "')\n"
+        "  return {}\n"
+        "end }\n";
+
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    err.message[0] = '\0';
+    const char *verbs[] = { "built" };
+    int loaded = fr_lua_runtime_begin(".", registry, &err) == FR_OK
+              && fr_lua_plugin_load(chunk, strlen(chunk), "stub.lua", verbs, 1, NULL, NULL,
+                                    &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+
+    fr_toolchain toolchain;
+    memset(&toolchain, 0, sizeof toolchain);
+    toolchain.name = (char *) "stub";
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int generated = FR_OK;
+    message[0] = '\0';
+    if (plugin != NULL) {
+        fr_error generate_err;
+        generate_err.message[0] = '\0';
+        generated = plugin->generate(plugin->state, &toolchain, "acme/app", "1.0.0",
+                                     "derived/stub", NULL, 0, NULL, 0, &files, &file_count,
+                                     &generate_err);
+        snprintf(message, sizeof message, "%s", generate_err.message);
+    }
+
+    fr_derived_free_files(files, file_count);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(loaded);
+    ASSERT(plugin != NULL);
+    ASSERT_EQm(message, FR_ERR, generated);
+    ASSERTm(message, strstr(message, "daukle.built is not available while generating") != NULL);
+    PASS();
+}
+
+TEST built_is_not_installed_without_being_declared(void) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    lua_State *state = fr_lua_runtime_state();
+    const char *verbs[] = { "exec" };
+    ASSERT_EQ(FR_OK, fr_lua_verbs_push_env(state, verbs, 1, &err));
+    int env = lua_gettop(state);
+
+    ASSERT_EQ(1, fr_lua_verbs_is_known("built"));
+    ASSERT_EQ(FR_ERR, run_in_task(state, "daukle.built('" BUILT_CHILD "')", "=t", env, &err));
+    ASSERTm(err.message, strstr(err.message, "daukle.built was not declared in uses") != NULL);
+
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 static void mark_test_entry(void *udata) {
@@ -3151,5 +3499,23 @@ int main(int argc, char **argv) {
     RUN_TEST(write_refuses_a_path_ending_in_a_separator_and_creates_nothing);
     RUN_TEST(write_refuses_a_missing_path_or_text);
     RUN_TEST(write_is_not_installed_without_being_declared);
+    RUN_TEST(built_runs_what_the_build_produced_with_its_argv_intact);
+    RUN_TEST(built_names_its_program_when_check_raises);
+    RUN_TEST(built_refuses_a_path_that_climbs_out);
+    RUN_TEST(built_refuses_an_absolute_path);
+    RUN_TEST(built_refuses_a_backslash);
+    RUN_TEST(built_refuses_an_empty_or_dot_segment);
+    RUN_TEST(built_refuses_a_control_character);
+    RUN_TEST(built_names_a_missing_file);
+    RUN_TEST(built_refuses_a_batch_file);
+    RUN_TEST(built_refuses_a_directory);
+#ifndef _WIN32
+    RUN_TEST(built_refuses_a_link_that_leads_out_of_the_derived_directory);
+#endif
+    RUN_TEST(built_outside_a_task_or_publish_callback_is_refused);
+    RUN_TEST(built_is_refused_in_a_process_free_callback);
+    RUN_TEST(built_is_refused_while_a_chunk_loads);
+    RUN_TEST(built_is_refused_while_generating);
+    RUN_TEST(built_is_not_installed_without_being_declared);
     GREATEST_MAIN_END();
 }
