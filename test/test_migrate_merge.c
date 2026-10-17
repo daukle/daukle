@@ -242,7 +242,7 @@ TEST a_missing_proof_is_a_blocker_and_a_malformed_one_an_error(void) {
 
 TEST owned_paths_that_escape_are_refused(void) {
     const char *refused[] = { "../x", "/x", "daukle.toml", "daukle.lua", "build/daukle/x",
-                              "build/daukle", "build", ".", "a\\\\b", "", "a/../b" };
+                              "build/daukle", "build", "Build", "BUILD/daukle/x", "Daukle.toml", "DAUKLE.LUA", ".","a\\\\b", "", "a/../b" };
     for (size_t index = 0; index < sizeof refused / sizeof *refused; index++) {
         char json[512];
         snprintf(json, sizeof json, "{\"owned\":[\"%s\"],%s}", refused[index], PROOF);

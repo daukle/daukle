@@ -85,10 +85,28 @@ static int check_blockers(const cJSON *result, const char *who, fr_blockers *blo
     return FR_OK;
 }
 
+static int fold_ascii(int character) {
+    return character >= 'A' && character <= 'Z' ? character + ('a' - 'A') : character;
+}
+
+static int equals_ignoring_case(const char *text, const char *expected) {
+    for (; *text != '\0' && *expected != '\0'; text++, expected++) {
+        if (fold_ascii((unsigned char) *text) != fold_ascii((unsigned char) *expected)) return 0;
+    }
+    return *text == *expected;
+}
+
+static int starts_with_ignoring_case(const char *text, const char *prefix) {
+    for (; *prefix != '\0'; text++, prefix++) {
+        if (fold_ascii((unsigned char) *text) != fold_ascii((unsigned char) *prefix)) return 0;
+    }
+    return 1;
+}
+
 static int is_or_contains_derived_dir(const char *path) {
     size_t derived_size = strlen(DERIVED_DIR);
-    if (strcmp(path, ".") == 0 || strcmp(path, "build") == 0) return 1;
-    return strncmp(path, DERIVED_DIR, derived_size) == 0
+    if (strcmp(path, ".") == 0 || equals_ignoring_case(path, "build")) return 1;
+    return starts_with_ignoring_case(path, DERIVED_DIR)
            && (path[derived_size] == '\0' || path[derived_size] == '/');
 }
 
@@ -108,8 +126,8 @@ static int check_owned(const cJSON *result, const char *who, fr_error *err) {
                               " owned paths are moved into " DERIVED_DIR "/migrate", who, path);
             return FR_ERR;
         }
-        if (!fr_manifest_relative_path_is_safe(path) || strcmp(path, "daukle.toml") == 0
-            || strcmp(path, "daukle.lua") == 0) {
+        if (!fr_manifest_relative_path_is_safe(path) || equals_ignoring_case(path, "daukle.toml")
+            || equals_ignoring_case(path, "daukle.lua")) {
             fr_error_set(err, "%s returned a malformed result: owned path \"%s\" must be a"
                               " relative path below the project that is not daukle.toml or"
                               " daukle.lua", who, path);

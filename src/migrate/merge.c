@@ -89,7 +89,10 @@ static int merge_entry(const merge_context *context, cJSON *into, const cJSON *e
     if (existing == NULL) {
         cJSON *copy = cJSON_Duplicate(entry, 1);
         if (copy == NULL) return out_of_memory(context->err, "copying a manifest fragment");
-        cJSON_AddItemToObject(into, entry->string, copy);
+        if (!cJSON_AddItemToObject(into, entry->string, copy)) {
+            cJSON_Delete(copy);
+            return out_of_memory(context->err, "adding a manifest fragment key");
+        }
         return record_owner(context, path, entry);
     }
     if (cJSON_IsObject(existing) && cJSON_IsObject(entry)) {
@@ -110,6 +113,10 @@ static int merge_value(const merge_context *context, cJSON *into, const cJSON *f
 
 int fr_migrate_merge(cJSON *into, const cJSON *fragment, const char *source, cJSON *owner_of,
                      fr_blockers *blockers, fr_error *err) {
+    if (!cJSON_IsObject(fragment) || !cJSON_IsObject(into)) {
+        fr_error_set(err, "%s returned a manifest fragment that is not a table", source);
+        return FR_ERR;
+    }
     merge_context context = { owner_of, source, blockers, err };
     return merge_value(&context, into, fragment, "");
 }
