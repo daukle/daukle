@@ -3,6 +3,7 @@
 #include "plugin/resolve.h"
 #include "project/derived.h"
 #include "project/task_command.h"
+#include "project/toolchain_root.h"
 #include "util/error.h"
 
 #include <stdio.h>
@@ -72,13 +73,22 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
         snprintf(version, sizeof version, "%d.%d.%d", session->manifest.self.version.major,
                  session->manifest.self.version.minor, session->manifest.self.version.patch);
 
+        char *root = NULL;
+        if (fr_toolchain_root(node->toolchain, &root, err) != FR_OK) {
+            fr_resolved_free(resolved, resolved_count);
+            free(generated_dir_relative);
+            free(derived_dir_relative);
+            free(derived_dir);
+            return FR_ERR;
+        }
+
         fr_task_run_context context;
         context.name = node->name;
         context.toolchain = node->toolchain;
         context.publish = node->publish;
         context.project = session->manifest.self.project;
         context.version = version;
-        context.root = FR_DERIVED_ROOT_RELATIVE;
+        context.root = root;
         context.derived_dir_relative = derived_dir_relative;
         context.generated_dir_relative = generated_dir_relative;
         context.resolved = resolved;
@@ -87,6 +97,7 @@ int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *
         context.module_count = session->manifest.self.module_count;
 
         int status = node->plugin->run(node->plugin->state, &context, err);
+        free(root);
         fr_resolved_free(resolved, resolved_count);
         free(generated_dir_relative);
         free(derived_dir_relative);

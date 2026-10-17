@@ -1,4 +1,5 @@
 #include "config/manifest_internal.h"
+#include "lua/lua_sandbox.h"
 
 #include "config/jsonx.h"
 #include "util/error.h"
@@ -123,6 +124,51 @@ int fr_manifest_read_consumer(const cJSON *entry, size_t consumer_index, fr_cons
     return FR_OK;
 }
 
+int fr_manifest_relative_path_is_safe(const char *path) {
+    if (path[0] == '\0' || fr_lua_sandbox_climbs_out(path)) return 0;
+    if (strchr(path, '\\') != NULL || strchr(path, ':') != NULL) return 0;
+    const char *segment = path;
+    while (*segment != '\0') {
+        const char *end = strchr(segment, '/');
+        size_t size = end == NULL ? strlen(segment) : (size_t) (end - segment);
+        if (size == 0 || (size == 1 && segment[0] == '.')) return 0;
+        for (size_t index = 0; index < size; index++) {
+            if ((unsigned char) segment[index] < 0x20) return 0;
+        }
+        if (end == NULL) return 1;
+        segment = end + 1;
+    }
+    return 0;
+}
+
+static int read_instance_keys(const cJSON *entry, const char *path, fr_toolchain *out,
+                              fr_error *err) {
+    const cJSON *plugin = cJSON_GetObjectItemCaseSensitive(entry, "toolchain");
+    if (plugin != NULL && !cJSON_IsString(plugin)) {
+        fr_error_set(err, "%s.toolchain must be a string naming the toolchain a plugin provides",
+                     path);
+        return FR_ERR;
+    }
+    out->plugin = fr_manifest_duplicate(plugin != NULL ? plugin->valuestring : out->name);
+    if (out->plugin == NULL) {
+        fr_error_set(err, "out of memory reading %s.toolchain", path);
+        return FR_ERR;
+    }
+    const cJSON *dir = cJSON_GetObjectItemCaseSensitive(entry, "dir");
+    if (dir == NULL) return FR_OK;
+    if (!cJSON_IsString(dir) || !fr_manifest_relative_path_is_safe(dir->valuestring)) {
+        fr_error_set(err, "%s.dir must be a relative directory below the project, with \"/\""
+                          " separators and no \".\" or \"..\" segment", path);
+        return FR_ERR;
+    }
+    out->dir = fr_manifest_duplicate(dir->valuestring);
+    if (out->dir == NULL) {
+        fr_error_set(err, "out of memory reading %s.dir", path);
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
 int fr_manifest_read_toolchain(const cJSON *entry, const char *name, fr_toolchain *out, fr_error *err) {
     memset(out, 0, sizeof *out);
     char path[320];
@@ -141,9 +187,16 @@ int fr_manifest_read_toolchain(const cJSON *entry, const char *name, fr_toolchai
         return FR_ERR;
     }
 
+    if (strcmp(name, "migrate") == 0) {
+        fr_error_set(err, "%s may not be named \"migrate\": build/daukle/migrate belongs to"
+                          " daukle migrate", path);
+        return FR_ERR;
+    }
+
     if (cJSON_IsString(entry)) {
+        out->plugin = fr_manifest_duplicate(name);
         out->version = fr_manifest_duplicate(entry->valuestring);
-        if (out->version == NULL) {
+        if (out->plugin == NULL || out->version == NULL) {
             fr_error_set(err, "out of memory reading %s", path);
             return FR_ERR;
         }
@@ -154,6 +207,7 @@ int fr_manifest_read_toolchain(const cJSON *entry, const char *name, fr_toolchai
         return FR_ERR;
     }
     out->block = entry;
+    if (read_instance_keys(entry, path, out, err) != FR_OK) return FR_ERR;
 
     const cJSON *version = cJSON_GetObjectItemCaseSensitive(entry, "version");
     if (version != NULL) {

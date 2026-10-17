@@ -30,7 +30,7 @@
    which is how `context.modules` reached 0.7.0 and `context.toolchain.version`
    before it, and how a plugin needing one got a green build that compiled
    nothing. D-116. */
-#define FR_PLUGIN_API_PROVIDED 2
+#define FR_PLUGIN_API_PROVIDED 3
 
 static fr_plugin_declaration *declaration_in_progress;
 

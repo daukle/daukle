@@ -229,7 +229,7 @@ int fr_resolve_toolchain(const fr_toolchain *toolchain, const fr_manifest *manif
     fr_consumer consumer;
     memset(&consumer, 0, sizeof consumer);
     consumer.id = toolchain->name;
-    consumer.language = toolchain->name;
+    consumer.language = toolchain->plugin;
     consumer.dependencies = toolchain->dependencies;
     consumer.dependency_count = toolchain->dependency_count;
     return fr_resolve_consumer(&consumer, manifest, manifest_dir, registry, out, out_count, err);
