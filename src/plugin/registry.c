@@ -18,6 +18,10 @@ struct fr_registry {
     size_t toolchain_count;
     fr_task_plugin tasks[FR_REGISTRY_CAPACITY];
     size_t task_count;
+    fr_migrator_plugin migrators[FR_REGISTRY_CAPACITY];
+    size_t migrator_count;
+    fr_translator_plugin translators[FR_REGISTRY_CAPACITY];
+    size_t translator_count;
 };
 
 fr_registry *fr_registry_create(void) {
@@ -154,4 +158,60 @@ size_t fr_registry_task_count(const fr_registry *registry) {
 const fr_task_plugin *fr_registry_task_at(const fr_registry *registry, size_t index) {
     if (index >= registry->task_count) return NULL;
     return &registry->tasks[index];
+}
+
+int fr_registry_add_migrator(fr_registry *registry, const fr_migrator_plugin *plugin, fr_error *err) {
+    for (size_t index = 0; index < registry->migrator_count; index++) {
+        if (strcmp(registry->migrators[index].capability, plugin->capability) == 0) {
+            fr_error_set(err, "capability \"%s\" is already registered", plugin->capability);
+            return FR_ERR;
+        }
+    }
+    if (registry->migrator_count == FR_REGISTRY_CAPACITY) {
+        fr_error_set(err, "cannot register \"%s\": registry is full", plugin->capability);
+        return FR_ERR;
+    }
+    registry->migrators[registry->migrator_count++] = *plugin;
+    return FR_OK;
+}
+
+int fr_registry_add_translator(fr_registry *registry, const fr_translator_plugin *plugin,
+                               fr_error *err) {
+    for (size_t index = 0; index < registry->translator_count; index++) {
+        if (strcmp(registry->translators[index].capability, plugin->capability) == 0) {
+            fr_error_set(err, "capability \"%s\" is already registered", plugin->capability);
+            return FR_ERR;
+        }
+    }
+    if (registry->translator_count == FR_REGISTRY_CAPACITY) {
+        fr_error_set(err, "cannot register \"%s\": registry is full", plugin->capability);
+        return FR_ERR;
+    }
+    registry->translators[registry->translator_count++] = *plugin;
+    return FR_OK;
+}
+
+size_t fr_registry_migrator_count(const fr_registry *registry) {
+    return registry->migrator_count;
+}
+
+const fr_migrator_plugin *fr_registry_migrator_at(const fr_registry *registry, size_t index) {
+    if (index >= registry->migrator_count) return NULL;
+    return &registry->migrators[index];
+}
+
+const fr_migrator_plugin *fr_registry_migrator_of(const fr_registry *registry, const char *label) {
+    for (size_t index = 0; index < registry->migrator_count; index++) {
+        if (strcmp(registry->migrators[index].label, label) == 0) return &registry->migrators[index];
+    }
+    return NULL;
+}
+
+const fr_translator_plugin *fr_registry_translator(const fr_registry *registry, const char *tool,
+                                                   const char *id) {
+    for (size_t index = 0; index < registry->translator_count; index++) {
+        const fr_translator_plugin *candidate = &registry->translators[index];
+        if (strcmp(candidate->tool, tool) == 0 && strcmp(candidate->id, id) == 0) return candidate;
+    }
+    return NULL;
 }

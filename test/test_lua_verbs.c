@@ -369,7 +369,7 @@ TEST exec_outside_a_task_or_publish_callback_is_refused(void) {
         "daukle.exec(daukle.tool('test_lua_verbs'), { '--exec-child', '0' })",
         "=t", env, &err));
     ASSERTm(err.message, strstr(err.message,
-        "daukle.exec is available only inside a task or publish callback") != NULL);
+        "daukle.exec is available only inside a task, publish or migrator callback") != NULL);
 
     lua_settop(state, 0);
     fr_registry_destroy(registry);
@@ -389,7 +389,7 @@ TEST provision_outside_a_task_or_publish_callback_is_refused(void) {
 
     ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, "daukle.provision{}", "=t", env, &err));
     ASSERTm(err.message, strstr(err.message,
-        "daukle.provision is available only inside a task or publish callback") != NULL);
+        "daukle.provision is available only inside a task, publish or migrator callback") != NULL);
 
     lua_settop(state, 0);
     fr_registry_destroy(registry);
@@ -493,7 +493,7 @@ TEST a_close_handler_runs_inside_the_window_its_scope_is_in(void) {
 
     ASSERT_EQ(FR_ERR, fr_lua_run_in_env(state, closing_scope, "=t", env, &err));
     ASSERTm(err.message, strstr(err.message,
-        "daukle.exec is available only inside a task or publish callback") != NULL);
+        "daukle.exec is available only inside a task, publish or migrator callback") != NULL);
 
     lua_settop(state, 0);
     fr_registry_destroy(registry);
@@ -3265,7 +3265,7 @@ TEST built_outside_a_task_or_publish_callback_is_refused(void) {
     fr_test_remove_tree(BUILT_DIRECTORY);
     ASSERT_EQ(FR_ERR, status);
     ASSERTm(message, strstr(message,
-        "daukle.built is available only inside a task or publish callback") != NULL);
+        "daukle.built is available only inside a task, publish or migrator callback") != NULL);
     PASS();
 }
 

@@ -152,14 +152,14 @@ static int lua_declare_resolver(lua_State *state) {
                                  " resolver, which this one was not");
     }
     if (fr_lua_verbs_env_declared_exec()) {
-        return luaL_error(state, "daukle.exec is available only to a toolchain or publisher plugin");
+        return luaL_error(state, "daukle.exec is available only to a toolchain, publisher or migrator plugin");
     }
     if (fr_lua_verbs_env_declared_tool()) {
         return luaL_error(state, "a resolver may not start a process, so it may not declare"
                                  " daukle.tool");
     }
     if (fr_lua_verbs_env_declared_provision()) {
-        return luaL_error(state, "daukle.provision is available only to a toolchain or publisher plugin");
+        return luaL_error(state, "daukle.provision is available only to a toolchain, publisher or migrator plugin");
     }
     luaL_checktype(state, 1, LUA_TTABLE);
     if (chunk_declared_other || chunk_declared_resolver) {
@@ -300,6 +300,10 @@ void fr_lua_verbs_install_registration(lua_State *state) {
     lua_setfield(state, -2, "resolver");
     lua_pushcfunction(state, fr_lua_declare_plugin);
     lua_setfield(state, -2, "plugin");
+    lua_pushcfunction(state, fr_lua_declare_migrator);
+    lua_setfield(state, -2, "migrator");
+    lua_pushcfunction(state, fr_lua_declare_translator);
+    lua_setfield(state, -2, "translator");
 }
 
 /* A second registry reference to the same value, under a key nothing else can
@@ -366,6 +370,7 @@ void fr_lua_declare_reset(void) {
             free(plugin_slots[index].env[e]);
         }
         free(plugin_slots[index].env);
+        fr_lua_declare_free_migrate_strings(&plugin_slots[index]);
     }
     plugin_slot_count = 0;
     registering_into = NULL;
