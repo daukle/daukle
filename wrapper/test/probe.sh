@@ -138,14 +138,38 @@ check "the pin was left alone" sh -c 'cmp -s /old/.daukle/wrapper.toml /w/.daukl
 check "no staging file was left behind" sh -c '! ls /old/*.update.* >/dev/null 2>&1'
 
 echo
-echo "=== 11. DESTRUCTIVE from here: the downloader is removed ==="
+echo "=== 11. the pinned catalogs reach the binary as DAUKLE_CATALOGS ==="
+# The binary is a stub whose digest is written into a copy of the pin, so the cache is warm and no
+# download happens: what is under test is the environment the wrapper hands over.
+want_catalogs=$(sed -n 's/^[[:space:]]*catalogs[[:space:]]*=[[:space:]]*\[\(.*\)\].*/\1/p' /w/.daukle/wrapper.toml |
+    tr -d '"' | tr ',' ' ' | tr -s ' ' | sed 's/^ //; s/ $//')
+check "the pin carries a catalogs line" test -n "$want_catalogs"
+mkdir -p /cat /cat-cache/wrapper/9.9.9/linux/x86_64 && cp -r /w/. /cat/ && chmod +x /cat/daukle
+printf '#!/bin/sh\nprintf "%%s" "${DAUKLE_CATALOGS-unset}"\n' > /cat-cache/wrapper/9.9.9/linux/x86_64/stub
+chmod +x /cat-cache/wrapper/9.9.9/linux/x86_64/stub
+stub_digest=$(sha256sum /cat-cache/wrapper/9.9.9/linux/x86_64/stub | cut -d' ' -f1)
+sed -i "s/^version = .*/version = \"9.9.9\"/; s/^asset = \"$want_asset\"/asset = \"stub\"/; s/^sha256 = \"$want_digest\"/sha256 = \"$stub_digest\"/" /cat/.daukle/wrapper.toml
+out=$(cd /cat && env -u DAUKLE_CATALOGS DAUKLE_CACHE_DIR=/cat-cache ./daukle)
+echo "$out"
+check "an unset DAUKLE_CATALOGS is filled from the pin" test "$out" = "$want_catalogs"
+out=$(cd /cat && DAUKLE_CATALOGS= DAUKLE_CACHE_DIR=/cat-cache ./daukle)
+check "an empty DAUKLE_CATALOGS is filled from the pin" test "$out" = "$want_catalogs"
+out=$(cd /cat && DAUKLE_CATALOGS="https://example.invalid/own.json" DAUKLE_CACHE_DIR=/cat-cache ./daukle)
+echo "$out"
+check "a user's own DAUKLE_CATALOGS replaces the default" test "$out" = "https://example.invalid/own.json"
+sed -i '/^catalogs/d' /cat/.daukle/wrapper.toml
+out=$(cd /cat && env -u DAUKLE_CATALOGS DAUKLE_CACHE_DIR=/cat-cache ./daukle)
+check "a pin without catalogs leaves it unset" test "$out" = "unset"
+
+echo
+echo "=== 12. DESTRUCTIVE from here: the downloader is removed ==="
 rm -f /usr/bin/curl /usr/bin/wget
 out=$(./daukle --version 2>/dev/null)
 echo "$out"
 check "a warm cache works with no downloader present" test "$out" = "daukle $want_version"
 
 echo
-echo "=== 12. no downloader and an empty cache names the packages ==="
+echo "=== 13. no downloader and an empty cache names the packages ==="
 out=$(DAUKLE_CACHE_DIR=/tmp/empty-cache ./daukle --version 2>&1 || true)
 echo "$out"
 check "message names curl and wget" sh -c 'echo "$1" | grep -q "neither curl nor wget"' _ "$out"

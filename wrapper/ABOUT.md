@@ -29,6 +29,11 @@ the host's shell already does. The pin is a line of text a reviewer can read.
 **An upgrade is a one-file diff.** The version and the digests live in `.daukle/wrapper.toml` and
 nowhere else, so bumping daukle never touches a script.
 
+**The pin also names the default plugin catalogs** for `daukle migrate`, as a one-line `catalogs`
+list. Both scripts hand it to daukle as `DAUKLE_CATALOGS` when that variable is unset or empty; a
+`DAUKLE_CATALOGS` the user already set replaces the default rather than adding to it. A pin with no
+`catalogs` line leaves the variable alone.
+
 **`./daukle wrapper update [version]` replaces all three files** with the ones a release publishes
 (`D-68`). Without a version it takes the latest, resolved by the download itself rather than by a
 separate question to an API that the following request could disagree with. It is the only daukle

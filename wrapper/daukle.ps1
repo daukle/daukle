@@ -161,6 +161,14 @@ if (-not (Test-Path -LiteralPath $binary) -or (Digest-Of $binary) -ne $sha256) {
 # Stop that record TERMINATES: `.\daukle.ps1 build 2>&1 > log.txt` killed the calling script on an
 # ordinary daukle diagnostic. The wrapping is intrinsic to 5.1 and stays; what this restores is
 # that it does not abort the caller, and that daukle's exit code still propagates. Measured.
+if ([string]::IsNullOrEmpty($env:DAUKLE_CATALOGS)) {
+    $catalogLine = $pin | Where-Object { $_ -match '^\s*catalogs\s*=\s*\[(.*)\]' } | Select-Object -First 1
+    if ($catalogLine -and $catalogLine -match '^\s*catalogs\s*=\s*\[(.*)\]') {
+        $catalogs = [regex]::Matches($Matches[1], '"([^"]*)"') | ForEach-Object { $_.Groups[1].Value }
+        if ($catalogs) { $env:DAUKLE_CATALOGS = ($catalogs -join ' ') }
+    }
+}
+
 $ErrorActionPreference = 'Continue'
 & $binary @args
 exit $LASTEXITCODE

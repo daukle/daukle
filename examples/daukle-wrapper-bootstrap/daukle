@@ -183,4 +183,15 @@ if [ ! -f "$binary" ] || [ "$(digest_of "$binary")" != "$sha256" ]; then
     mv -f "$partial" "$binary"
 fi
 
+# The list is one line of quoted strings; a pin may omit it, and a user's own DAUKLE_CATALOGS wins.
+if [ -z "${DAUKLE_CATALOGS:-}" ]; then
+    catalogs=$(sed -n 's/^[[:space:]]*catalogs[[:space:]]*=[[:space:]]*\[\(.*\)\].*/\1/p' "$pin_file" |
+        head -n 1 | tr -d '\r' | tr ',' '\n' | sed -n 's/^[[:space:]]*"\([^"]*\)"[[:space:]]*$/\1/p' |
+        tr '\n' ' ')
+    if [ -n "$catalogs" ]; then
+        DAUKLE_CATALOGS="${catalogs% }"
+        export DAUKLE_CATALOGS
+    fi
+fi
+
 exec "$binary" "$@"
