@@ -1487,6 +1487,7 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     char cache_dir[512];
     snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_github_resolver_%d",
             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
     fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
 
     release_requests = 0;
@@ -1517,6 +1518,7 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
     fr_resolvers_clear();
     fr_http_set_backend(previous);
     fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
 
     ASSERT(built);
     ASSERT(began);
@@ -1580,6 +1582,7 @@ TEST the_github_resolver_does_not_cache_a_list_that_satisfies_nothing(void) {
     char cache_dir[512];
     snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_github_unsatisfied_%d",
             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
     fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
     fr_http_fn previous = fr_http_set_backend(stub_release_published_later);
 
@@ -1594,6 +1597,7 @@ TEST the_github_resolver_does_not_cache_a_list_that_satisfies_nothing(void) {
 
     fr_http_set_backend(previous);
     fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
 
     ASSERT(before_status != FR_OK);
     ASSERT(strstr(before_message, "no release of \"daukle/remote\" satisfies \"^1.2.0\"") != NULL);
@@ -1975,6 +1979,7 @@ TEST the_report_names_a_declared_unused_resolver(void) {
     char cache_dir[512];
     snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_unused_resolver_%d",
             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
     fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
 
     fr_http_fn previous = fr_http_set_backend(stub_named_artifacts);
@@ -2002,6 +2007,7 @@ TEST the_report_names_a_declared_unused_resolver(void) {
     fr_plugin_fetch_discard(artifact_url);
     fr_http_set_backend(previous);
     fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
 
     ASSERT(built && began && seeded);
     ASSERTm(message, loaded);
@@ -2410,6 +2416,7 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     char cache_dir[512];
     snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_plugin_update_cache_%d",
             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
     fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
 
     fr_plugin_fetch_discard(fresh_url);
@@ -2478,6 +2485,7 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     cJSON_Delete(document);
     fr_test_set_env("RESOLVER_TARGET", NULL);
     fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
 
     ASSERT(built_first && built_second && built_third);
     ASSERT(first_load && second_load && third_load);
@@ -2531,6 +2539,7 @@ TEST plugin_update_persists_the_fresh_url_with_the_cache_disabled(void) {
     char cache_dir[512];
     snprintf(cache_dir, sizeof cache_dir, "%s/daukle_test_update_no_cache_%d",
             fr_test_temp_base(), fr_test_process_id());
+    fr_test_remove_tree(cache_dir);
     fr_test_set_env("DAUKLE_CACHE_DIR", cache_dir);
     fr_test_set_env("RESOLVER_TARGET", "one");
 
@@ -2569,6 +2578,7 @@ TEST plugin_update_persists_the_fresh_url_with_the_cache_disabled(void) {
     cJSON_Delete(document);
     fr_test_set_env("RESOLVER_TARGET", NULL);
     fr_test_set_env("DAUKLE_CACHE_DIR", NULL);
+    fr_test_remove_tree(cache_dir);
 
     ASSERT(update_began);
     ASSERTm(err.message, updated);
