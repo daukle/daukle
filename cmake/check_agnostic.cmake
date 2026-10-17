@@ -20,7 +20,8 @@ set(CORE_FILES
     project/derived_paths.c lua/lua_verbs_built.c
     project/toolchain_root.c project/toolchain_root.h
     project/tasks_instance.c project/tasks_internal.h
-    config/config_declare_migrate.c config/config_dispatch_migrate.c config/config_dispatch_migrate.h)
+    config/config_declare_migrate.c config/config_dispatch_migrate.c config/config_dispatch_migrate.h
+    migrate/catalog.c migrate/catalog.h migrate/catalog_entry.c migrate/catalog_internal.h)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
