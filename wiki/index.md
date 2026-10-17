@@ -96,8 +96,50 @@ permanent cost.
 | `clean` | remove what sync generated |
 | `init` | write a starter `daukle.toml` |
 | `plugin update` | refetch plugins, ignoring the cache |
+| `migrate` | turn a project built by another tool into a daukle project |
+| `migrate --done` | delete the old tool's files a finished migration kept |
 
 `--resolve` allows a task to fetch an unpinned url and report its digest. `--no-cache` refetches.
+
+## Migrating a project built by another tool
+
+`daukle migrate` runs in a directory that holds no `daukle.toml` or `daukle.lua`, and refuses one
+that does. It knows no build tool. It reads **catalogs**, lists of plugins each with the files that
+make a project theirs, detects which of those plugins the directory needs, and asks each one for the
+project's model. Where a plugin answers with something daukle cannot express, it writes nothing and
+prints every such blocker, grouped by who reported it.
+
+When nothing blocks, it writes `daukle.toml`, builds the project with the old tool and with daukle,
+compares the artifacts each migrator named, and only then moves the old tool's files to
+`build/daukle/migrate/old`. Run `daukle migrate --done` to delete them once you are satisfied.
+
+| exit | meaning |
+| --- | --- |
+| 0 | migrated; the old files are in `build/daukle/migrate/old` |
+| 3 | blocked; nothing was written |
+| 4 | the proof failed; `daukle.toml` is kept for inspection and nothing was moved |
+| 1 | an error in migrate itself, such as a fetch, a plugin error or a malformed catalog |
+
+- **`--catalog <location>`** adds a catalog, an http or https url or a path, and can be repeated.
+- **`--with <id>`** uses the catalog plugin with that id at the project root even if no rule matched,
+  and can be repeated. An id no catalog lists is an error.
+- **`DAUKLE_CATALOGS`** holds whitespace-separated locations. Each `--catalog` is added after them.
+  With no location at all, migrate stops and says so.
+- **The wrapper** sets `DAUKLE_CATALOGS` from the `catalogs` list in `.daukle/wrapper.toml` when the
+  variable is unset or empty. A `DAUKLE_CATALOGS` you set yourself replaces that default, and a pin
+  with no `catalogs` line leaves the variable alone.
+- **`migrate --done`** takes no `--catalog` or `--with`, and fails when there is nothing to finish.
+- **`daukle clean` refuses** while `build/daukle/migrate/old` exists, because that directory holds
+  the only copy of what the migration replaced.
+
+A catalog is read at run time and never cached. It is a JSON document with a `plugins` list; each
+entry has an `id`, an `asset` of `{ url, sha256 }` that migrate pins into the `[plugins]` table of
+the manifest it writes, `detect` rules of `files`, optional `contains` patterns and a `scope` of
+`root` or `tree`, and a `replaces` map of tool, then kind, then foreign plugin ids. A malformed
+entry is dropped with a warning, and an id listed twice keeps the earlier catalog's entry. A plugin
+with no `asset` that migrate would need is a blocker, since there is nothing to pin.
+
+The plugin side is on [[daukle/02-plugins]].
 
 ## Where things are written
 

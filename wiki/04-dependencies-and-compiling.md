@@ -92,6 +92,10 @@ fetch anything unpinned**, so without them it cannot build at all.
 
 Neither is the project root. If you are not meant to edit it, it does not sit where you work.
 
+One exception to "clean deletes it": `build/daukle/migrate/old` holds the files `daukle migrate`
+moved aside, the only copy of them, so `daukle clean` refuses while it exists. `daukle migrate
+--done` deletes it. A toolchain instance of any other name has its own `build/daukle/<name>/`.
+
 ## What this page does not cover
 
 **The resolve is not exercised by this repository's CI**, and that is a real gap rather than an
