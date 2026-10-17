@@ -148,6 +148,32 @@ either, since one runs at whatever moment Lua collects garbage, outside every ca
 project's own `daukle.lua`. `__close` is unaffected, because a to-be-closed variable runs at scope
 exit, inside the callback that declared it.
 
+## Running what your build produced: `daukle.built`
+
+`daukle.tool(name)` finds a program on the search path and `root:tool(member)` finds one in a
+provisioned toolchain. **A program your own task just built is neither**, so a plugin that wants to
+run it declares `"built"` beside `"exec"`:
+
+```lua
+daukle.plugin{ api = 1, uses = { "tool", "exec", "built" } }
+
+-- inside a task's run(context), after the build step has linked bin/app
+local app = daukle.built(context.host.os == "windows" and "bin/app.exe" or "bin/app")
+daukle.exec(app, { "--port", "8080" })
+```
+
+**The path is relative to the running task's derived directory** (`build/daukle/<toolchain>/`) and
+answers the same tool handle `daukle.tool` does. It is held to the rules `daukle.write` is held to:
+written with `/`, never absolute or drive-lettered, no `..` anywhere, no empty or `.` segment and no
+control character. It must name a regular file that is already there, so a directory or a missing
+file is refused by name, and a link the build left behind is followed and must still land inside
+the derived directory. **No extension is guessed**: on Windows name the `.exe` yourself. A `.bat`
+or `.cmd` is refused exactly as `daukle.tool` refuses one, because starting it takes `cmd.exe`.
+
+`daukle.built` is available exactly where `daukle.exec` is, inside a task's `run` or a publisher's
+`publish`, and refused with the same phase-naming messages everywhere else. A daukle that predates
+it refuses `uses = { "built" }` by name, so it needs no api bump.
+
 ## What `api` is for, and when to raise it
 
 `api = 1` says which plugin api your plugin was written against. **daukle refuses an api HIGHER

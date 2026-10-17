@@ -142,10 +142,7 @@ int fr_lua_sandbox_canonical_dir(const char *path, char **out, fr_error *err) {
 
 #endif
 
-/* Requires a whole path component to match so a sibling directory whose name
-   merely starts with base_dir's name, such as "projectevil" beside "project",
-   cannot pass a bare prefix test. */
-static int within_base_dir(const char *canonical_base, const char *canonical_target) {
+int fr_lua_sandbox_is_within(const char *canonical_base, const char *canonical_target) {
     size_t base_len = strlen(canonical_base);
     if (strncmp(canonical_base, canonical_target, base_len) != 0) return 0;
     char boundary = canonical_target[base_len];
@@ -177,7 +174,7 @@ static int resolve_in_base(const char *canonical_base, const char *relative, int
     /* A symlink or an NTFS junction inside base_dir can point anywhere on disk;
        climbs_out only rejects the literal argument, so the real destination has
        to be resolved and re-checked, not just the lexical request. */
-    int inside = within_base_dir(canonical_base, canonical_target)
+    int inside = fr_lua_sandbox_is_within(canonical_base, canonical_target)
                  || (as_directory && strcmp(canonical_base, canonical_target) == 0);
     if (!inside) {
         free(canonical_target);
@@ -189,7 +186,7 @@ static int resolve_in_base(const char *canonical_base, const char *relative, int
     return FR_OK;
 }
 
-/* The base stays on the stack for the whole resolve: within_base_dir compares
+/* The base stays on the stack for the whole resolve: fr_lua_sandbox_is_within compares
    against it after the target is canonicalised, so popping it early would
    leave the comparison reading a slot lua is free to reuse. */
 static int resolve_under_base(lua_State *state, const char *relative, int as_directory,

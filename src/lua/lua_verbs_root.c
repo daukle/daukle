@@ -140,14 +140,19 @@ int fr_lua_root_tool(lua_State *state) {
         return luaL_error(state, "\"%s\" is in the provisioned root but its absolute path could"
                                  " not be resolved", member);
     }
-
-    fr_lua_tool *handle = lua_newuserdatauv(state, sizeof *handle, 0);
-    int path_written = snprintf(handle->path, sizeof handle->path, "%s", absolute);
+    int pushed = fr_lua_push_tool_handle(state, absolute, member);
     free(absolute);
-    if (path_written < 0 || (size_t) path_written >= sizeof handle->path) {
+    if (!pushed) {
         return luaL_error(state, "the absolute path of \"%s\" is too long for a tool handle",
                           member);
     }
+    return 1;
+}
+
+int fr_lua_push_tool_handle(lua_State *state, const char *absolute, const char *member) {
+    if (strlen(absolute) >= sizeof ((fr_lua_tool *) NULL)->path) return 0;
+    fr_lua_tool *handle = lua_newuserdatauv(state, sizeof *handle, 0);
+    snprintf(handle->path, sizeof handle->path, "%s", absolute);
     snprintf(handle->name, sizeof handle->name, "%s", member_base_name(member));
     luaL_getmetatable(state, FR_TOOL_HANDLE);
     lua_setmetatable(state, -2);
