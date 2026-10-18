@@ -156,11 +156,6 @@ if (-not (Test-Path -LiteralPath $binary) -or (Digest-Of $binary) -ne $sha256) {
     Move-Item -LiteralPath $partial -Destination $binary -Force
 }
 
-# Stop governs the wrapper's own failures and must not govern daukle's. Windows PowerShell 5.1
-# wraps a native command's stderr in an ErrorRecord whenever the caller redirects it, and under
-# Stop that record TERMINATES: `.\daukle.ps1 build 2>&1 > log.txt` killed the calling script on an
-# ordinary daukle diagnostic. The wrapping is intrinsic to 5.1 and stays; what this restores is
-# that it does not abort the caller, and that daukle's exit code still propagates. Measured.
 if ([string]::IsNullOrEmpty($env:DAUKLE_CATALOGS)) {
     $catalogLine = $pin | Where-Object { $_ -match '^\s*catalogs\s*=\s*\[(.*)\]' } | Select-Object -First 1
     if ($catalogLine -and $catalogLine -match '^\s*catalogs\s*=\s*\[(.*)\]') {
@@ -169,6 +164,11 @@ if ([string]::IsNullOrEmpty($env:DAUKLE_CATALOGS)) {
     }
 }
 
+# Stop governs the wrapper's own failures and must not govern daukle's. Windows PowerShell 5.1
+# wraps a native command's stderr in an ErrorRecord whenever the caller redirects it, and under
+# Stop that record TERMINATES: `.\daukle.ps1 build 2>&1 > log.txt` killed the calling script on an
+# ordinary daukle diagnostic. The wrapping is intrinsic to 5.1 and stays; what this restores is
+# that it does not abort the caller, and that daukle's exit code still propagates. Measured.
 $ErrorActionPreference = 'Continue'
 & $binary @args
 exit $LASTEXITCODE
