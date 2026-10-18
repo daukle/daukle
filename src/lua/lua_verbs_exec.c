@@ -140,15 +140,15 @@ int fr_lua_verb_exec(lua_State *state) {
     }
     if (fr_lua_plugin_exec_is_refused()) {
         return luaL_error(state, "daukle.exec is not available while a plugin chunk is"
-                                 " loading; call it from a task or publish callback");
+                                 " loading; call it from a task, publish or migrator callback");
     }
     const char *phase = fr_lua_process_free_callback_phase();
     if (phase != NULL) {
-        return luaL_error(state, "daukle.exec is not available while %s; call it from a task or"
-                                 " publish callback", phase);
+        return luaL_error(state, "daukle.exec is not available while %s; call it from a task,"
+                                 " publish or migrator callback", phase);
     }
     if (!fr_lua_task_dispatch_is_running()) {
-        return luaL_error(state, "daukle.exec is available only inside a task or publish callback");
+        return luaL_error(state, "daukle.exec is available only inside a task, publish or migrator callback");
     }
     if (luaL_testudata(state, 1, FR_TOOL_HANDLE) == NULL) {
         return luaL_error(state, "daukle.exec argument 1 must be a tool handle from daukle.tool");

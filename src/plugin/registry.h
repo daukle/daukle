@@ -77,6 +77,27 @@ typedef struct {
     void *state;
 } fr_task_plugin;
 
+/* A plugin's migrator: run asks the old tool for its model and returns data,
+   build runs the old build for the proof and may be NULL. Both run with exec
+   and provision available. label is the [plugins] label of the plugin that
+   declared it, which is how migrate pairs a detection with its answer. */
+typedef struct {
+    const char *capability;
+    const char *label;
+    const char *tool;
+    const char *toolchain;
+    void *state;
+} fr_migrator_plugin;
+
+/* Replaces one foreign plugin of one tool: data in, data out, no process. */
+typedef struct {
+    const char *capability;
+    const char *label;
+    const char *tool;
+    const char *id;
+    void *state;
+} fr_translator_plugin;
+
 typedef struct {
     const char *capability;
     const char *file_name;
@@ -94,6 +115,14 @@ int fr_registry_add_language(fr_registry *registry, const fr_language_plugin *pl
 int fr_registry_add_config(fr_registry *registry, const fr_config_plugin *plugin, fr_error *err);
 int fr_registry_add_toolchain(fr_registry *registry, const fr_toolchain_plugin *plugin, fr_error *err);
 int fr_registry_add_task(fr_registry *registry, const fr_task_plugin *plugin, fr_error *err);
+int fr_registry_add_migrator(fr_registry *registry, const fr_migrator_plugin *plugin, fr_error *err);
+int fr_registry_add_translator(fr_registry *registry, const fr_translator_plugin *plugin,
+                               fr_error *err);
+size_t fr_registry_migrator_count(const fr_registry *registry);
+const fr_migrator_plugin *fr_registry_migrator_at(const fr_registry *registry, size_t index);
+const fr_migrator_plugin *fr_registry_migrator_of(const fr_registry *registry, const char *label);
+const fr_translator_plugin *fr_registry_translator(const fr_registry *registry, const char *tool,
+                                                   const char *id);
 const fr_source_plugin *fr_registry_source(const fr_registry *registry, const char *capability);
 const fr_language_plugin *fr_registry_language(const fr_registry *registry, const char *capability);
 const fr_config_plugin *fr_registry_config(const fr_registry *registry, const char *capability);

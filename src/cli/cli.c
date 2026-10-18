@@ -31,6 +31,22 @@ static int parse_positive_number(const char *text, unsigned long *out) {
     return 1;
 }
 
+/* Appends value to a repeatable option's list, refusing past its capacity
+   rather than dropping the extra one silently. */
+static int append_repeated(const char **list, size_t *count, size_t capacity, const char *value) {
+    if (*count >= capacity) return 0;
+    list[(*count)++] = value;
+    return 1;
+}
+
+const char *fr_cli_migrate_option_misused(const fr_cli_options *options) {
+    if (options->command == FR_CLI_MIGRATE || options->command == FR_CLI_USAGE) return NULL;
+    if (options->catalog_count > 0) return "--catalog";
+    if (options->with_count > 0) return "--with";
+    if (options->migrate_done) return "--done";
+    return NULL;
+}
+
 /* An unrecognised option is a usage error rather than a positional argument:
    read as one, a mistyped "--no-chache" would become the manifest path and the
    run would fail against a file the user never named. */
@@ -53,6 +69,9 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
     out->init_name = NULL;
     out->help_topic = NULL;
     out->help_unknown_topic = NULL;
+    out->catalog_count = 0;
+    out->with_count = 0;
+    out->migrate_done = 0;
 
     const char *words[FR_CLI_MAX_WORDS];
     size_t word_count = 0;
@@ -75,6 +94,18 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
             out->add_consumer = argv[++index];
         } else if (strcmp(argument, "--modules") == 0 && has_value_argument(index, argc, argv)) {
             out->add_modules = argv[++index];
+        } else if (strcmp(argument, "--catalog") == 0 && has_value_argument(index, argc, argv)) {
+            if (!append_repeated(out->catalogs, &out->catalog_count,
+                                 sizeof out->catalogs / sizeof *out->catalogs, argv[++index])) {
+                return;
+            }
+        } else if (strcmp(argument, "--with") == 0 && has_value_argument(index, argc, argv)) {
+            if (!append_repeated(out->with, &out->with_count, sizeof out->with / sizeof *out->with,
+                                 argv[++index])) {
+                return;
+            }
+        } else if (strcmp(argument, "--done") == 0) {
+            out->migrate_done = 1;
         } else if (strcmp(argument, "--lua-instruction-limit") == 0 && has_value_argument(index, argc, argv)) {
             unsigned long value = 0;
             if (!parse_positive_number(argv[++index], &value) || value > (unsigned long) LONG_MAX) return;
@@ -135,6 +166,9 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
         if (word_count > 2) return;
         out->command = FR_CLI_INIT;
         if (word_count == 2) out->init_name = words[1];
+    } else if (strcmp(command, "migrate") == 0) {
+        if (word_count > 1) return;
+        out->command = FR_CLI_MIGRATE;
     } else if (strcmp(command, "help") == 0) {
         if (word_count > 2) return;
         out->command = FR_CLI_HELP;
@@ -193,6 +227,18 @@ static const fr_cli_command_doc COMMAND_DOCS[] = {
       "\n"
       "It does NOT install the wrapper, and cannot: the release URL that would need belongs to\n"
       "the wrapper scripts, not to daukle. See wrapper/ABOUT.md." },
+    { FR_CLI_MIGRATE, "migrate", "migrate [--catalog <location>]... [--with <id>]... | migrate --done",
+      "turn a project built by another tool into a daukle project",
+      "Detects what builds the project from the catalogs it is given, asks each detected plugin\n"
+      "for the project's model and each replacing plugin for its settings, and writes nothing\n"
+      "if anything cannot be expressed: the report names every blocker. Otherwise it writes\n"
+      "daukle.toml, builds the project both ways and compares the results, and only then moves\n"
+      "the old tool's files to build/daukle/migrate/old. `migrate --done` deletes them.\n"
+      "\n"
+      "Catalogs come from DAUKLE_CATALOGS and each --catalog. The wrapper sets DAUKLE_CATALOGS\n"
+      "from its wrapper.toml when it is unset. --with names a catalog id to use at the root.\n"
+      "\n"
+      "Exits 0 when migrated, 3 when blocked, 4 when the proof failed, 1 on an error." },
     { FR_CLI_TASK, NULL, "<task>",
       "run a task by the name `tasks` lists",
       "A task takes no manifest path, because two bare words cannot be told apart from a task\n"

@@ -26,7 +26,7 @@ int fr_lua_verb_write(lua_State *state) {
     }
     if (fr_lua_plugin_exec_is_refused()) {
         return luaL_error(state, "daukle.write is not available while a plugin chunk is"
-                                 " loading; call it from a task or publish callback");
+                                 " loading; call it from a task, publish or migrator callback");
     }
     luaL_checktype(state, 1, LUA_TTABLE);
 

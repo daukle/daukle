@@ -1,0 +1,8 @@
+schema = 1
+project = "execs"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+stub = "./plugins/stub.lua"

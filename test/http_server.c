@@ -309,7 +309,7 @@ void fr_test_server_stop(fr_test_server *server) {
     server->stopping = 1;
 #ifdef _WIN32
     if (server->thread != NULL) {
-        WaitForSingleObject(server->thread, 5000);
+        WaitForSingleObject(server->thread, INFINITE);
         CloseHandle(server->thread);
         server->thread = NULL;
     }

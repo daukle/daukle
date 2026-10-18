@@ -11,6 +11,10 @@ int fr_project_parse(const char *text, const char *origin, fr_project *out, fr_e
 /* Takes ownership of root on both paths: the manifest holds it on success and
    it is deleted here on failure, so no caller ever frees root itself. */
 int fr_manifest_from_document(struct cJSON *root, const char *origin, fr_manifest *out, fr_error *err);
+/* True for a relative path that stays below the directory it is joined onto and
+   has one spelling: forward slashes, no empty, "." or ".." segment, no trailing
+   slash, no drive letter and no control character. */
+int fr_manifest_relative_path_is_safe(const char *path);
 void fr_project_free(fr_project *project);
 void fr_manifest_free(fr_manifest *manifest);
 const fr_module *fr_project_module(const fr_project *project, const char *name);

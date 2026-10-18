@@ -1,5 +1,6 @@
 #include "project/tasks.h"
 
+#include "project/tasks_internal.h"
 #include "util/error.h"
 
 #include <stdio.h>
@@ -13,7 +14,8 @@
    this list does not would make a plugin's task of that name unreachable, with
    nothing to say why. */
 static const char *RESERVED_COMMANDS[] = {
-    "sync", "check", "add", "config", "plugin", "clean", "tasks", "publish", "help", "init"
+    "sync", "check", "add", "config", "plugin", "clean", "tasks", "publish", "help", "init",
+    "migrate"
 };
 
 int fr_tasks_name_is_reserved(const char *name) {
@@ -56,11 +58,14 @@ static int name_is_usable(const char *name) {
     return leaf_is_usable(owner) && leaf_is_usable(name + prefix + 1);
 }
 
-static const fr_toolchain *toolchain_for(const fr_manifest *manifest, const char *name,
-                                         size_t prefix) {
+int fr_tasks_text_is_prefix(const char *declared, const char *name, size_t prefix) {
+    return strlen(declared) == prefix && strncmp(declared, name, prefix) == 0;
+}
+
+static const fr_toolchain *toolchain_named(const fr_manifest *manifest, const char *name,
+                                           size_t prefix) {
     for (size_t index = 0; index < manifest->toolchain_count; index++) {
-        const char *declared = manifest->toolchains[index].name;
-        if (strlen(declared) == prefix && strncmp(declared, name, prefix) == 0) {
+        if (fr_tasks_text_is_prefix(manifest->toolchains[index].name, name, prefix)) {
             return &manifest->toolchains[index];
         }
     }
@@ -89,7 +94,7 @@ static const fr_publish_target *publish_target_for(const fr_manifest *manifest, 
    a run a toolchain-less node. */
 static const fr_toolchain *toolchain_of_destination(const fr_manifest *manifest,
                                                     const fr_publish_target *publish) {
-    return toolchain_for(manifest, publish->from, strlen(publish->from));
+    return toolchain_named(manifest, publish->from, strlen(publish->from));
 }
 
 const fr_task_node *fr_tasks_find(const fr_task_set *set, const char *name) {
@@ -110,7 +115,7 @@ static fr_task_node *find_mutable(fr_task_set *set, const char *name) {
     return NULL;
 }
 
-static int check_name(const char *name, fr_error *err) {
+int fr_tasks_check_name(const char *name, fr_error *err) {
     if (!name_is_usable(name)) {
         fr_error_set(err, "\"%s\" is not a usable task name: a name is lowercase letters, digits,"
                           " \".\", \"_\" and \"-\", optionally prefixed by a toolchain and a colon", name);
@@ -124,7 +129,7 @@ static int check_name(const char *name, fr_error *err) {
     return FR_OK;
 }
 
-static int append(fr_task_set *set, const fr_task_node *node, fr_error *err) {
+int fr_tasks_append(fr_task_set *set, const fr_task_node *node, fr_error *err) {
     fr_task_node *nodes = realloc(set->nodes, (set->count + 1) * sizeof *nodes);
     if (nodes == NULL) {
         fr_error_set(err, "out of memory collecting task \"%s\"", node->name);
@@ -149,7 +154,7 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
             return FR_ERR;
         }
         const char *name = plugin->capability + strlen(FR_TASK_CAPABILITY_PREFIX);
-        if (check_name(name, err) != FR_OK) {
+        if (fr_tasks_check_name(name, err) != FR_OK) {
             fr_tasks_set_free(out);
             return FR_ERR;
         }
@@ -164,16 +169,18 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
 
         const fr_toolchain *toolchain = NULL;
         const fr_publish_target *publish = NULL;
-        if (prefix > 0) {
-            if (prefix_is_publish(name, prefix)) {
-                publish = publish_target_for(manifest, name, prefix);
-                if (publish == NULL) continue;
-                toolchain = toolchain_of_destination(manifest, publish);
-                if (toolchain == NULL) continue;
-            } else {
-                toolchain = toolchain_for(manifest, name, prefix);
-                if (toolchain == NULL) continue;
+        if (prefix > 0 && !prefix_is_publish(name, prefix)) {
+            if (fr_tasks_append_toolchain_nodes(out, manifest, plugin, name, prefix, err) != FR_OK) {
+                fr_tasks_set_free(out);
+                return FR_ERR;
             }
+            continue;
+        }
+        if (prefix > 0) {
+            publish = publish_target_for(manifest, name, prefix);
+            if (publish == NULL) continue;
+            toolchain = toolchain_of_destination(manifest, publish);
+            if (toolchain == NULL) continue;
         }
 
         fr_task_node node;
@@ -185,7 +192,7 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
         node.plugin = plugin;
         node.toolchain = toolchain;
         node.publish = publish;
-        if (append(out, &node, err) != FR_OK) {
+        if (fr_tasks_append(out, &node, err) != FR_OK) {
             fr_tasks_set_free(out);
             return FR_ERR;
         }
@@ -193,7 +200,7 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
 
     for (size_t index = 0; index < manifest->task_count; index++) {
         const fr_task *task = &manifest->tasks[index];
-        if (check_name(task->name, err) != FR_OK) {
+        if (fr_tasks_check_name(task->name, err) != FR_OK) {
             fr_tasks_set_free(out);
             return FR_ERR;
         }
@@ -227,7 +234,7 @@ int fr_tasks_collect(const fr_registry *registry, const fr_manifest *manifest,
         node.depends_on = (const char *const *) task->depends_on;
         node.depends_on_count = task->depends_on_count;
         node.run = task->run;
-        if (append(out, &node, err) != FR_OK) {
+        if (fr_tasks_append(out, &node, err) != FR_OK) {
             fr_tasks_set_free(out);
             return FR_ERR;
         }
@@ -263,8 +270,11 @@ size_t fr_tasks_joiners(const fr_task_set *set, const char *name, fr_task_join_k
 void fr_tasks_set_free(fr_task_set *set) {
     if (set == NULL) return;
     free(set->nodes);
-    set->nodes = NULL;
-    set->count = 0;
+    for (size_t index = 0; index < set->owned_count; index++) free(set->owned[index]);
+    free(set->owned);
+    for (size_t index = 0; index < set->owned_list_count; index++) free(set->owned_lists[index]);
+    free(set->owned_lists);
+    memset(set, 0, sizeof *set);
 }
 
 /* The sentence a caller prints when goal names no declared task at all,

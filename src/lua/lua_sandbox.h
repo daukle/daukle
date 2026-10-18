@@ -64,6 +64,14 @@ int fr_lua_sandbox_resolve_dir(lua_State *state, const char *relative, char **ou
 int fr_lua_sandbox_resolve_dir_in(const char *base_dir, const char *relative, char **out_path,
                                   fr_error *err);
 
+/* Whether canonical_target lies strictly beneath canonical_base, both already
+   canonicalised. A whole path component must match, so a sibling whose name
+   merely starts with the base's, such as "projectevil" beside "project",
+   cannot pass a bare prefix test. Exposed so daukle.built holds a program to a
+   subdirectory of the project, its task's derived directory, by the same
+   rule the project itself is held to. */
+int fr_lua_sandbox_is_within(const char *canonical_base, const char *canonical_target);
+
 /* True if relative_path could escape a base directory it was joined onto: a
    leading separator, a drive letter, or a ".." component anywhere (which also
    rejects a legitimate file named "a..b.lua"; a simple, auditable rule beats a

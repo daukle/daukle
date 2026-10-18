@@ -9,6 +9,7 @@
 #include "lua/lua_verbs.h"
 #include "plugin/plugins.h"
 #include "plugin/registry.h"
+#include "plugin/resolvers.h"
 #include "project/derived.h"
 #include "project/region.h"
 #include "project/sync.h"
@@ -23,17 +24,57 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define MAX_LIVE_REGISTRIES 8
+
+/* What a case built and has not yet destroyed, so teardown can free what a failed assertion skipped. */
+static fr_registry *live_registries[MAX_LIVE_REGISTRIES];
+
+static fr_registry *track_registry(fr_registry *registry) {
+    for (size_t index = 0; index < MAX_LIVE_REGISTRIES; index++) {
+        if (live_registries[index] == NULL) {
+            live_registries[index] = registry;
+            break;
+        }
+    }
+    return registry;
+}
+
+static fr_registry *create_tracked_registry(void) {
+    fr_registry *registry = fr_registry_create();
+    return registry == NULL ? NULL : track_registry(registry);
+}
+
+static int build_tracked_registry(fr_registry **out, fr_error *err) {
+    int status = fr_build_registry(out, err);
+    if (status == FR_OK) track_registry(*out);
+    return status;
+}
+
+static void destroy_tracked_registry(fr_registry *registry) {
+    for (size_t index = 0; index < MAX_LIVE_REGISTRIES; index++) {
+        if (live_registries[index] == registry) live_registries[index] = NULL;
+    }
+    fr_registry_destroy(registry);
+}
+
+static void destroy_leaked_registries(void) {
+    for (size_t index = 0; index < MAX_LIVE_REGISTRIES; index++) {
+        fr_registry_destroy(live_registries[index]);
+        live_registries[index] = NULL;
+    }
+}
+
 TEST a_script_beside_a_toml_manifest_changes_it(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-overlay/daukle.toml",
                                          registry, &manifest, &err));
     ASSERT_EQ(2, manifest.self.version.major);
     ASSERT(fr_project_module(&manifest.self, "generated") != NULL);
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -41,12 +82,12 @@ TEST a_script_beside_a_toml_manifest_changes_it(void) {
 TEST a_failing_script_names_its_file(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    fr_build_registry(&registry, &err);
+    build_tracked_registry(&registry, &err);
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-broken/daukle.toml",
                                           registry, &manifest, &err));
     ASSERT(strstr(err.message, "daukle.lua") != NULL);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -62,7 +103,7 @@ static void record_log(const char *message) {
 TEST daukle_log_routes_through_the_caller_supplied_sink(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     log_sink_called = 0;
     fr_lua_set_log_sink(record_log);
@@ -75,7 +116,7 @@ TEST daukle_log_routes_through_the_caller_supplied_sink(void) {
 
     fr_lua_set_log_sink(NULL);
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -83,7 +124,7 @@ TEST daukle_log_routes_through_the_caller_supplied_sink(void) {
 TEST an_untouched_empty_array_survives_the_round_trip(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-array-untouched/daukle.toml",
                                          registry, &manifest, &err));
@@ -91,7 +132,7 @@ TEST an_untouched_empty_array_survives_the_round_trip(void) {
     ASSERT(core != NULL);
     ASSERT_EQ(0, (int) core->requires_count);
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -99,7 +140,7 @@ TEST an_untouched_empty_array_survives_the_round_trip(void) {
 TEST a_script_clearing_an_array_to_an_empty_table_still_yields_an_array(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-array-cleared/daukle.toml",
                                          registry, &manifest, &err));
@@ -107,7 +148,7 @@ TEST a_script_clearing_an_array_to_an_empty_table_still_yields_an_array(void) {
     ASSERT(core != NULL);
     ASSERT_EQ(0, (int) core->requires_count);
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -115,13 +156,13 @@ TEST a_script_clearing_an_array_to_an_empty_table_still_yields_an_array(void) {
 TEST a_script_clearing_an_object_to_an_empty_table_stays_an_object(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-object-cleared/daukle.toml",
                                          registry, &manifest, &err));
     ASSERT(fr_project_module(&manifest.self, "seed") == NULL);
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -134,7 +175,7 @@ TEST a_script_clearing_an_object_to_an_empty_table_stays_an_object(void) {
 TEST a_lua_only_manifest_may_empty_the_arrays_it_declares(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     fr_manifest manifest;
     int status = fr_config_load_file("test/fixtures/lua-root-empty-arrays/daukle.lua",
                                      registry, &manifest, &err);
@@ -145,7 +186,7 @@ TEST a_lua_only_manifest_may_empty_the_arrays_it_declares(void) {
     size_t depends = status == FR_OK && tasks == 1 ? manifest.tasks[0].depends_on_count : 1;
 
     if (status == FR_OK) fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     ASSERT_STR_EQ("", message);
@@ -158,13 +199,13 @@ TEST a_lua_only_manifest_may_empty_the_arrays_it_declares(void) {
 TEST a_script_registers_a_language_plugin(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    fr_build_registry(&registry, &err);
+    build_tracked_registry(&registry, &err);
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-plugin/daukle.toml",
                                          registry, &manifest, &err));
     ASSERT(fr_registry_language(registry, "daukle.language/plaintext") != NULL);
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -175,12 +216,12 @@ TEST a_script_registers_a_language_plugin(void) {
 TEST a_script_may_not_declare_one_capability_twice(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    fr_build_registry(&registry, &err);
+    build_tracked_registry(&registry, &err);
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-collide/daukle.toml",
                                           registry, &manifest, &err));
     ASSERT(strstr(err.message, "\"daukle.language/npm\" is declared twice") != NULL);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -226,12 +267,12 @@ TEST a_lua_root_manifest_loads_the_plugins_it_declares(void) {
 TEST a_plugin_name_too_long_for_the_capability_buffer_is_rejected(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    fr_build_registry(&registry, &err);
+    build_tracked_registry(&registry, &err);
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-plugin-long-name/daukle.toml",
                                           registry, &manifest, &err));
     ASSERT(strstr(err.message, "too long") != NULL);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -286,20 +327,20 @@ TEST a_low_instruction_limit_stops_a_script_that_would_otherwise_finish(void) {
        out of this test immediately and skips the trailing reset, which would
        otherwise leak a tightened override into whichever test runs next. */
     fr_lua_set_limits(0, 0);
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-limit-instruction/daukle.toml",
                                          registry, &manifest, &err));
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     fr_lua_set_limits(1000, 0);
     registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-limit-instruction/daukle.toml",
                                           registry, &manifest, &err));
     ASSERT(strstr(err.message, "ran for too long") != NULL);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_lua_set_limits(0, 0);
     PASS();
@@ -318,20 +359,20 @@ TEST a_low_memory_limit_fails_a_script_that_would_otherwise_finish(void) {
        a failed ASSERT must not let this test's or the previous test's override
        survive into whatever runs next. */
     fr_lua_set_limits(0, 0);
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-limit-memory/daukle.toml",
                                          registry, &manifest, &err));
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     fr_lua_set_limits(0, 2000000);
     registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-limit-memory/daukle.toml",
                                           registry, &manifest, &err));
     ASSERT(strstr(err.message, "not enough memory") != NULL);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_lua_set_limits(0, 0);
     PASS();
@@ -342,12 +383,12 @@ TEST a_low_memory_limit_fails_a_script_that_would_otherwise_finish(void) {
 TEST a_script_raising_a_table_produces_a_clean_failure(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-error-object/daukle.toml",
                                           registry, &manifest, &err));
     ASSERT(err.message[0] != '\0');
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -358,7 +399,7 @@ TEST a_script_raising_a_table_produces_a_clean_failure(void) {
 TEST refuses_a_second_load_that_redeclares_a_plugin_capability(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-plugin/daukle.toml",
                                          registry, &manifest, &err));
@@ -368,7 +409,7 @@ TEST refuses_a_second_load_that_redeclares_a_plugin_capability(void) {
                                           registry, &manifest, &err));
     ASSERT(strstr(err.message, "declared twice") != NULL);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -378,7 +419,7 @@ TEST refuses_a_second_load_that_redeclares_a_plugin_capability(void) {
 TEST records_every_environment_variable_a_script_read(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_test_set_env("DAUKLE_TEST_CHANNEL", "nightly");
     fr_manifest manifest;
@@ -394,7 +435,7 @@ TEST records_every_environment_variable_a_script_read(void) {
 
     fr_test_set_env("DAUKLE_TEST_CHANNEL", NULL);
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(fr_lua_env_reads() == NULL);
     PASS();
@@ -405,7 +446,7 @@ TEST records_every_environment_variable_a_script_read(void) {
 TEST an_unconvertible_env_read_record_does_not_fail_the_load(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-env-cycle/daukle.toml",
@@ -414,7 +455,7 @@ TEST an_unconvertible_env_read_record_does_not_fail_the_load(void) {
     ASSERT(fr_lua_env_reads() == NULL);
 
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -426,7 +467,7 @@ TEST an_unconvertible_env_read_record_does_not_fail_the_load(void) {
 TEST a_second_load_replaces_the_recorded_environment_reads(void) {
     fr_error err;
     fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_test_set_env("DAUKLE_TEST_CHANNEL", "first");
     fr_manifest manifest;
@@ -446,14 +487,14 @@ TEST a_second_load_replaces_the_recorded_environment_reads(void) {
 
     fr_test_set_env("DAUKLE_TEST_CHANNEL", NULL);
     fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
 
 TEST two_plugin_loads_share_one_state(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     ASSERT(registry != NULL);
 
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
@@ -463,30 +504,30 @@ TEST two_plugin_loads_share_one_state(void) {
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     ASSERT_EQ(first, fr_lua_runtime_state());
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
 
 TEST a_second_registry_is_refused_while_the_first_holds_plugins(void) {
     fr_error err;
-    fr_registry *first = fr_registry_create();
-    fr_registry *second = fr_registry_create();
+    fr_registry *first = create_tracked_registry();
+    fr_registry *second = create_tracked_registry();
     ASSERT(first != NULL && second != NULL);
 
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", first, &err));
     ASSERT_EQ(FR_ERR, fr_lua_runtime_begin(".", second, &err));
     ASSERT(strstr(err.message, "registry") != NULL);
 
-    fr_registry_destroy(first);
-    fr_registry_destroy(second);
+    destroy_tracked_registry(first);
+    destroy_tracked_registry(second);
     fr_lua_runtime_shutdown();
     PASS();
 }
 
 TEST a_second_base_directory_is_refused_naming_both(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     ASSERT(registry != NULL);
 
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin("test/fixtures/lua-plugin", registry, &err));
@@ -494,14 +535,14 @@ TEST a_second_base_directory_is_refused_naming_both(void) {
     ASSERT(strstr(err.message, "lua-plugin") != NULL);
     ASSERT(strstr(err.message, "plugin-local") != NULL);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
 
 TEST the_same_base_directory_spelled_differently_still_reuses_the_runtime(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     ASSERT(registry != NULL);
 
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
@@ -510,7 +551,7 @@ TEST the_same_base_directory_spelled_differently_still_reuses_the_runtime(void) 
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin("./test/..", registry, &err));
     ASSERT_EQ(first, fr_lua_runtime_state());
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
@@ -518,12 +559,12 @@ TEST the_same_base_directory_spelled_differently_still_reuses_the_runtime(void) 
 TEST a_plugin_declares_a_toolchain_and_it_reaches_the_registry(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
     int loaded = fr_config_load_file("test/fixtures/toolchain-plugin/daukle.toml", registry,
                                      &manifest, &err) == FR_OK;
     int registered = loaded && fr_registry_toolchain(registry, "daukle.toolchain/stub") != NULL;
     if (loaded) fr_manifest_free(&manifest);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     ASSERT(loaded);
@@ -534,12 +575,12 @@ TEST a_plugin_declares_a_toolchain_and_it_reaches_the_registry(void) {
 TEST a_toolchain_needs_a_generate_function(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest; fr_error err;
-    fr_build_registry(&registry, &err);
+    build_tracked_registry(&registry, &err);
     int status = fr_config_load_file("test/fixtures/toolchain-nogenerate/daukle.toml", registry,
                                      &manifest, &err);
     char message[sizeof err.message];
     snprintf(message, sizeof message, "%s", err.message);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     ASSERT_EQ(FR_ERR, status);
@@ -564,7 +605,7 @@ TEST a_toolchain_generate_bridges_project_config_root_and_host(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest = {0};
     fr_error err;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     int loaded = built && fr_config_load_file("test/fixtures/toolchain-plugin/daukle.toml",
                                               registry, &manifest, &err) == FR_OK;
     const fr_toolchain_plugin *plugin =
@@ -589,7 +630,7 @@ TEST a_toolchain_generate_bridges_project_config_root_and_host(void) {
 
     fr_derived_free_files(files, file_count);
     if (loaded) fr_manifest_free(&manifest);
-    if (built) fr_registry_destroy(registry);
+    if (built) destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     ASSERT(built);
@@ -622,7 +663,7 @@ TEST a_toolchain_config_excludes_the_reserved_dependencies_key(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest = {0};
     fr_error err;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-config/daukle.toml",
                                               registry, &manifest, &err) == FR_OK;
     const fr_toolchain_plugin *plugin =
@@ -642,7 +683,7 @@ TEST a_toolchain_config_excludes_the_reserved_dependencies_key(void) {
 
     fr_derived_free_files(files, file_count);
     if (loaded) fr_manifest_free(&manifest);
-    if (built) fr_registry_destroy(registry);
+    if (built) destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     ASSERT(loaded);
@@ -661,7 +702,7 @@ TEST the_generate_context_carries_the_toolchain_version(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest = {0};
     fr_error err;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-config/daukle.toml",
                                               registry, &manifest, &err) == FR_OK;
     const fr_toolchain_plugin *plugin =
@@ -681,7 +722,7 @@ TEST the_generate_context_carries_the_toolchain_version(void) {
 
     fr_derived_free_files(files, file_count);
     if (loaded) fr_manifest_free(&manifest);
-    if (built) fr_registry_destroy(registry);
+    if (built) destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     ASSERT(loaded);
@@ -699,7 +740,7 @@ TEST the_generate_context_still_hides_dependencies_from_config(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest = {0};
     fr_error err;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-config/daukle.toml",
                                               registry, &manifest, &err) == FR_OK;
     const fr_toolchain_plugin *plugin =
@@ -719,7 +760,7 @@ TEST the_generate_context_still_hides_dependencies_from_config(void) {
 
     fr_derived_free_files(files, file_count);
     if (loaded) fr_manifest_free(&manifest);
-    if (built) fr_registry_destroy(registry);
+    if (built) destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     ASSERT(loaded);
@@ -791,7 +832,7 @@ TEST a_toolchain_generate_must_return_a_table(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest = {0};
     fr_error err;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-badreturn/daukle.toml",
                                               registry, &manifest, &err) == FR_OK;
     const fr_toolchain_plugin *plugin =
@@ -810,7 +851,7 @@ TEST a_toolchain_generate_must_return_a_table(void) {
 
     fr_derived_free_files(files, file_count);
     if (loaded) fr_manifest_free(&manifest);
-    if (built) fr_registry_destroy(registry);
+    if (built) destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     ASSERT(loaded);
@@ -824,7 +865,7 @@ TEST a_toolchain_generate_refuses_a_non_string_file_path(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest = {0};
     fr_error err;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-badkey/daukle.toml",
                                               registry, &manifest, &err) == FR_OK;
     const fr_toolchain_plugin *plugin =
@@ -843,7 +884,7 @@ TEST a_toolchain_generate_refuses_a_non_string_file_path(void) {
 
     fr_derived_free_files(files, file_count);
     if (loaded) fr_manifest_free(&manifest);
-    if (built) fr_registry_destroy(registry);
+    if (built) destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     ASSERT(loaded);
@@ -857,7 +898,7 @@ TEST a_toolchain_generate_refuses_a_non_string_file_contents(void) {
     fr_registry *registry = NULL;
     fr_manifest manifest = {0};
     fr_error err;
-    int built = fr_build_registry(&registry, &err) == FR_OK;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
     int loaded = built && fr_config_load_file("test/fixtures/toolchain-generate-badvalue/daukle.toml",
                                               registry, &manifest, &err) == FR_OK;
     const fr_toolchain_plugin *plugin =
@@ -876,7 +917,7 @@ TEST a_toolchain_generate_refuses_a_non_string_file_contents(void) {
 
     fr_derived_free_files(files, file_count);
     if (loaded) fr_manifest_free(&manifest);
-    if (built) fr_registry_destroy(registry);
+    if (built) destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     ASSERT(loaded);
@@ -887,7 +928,7 @@ TEST a_toolchain_generate_refuses_a_non_string_file_contents(void) {
 }
 
 TEST a_task_is_declared_and_registered(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *uses[] = { "exec" };
@@ -904,19 +945,19 @@ TEST a_task_is_declared_and_registered(void) {
     ASSERT_STR_EQ("cmake:configure", task->depends_on[0]);
     ASSERT(task->run != NULL);
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     PASS();
 }
 
 TEST a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk = "daukle.task{ name = 'cmake:build', run = function() end }\n";
     ASSERT_EQ(FR_ERR, fr_lua_plugin_load(chunk, strlen(chunk), "squatter.lua", NULL, 0, NULL, NULL, &err));
     ASSERT(strstr(err.message, "no toolchain \"cmake\" is declared above this point") != NULL);
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     PASS();
 }
 
@@ -925,7 +966,7 @@ TEST a_task_cannot_claim_a_toolchain_its_chunk_did_not_declare(void) {
    nothing. Without this a plugin declares one such task and keeps the
    capability with no toolchain anywhere. */
 TEST a_task_without_a_toolchain_may_not_keep_provision(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *uses[] = { "provision" };
@@ -936,14 +977,14 @@ TEST a_task_without_a_toolchain_may_not_keep_provision(void) {
                                " is declared above it") != NULL);
 
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     PASS();
 }
 
 /* The companion: the toolchain the chunk declares is what the task inherits
    from, so the same verbs must still load beside one. */
 TEST a_task_beside_a_toolchain_still_keeps_provision(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *uses[] = { "provision" };
@@ -955,12 +996,12 @@ TEST a_task_beside_a_toolchain_still_keeps_provision(void) {
     ASSERT(fr_registry_task(registry, "daukle.task/cmake:build") != NULL);
 
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     PASS();
 }
 
 TEST an_aggregator_needs_no_run(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk = "daukle.task{ name = 'build' }\n";
@@ -970,7 +1011,7 @@ TEST an_aggregator_needs_no_run(void) {
     ASSERT(task != NULL);
     ASSERT(task->run == NULL);
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     PASS();
 }
 
@@ -981,7 +1022,7 @@ TEST an_aggregator_needs_no_run(void) {
    it never enforced. */
 TEST a_task_cannot_depend_on_a_plugin_its_chunk_does_not_require(void) {
     static char message[512];
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk =
@@ -993,7 +1034,7 @@ TEST a_task_cannot_depend_on_a_plugin_its_chunk_does_not_require(void) {
     const fr_task_plugin *task = fr_registry_task(registry, "daukle.task/cmake:build");
 
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
 
     ASSERT_EQ(FR_ERR, status);
     ASSERTm(message, strstr(message, "daukle.task/cmake:build") != NULL);
@@ -1005,7 +1046,7 @@ TEST a_task_cannot_depend_on_a_plugin_its_chunk_does_not_require(void) {
 
 TEST a_task_cannot_be_part_of_a_plugin_its_chunk_does_not_require(void) {
     static char message[512];
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk =
@@ -1015,7 +1056,7 @@ TEST a_task_cannot_be_part_of_a_plugin_its_chunk_does_not_require(void) {
     if (status != FR_OK) snprintf(message, sizeof message, "%s", err.message);
 
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
 
     ASSERT_EQ(FR_ERR, status);
     ASSERTm(message, strstr(message, "is part of \"java:verify\"") != NULL);
@@ -1030,7 +1071,7 @@ TEST a_task_may_depend_on_a_plugin_its_chunk_requires(void) {
     memset(requires, 0, sizeof requires);
     requires[0].alias = (char *) "java";
 
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk =
@@ -1046,7 +1087,7 @@ TEST a_task_may_depend_on_a_plugin_its_chunk_requires(void) {
                     && strcmp(task->depends_on[0], "java:compile") == 0;
 
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
 
     ASSERT_EQ(FR_OK, status);
     ASSERTm("the declared edge must survive the check", edge_kept);
@@ -1058,7 +1099,7 @@ TEST a_task_may_depend_on_a_plugin_its_chunk_requires(void) {
    toolchain joins "build" without naming, or being able to name, whichever
    plugin provides it. */
 TEST a_bare_part_of_is_not_checked_for_an_owner(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk =
@@ -1069,7 +1110,7 @@ TEST a_bare_part_of_is_not_checked_for_an_owner(void) {
     int joined = task != NULL && task->part_of != NULL && strcmp(task->part_of, "build") == 0;
 
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
 
     ASSERT_EQ(FR_OK, status);
     ASSERTm("a bare partOf must still join its aggregator", joined);
@@ -1080,7 +1121,7 @@ TEST a_bare_part_of_is_not_checked_for_an_owner(void) {
    between loads, so a toolchain declared by one plugin's chunk can never
    authorize a task named by a later, unrelated chunk. */
 TEST a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *first_chunk =
@@ -1092,7 +1133,7 @@ TEST a_second_chunks_task_cannot_reuse_the_first_chunks_toolchain(void) {
     ASSERT(strstr(err.message, "no toolchain \"cmake\" is declared above this point") != NULL);
 
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     PASS();
 }
 
@@ -1111,22 +1152,22 @@ TEST the_same_chunk_reordered_is_the_difference_between_refused_and_accepted(voi
     snprintf(below, sizeof below, "%s%s", task, toolchain);
     snprintf(above, sizeof above, "%s%s", toolchain, task);
 
-    fr_registry *first = fr_registry_create();
+    fr_registry *first = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", first, &err));
     int refused = fr_lua_plugin_load(below, strlen(below), "cmake.lua", NULL, 0, NULL, NULL, &err);
     static char message[256];
     snprintf(message, sizeof message, "%s", refused == FR_OK ? "" : err.message);
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(first);
+    destroy_tracked_registry(first);
 
-    fr_registry *second = fr_registry_create();
+    fr_registry *second = create_tracked_registry();
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", second, &err));
     int accepted = fr_lua_plugin_load(above, strlen(above), "cmake.lua", NULL, 0, NULL, NULL, &err);
     char accepted_message[256];
     snprintf(accepted_message, sizeof accepted_message, "%s", accepted == FR_OK ? "" : err.message);
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(second);
+    destroy_tracked_registry(second);
 
     ASSERT_EQ_FMT(FR_ERR, refused, "%d");
     ASSERTm(message, strstr(message, "no toolchain \"cmake\" is declared above this point") != NULL);
@@ -1136,7 +1177,7 @@ TEST the_same_chunk_reordered_is_the_difference_between_refused_and_accepted(voi
 }
 
 TEST exec_for_a_task_above_its_toolchain_is_refused_naming_the_order(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *uses[] = { "exec" };
@@ -1147,7 +1188,7 @@ TEST exec_for_a_task_above_its_toolchain_is_refused_naming_the_order(void) {
     static char message[256];
     snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
 
     ASSERT_EQ(FR_ERR, status);
     ASSERTm(message, strstr(message, "daukle.exec is available only") != NULL);
@@ -1162,7 +1203,7 @@ TEST exec_for_a_task_above_its_toolchain_is_refused_naming_the_order(void) {
    the ordinary "a task needs a name" refusal, and the raise would land after
    an allocation with nothing yet freeing it. */
 TEST a_hostile_index_metatable_on_the_task_table_is_never_consulted(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk =
@@ -1171,7 +1212,7 @@ TEST a_hostile_index_metatable_on_the_task_table_is_never_consulted(void) {
     ASSERT(strstr(err.message, "a task needs a name") != NULL);
     ASSERT(strstr(err.message, "boom") == NULL);
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     PASS();
 }
 
@@ -1189,7 +1230,7 @@ TEST a_hostile_index_metatable_on_the_task_table_is_never_consulted(void) {
    lets the metamethod's second call fire and "boom" leaks into err.message
    instead. */
 TEST a_hostile_index_metatable_on_the_toolchain_table_is_never_consulted(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
     const char *chunk =
@@ -1205,7 +1246,7 @@ TEST a_hostile_index_metatable_on_the_toolchain_table_is_never_consulted(void) {
     ASSERT(strstr(err.message, "a toolchain needs a name") != NULL);
     ASSERT(strstr(err.message, "boom") == NULL);
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     PASS();
 }
 
@@ -1226,7 +1267,7 @@ static int load_resolver_chunk(const char *text, const char *origin,
    replace the callback every later resolved entry is served through. */
 TEST a_chunk_not_acquired_as_a_resolver_may_not_declare_one(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
@@ -1236,7 +1277,7 @@ TEST a_chunk_not_acquired_as_a_resolver_may_not_declare_one(void) {
     static char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
@@ -1247,7 +1288,7 @@ TEST a_chunk_not_acquired_as_a_resolver_may_not_declare_one(void) {
 
 TEST a_resolver_chunk_declares_a_resolver(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
@@ -1255,7 +1296,7 @@ TEST a_resolver_chunk_declares_a_resolver(void) {
     int loaded = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err) == FR_OK;
     int declared = fr_lua_resolver_declared();
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT(loaded);
@@ -1265,7 +1306,7 @@ TEST a_resolver_chunk_declares_a_resolver(void) {
 
 TEST a_resolver_chunk_may_not_also_declare_a_language(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
@@ -1275,7 +1316,7 @@ TEST a_resolver_chunk_may_not_also_declare_a_language(void) {
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
@@ -1285,7 +1326,7 @@ TEST a_resolver_chunk_may_not_also_declare_a_language(void) {
 
 TEST a_chunk_that_declared_a_language_may_not_then_declare_a_resolver(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
@@ -1295,7 +1336,7 @@ TEST a_chunk_that_declared_a_language_may_not_then_declare_a_resolver(void) {
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
@@ -1305,7 +1346,7 @@ TEST a_chunk_that_declared_a_language_may_not_then_declare_a_resolver(void) {
 
 TEST a_resolver_may_not_declare_exec(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *uses[] = { "exec" };
     const char *chunk =
@@ -1315,17 +1356,17 @@ TEST a_resolver_may_not_declare_exec(void) {
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
-    ASSERT(strstr(message, "available only to a toolchain or publisher plugin") != NULL);
+    ASSERT(strstr(message, "available only to a toolchain, publisher or migrator plugin") != NULL);
     PASS();
 }
 
 TEST a_resolver_may_not_declare_tool(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *uses[] = { "tool" };
     const char *chunk =
@@ -1335,7 +1376,7 @@ TEST a_resolver_may_not_declare_tool(void) {
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
@@ -1345,7 +1386,7 @@ TEST a_resolver_may_not_declare_tool(void) {
 
 TEST a_resolver_needs_a_resolve_function(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
@@ -1354,7 +1395,7 @@ TEST a_resolver_needs_a_resolve_function(void) {
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
@@ -1364,7 +1405,7 @@ TEST a_resolver_needs_a_resolve_function(void) {
 
 TEST a_hostile_metatable_cannot_supply_the_resolve_function(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
@@ -1374,7 +1415,7 @@ TEST a_hostile_metatable_cannot_supply_the_resolve_function(void) {
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
@@ -1391,7 +1432,7 @@ TEST a_hostile_metatable_cannot_supply_the_resolve_function(void) {
    no raw "resolve" key and refuses, and no resolver is left declared. */
 TEST a_hostile_metatable_returning_a_function_is_never_used_as_resolve(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
@@ -1403,7 +1444,7 @@ TEST a_hostile_metatable_returning_a_function_is_never_used_as_resolve(void) {
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
@@ -1417,7 +1458,7 @@ TEST a_hostile_metatable_returning_a_function_is_never_used_as_resolve(void) {
    declared one, not whether any chunk ever has. */
 TEST a_chunk_declaring_no_resolver_reports_none_declared(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *first_chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
@@ -1430,7 +1471,7 @@ TEST a_chunk_declaring_no_resolver_reports_none_declared(void) {
     int second_loaded = fr_lua_plugin_load(second_chunk, strlen(second_chunk), "second.lua", NULL, 0, NULL, NULL, &err) == FR_OK;
     int declared = fr_lua_resolver_declared();
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT(first_loaded);
@@ -1444,7 +1485,7 @@ TEST a_chunk_declaring_no_resolver_reports_none_declared(void) {
    behind for the next fr_lua_resolver_declared caller. */
 TEST a_refused_resolver_chunk_reports_none_declared(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
@@ -1453,7 +1494,7 @@ TEST a_refused_resolver_chunk_reports_none_declared(void) {
     int status = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err);
     int declared = fr_lua_resolver_declared();
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
@@ -1504,13 +1545,13 @@ static int load_chunk_through_its_declaration(const char *source, const char *or
 TEST reading_an_undeclared_core_credential_is_refused(void) {
     static char message[512];
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *source = "daukle.plugin{ api = 1, uses = { \"env\" } }\n"
                          "daukle.env(\"DAUKLE_TOKEN\")\n";
     int status = load_chunk_through_its_declaration(source, "env-refusal.lua", &err);
     snprintf(message, sizeof message, "%s", err.message);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQm(message, FR_ERR, status);
@@ -1524,13 +1565,13 @@ TEST reading_an_undeclared_core_credential_is_refused(void) {
 TEST reading_a_declared_core_credential_is_allowed(void) {
     static char message[512];
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *source = "daukle.plugin{ api = 1, uses = { \"env\" }, env = { \"DAUKLE_TOKEN\" } }\n"
                          "daukle.env(\"DAUKLE_TOKEN\")\n";
     int status = load_chunk_through_its_declaration(source, "env-allowed.lua", &err);
     snprintf(message, sizeof message, "%s", err.message);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQm(message, FR_OK, status);
@@ -1543,13 +1584,13 @@ TEST reading_a_declared_core_credential_is_allowed(void) {
 TEST reading_a_variable_core_does_not_use_needs_no_declaration(void) {
     static char message[512];
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *source = "daukle.plugin{ api = 1, uses = { \"env\" } }\n"
                          "daukle.env(\"DAUKLE_TEST_ORDINARY\")\n";
     int status = load_chunk_through_its_declaration(source, "env-ordinary.lua", &err);
     snprintf(message, sizeof message, "%s", err.message);
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQm(message, FR_OK, status);
@@ -1561,13 +1602,13 @@ TEST reading_a_variable_core_does_not_use_needs_no_declaration(void) {
 TEST a_language_plugin_may_declare_provision(void) {
     static char message[512];
     fr_error err = { "" };
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = load_declaring_provision(
         "daukle.language{ name = 'x', apply = function() return {} end }", 0, &err);
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQm(message, FR_OK, status);
@@ -1577,13 +1618,13 @@ TEST a_language_plugin_may_declare_provision(void) {
 TEST a_source_plugin_may_declare_provision(void) {
     static char message[512];
     fr_error err = { "" };
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = load_declaring_provision(
         "daukle.source{ name = 'x', load = function() return {} end }", 0, &err);
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQm(message, FR_OK, status);
@@ -1593,13 +1634,13 @@ TEST a_source_plugin_may_declare_provision(void) {
 TEST a_resolver_plugin_declaring_provision_is_refused(void) {
     static char message[512];
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = load_declaring_provision(
         "daukle.resolver{ resolve = function(c) return { url = c } end }", 1, &err);
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQm(message, FR_ERR, status);
@@ -1613,13 +1654,13 @@ TEST a_resolver_plugin_declaring_provision_is_refused(void) {
 TEST a_toolchain_plugin_declaring_provision_loads(void) {
     static char message[512];
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     int status = load_declaring_provision(
         "daukle.toolchain{ name = 'x', generate = function() return {} end }", 0, &err);
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQm(message, FR_OK, status);
@@ -1642,7 +1683,7 @@ static int loads_fixture(const char *manifest) {
     fixture_message[0] = '\0';
 
     fr_registry *registry = NULL;
-    if (fr_build_registry(&registry, &err) != FR_OK) {
+    if (build_tracked_registry(&registry, &err) != FR_OK) {
         snprintf(fixture_message, sizeof fixture_message, "%s", err.message);
         return FR_ERR;
     }
@@ -1654,7 +1695,7 @@ static int loads_fixture(const char *manifest) {
     snprintf(fixture_message, sizeof fixture_message, "%s",
              status == FR_OK && !registered ? "the plugin registered no language" : err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     return status == FR_OK && registered ? FR_OK : FR_ERR;
 }
@@ -1879,7 +1920,7 @@ static int xp_loads(const char *document_json, fr_registry **out_registry) {
 
     fr_registry *registry = NULL;
     cJSON *document = cJSON_Parse(document_json);
-    int status = fr_build_registry(&registry, &err);
+    int status = build_tracked_registry(&registry, &err);
     if (status == FR_OK && xp_overflowed) status = FR_ERR;
     if (status == FR_OK && document == NULL) {
         fr_error_set(&err, "the test document is not json");
@@ -1899,7 +1940,7 @@ static int xp_loads(const char *document_json, fr_registry **out_registry) {
 }
 
 static void xp_done(fr_registry *registry) {
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
 }
@@ -2403,7 +2444,7 @@ TEST the_module_limit_is_shared_across_a_load(void) {
     }
     size_t root_length = fr_test_tar_end(root_archive, offset);
 
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
 
     int cache_was_enabled = fr_cache_enabled();
@@ -2445,7 +2486,7 @@ TEST the_module_limit_is_shared_across_a_load(void) {
     fr_http_set_backend(previous_backend);
     fr_cache_set_enabled(cache_was_enabled);
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
 
     ASSERTm(message, opened);
     ASSERTm(message, declared);
@@ -2492,7 +2533,7 @@ TEST a_drive_letter_is_an_escape_rather_than_an_alias(void) {
 }
 
 TEST a_publisher_reaches_the_registry_under_the_publish_prefix(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
@@ -2502,7 +2543,7 @@ TEST a_publisher_reaches_the_registry_under_the_publish_prefix(void) {
     int found = task != NULL && task->run != NULL;
 
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
 
     ASSERT(began);
     ASSERT_EQ(FR_OK, status);
@@ -2513,7 +2554,7 @@ TEST a_publisher_reaches_the_registry_under_the_publish_prefix(void) {
 TEST a_publisher_may_declare_exec(void) {
     /* The grant itself: the same chunk declaring a source or a language is refused
        outright for having declared exec. */
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *uses[] = { "exec" };
@@ -2524,7 +2565,7 @@ TEST a_publisher_may_declare_exec(void) {
     snprintf(message, sizeof message, "%s", err.message);
 
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
 
     ASSERT(began);
     ASSERT_EQm(message, FR_OK, status);
@@ -2532,7 +2573,7 @@ TEST a_publisher_may_declare_exec(void) {
 }
 
 TEST a_publisher_needs_a_publish_function(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk = "daukle.publisher{ name = 'github' }\n";
@@ -2541,7 +2582,7 @@ TEST a_publisher_needs_a_publish_function(void) {
     snprintf(message, sizeof message, "%s", err.message);
 
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
 
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
@@ -2551,7 +2592,7 @@ TEST a_publisher_needs_a_publish_function(void) {
 
 TEST a_resolver_chunk_may_not_declare_a_publisher(void) {
     fr_error err;
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
@@ -2561,7 +2602,7 @@ TEST a_resolver_chunk_may_not_declare_a_publisher(void) {
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
 
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
 
     ASSERT(began);
@@ -2571,7 +2612,7 @@ TEST a_resolver_chunk_may_not_declare_a_publisher(void) {
 }
 
 TEST a_publisher_chunk_declaring_a_task_is_told_why(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *uses[] = { "exec" };
@@ -2583,7 +2624,7 @@ TEST a_publisher_chunk_declaring_a_task_is_told_why(void) {
     snprintf(message, sizeof message, "%s", err.message);
 
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
 
     ASSERT(began);
     ASSERT_EQ(FR_ERR, status);
@@ -2592,7 +2633,7 @@ TEST a_publisher_chunk_declaring_a_task_is_told_why(void) {
 }
 
 TEST a_publish_callback_reads_its_destination(void) {
-    fr_registry *registry = fr_registry_create();
+    fr_registry *registry = create_tracked_registry();
     fr_error err;
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
@@ -2631,7 +2672,7 @@ TEST a_publish_callback_reads_its_destination(void) {
 
     if (parsed) fr_manifest_free(&manifest);
     fr_lua_runtime_shutdown();
-    fr_registry_destroy(registry);
+    destroy_tracked_registry(registry);
 
     ASSERT(began);
     ASSERT(loaded);
@@ -2644,21 +2685,20 @@ TEST a_publish_callback_reads_its_destination(void) {
 
 GREATEST_MAIN_DEFS();
 
-/* Most cases in this file assert before their cleanup, so a single failure used
-   to leave the lua runtime open and every later case failed against it: three
-   separate root causes once hid behind nine failures. Shutting down here makes
-   that impossible whatever order a case asserts in, because the call is
-   idempotent and a no-op when nothing is open. It does NOT excuse the ordering,
-   which still leaks the registry of whichever case failed; it stops one failure
-   from reporting as dozens. */
-static void close_any_leaked_runtime(void *udata) {
+/* Most cases assert before their cleanup, and a runtime one failure left open
+   once made three root causes report as nine failures. Every call is a no-op
+   when the case already cleaned up. */
+static void release_what_a_failed_case_left(void *udata) {
     (void) udata;
+    destroy_leaked_registries();
     fr_lua_runtime_shutdown();
+    fr_plugins_report_clear();
+    fr_resolvers_clear();
 }
 
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
-    GREATEST_SET_TEARDOWN_CB(close_any_leaked_runtime, NULL);
+    GREATEST_SET_TEARDOWN_CB(release_what_a_failed_case_left, NULL);
     RUN_TEST(a_script_beside_a_toml_manifest_changes_it);
     RUN_TEST(a_failing_script_names_its_file);
     RUN_TEST(daukle_log_routes_through_the_caller_supplied_sink);

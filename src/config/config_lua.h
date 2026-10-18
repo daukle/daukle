@@ -46,6 +46,13 @@ int fr_lua_plugin_load(const char *text, size_t length, const char *origin,
    requires is borrowed from a declaration the loader frees. */
 void fr_lua_declare_set_required_aliases(const fr_plugin_requirement *requires, size_t count);
 
+/* The [plugins] label of the entry whose chunk is loading, which is the label a
+   migrator or translator declared in that chunk registers under. Armed around
+   fr_lua_plugin_load beside the required aliases and disarmed with NULL after
+   it. Borrowed: the entry outlives the load. A migrator or translator in a
+   module or a required chunk registers under the owning entry's label. */
+void fr_lua_declare_set_chunk_label(const char *label);
+
 /* The registry the runtime is currently loading plugins into, or NULL when no
    load phase is open. */
 fr_registry *fr_lua_registering_registry(void);
@@ -58,7 +65,8 @@ fr_registry *fr_lua_registering_registry(void);
 int fr_lua_plugin_exec_is_refused(void);
 
 /* daukle.exec and daukle.provision run only while this is true, which is only
-   inside fr_lua_dispatch_task_run, a task's run or a publisher's publish. A
+   inside fr_lua_dispatch_task_run, a task's run or a publisher's publish, or a
+   migrator's run or build, which open the same window. A
    floor rather than a list of refused windows, so code running where nobody
    named a window, as a finalizer once did, is refused by default. D-135.
    enter and leave are public so a verb's unit test can open the window. */
@@ -68,7 +76,7 @@ void fr_lua_leave_task_dispatch(void);
 
 /* A source's load and a language's apply run on every command, often for a
    dependency the user did not write, so neither may start a process even when
-   its chunk's `uses` names exec for a task or publish callback beside it. A
+   its chunk's `uses` names exec for a task, publish or migrator callback beside it. A
    depth, not a flag, so a load nested inside another load cannot clear the
    gate when it returns. The phase names the outermost callback. D-133. */
 void fr_lua_enter_process_free_callback(const char *phase);

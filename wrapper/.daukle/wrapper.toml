@@ -11,6 +11,11 @@
 # wrapper_pin_matches_release holds this copy to the latest published release.
 version = "0.9.1"
 
+# Where daukle migrate looks for plugins, passed to daukle as DAUKLE_CATALOGS when that is unset.
+# Only the locations are pinned here: what each catalog lists is fetched when migrate runs, so a
+# new plugin reaches every project without a new release.
+catalogs = ["https://raw.githubusercontent.com/daukle/manifest/main/plugins.json"]
+
 # One section per host, keyed as daukle spells it itself (fr_lua_host_os/fr_lua_host_arch). A host
 # with no section is refused by name rather than failing on a 404 at download time, so the two
 # cells this release does not cover say so. Both Mac hosts name ONE universal binary.

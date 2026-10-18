@@ -5,6 +5,7 @@
 #include "plugin/plugins.h"
 #include "plugin/resolve.h"
 #include "project/derived.h"
+#include "project/toolchain_root.h"
 #include "util/error.h"
 
 #include <stdio.h>
@@ -101,10 +102,10 @@ static int adopt_derived_paths(fr_sync_report *report, const fr_derived_report *
 static int refuse_if_declared_in_both_modes(const fr_toolchain *toolchain, const fr_manifest *manifest,
                                             fr_error *err) {
     for (size_t index = 0; index < manifest->consumer_count; index++) {
-        if (strcmp(manifest->consumers[index].language, toolchain->name) == 0) {
+        if (strcmp(manifest->consumers[index].language, toolchain->plugin) == 0) {
             fr_error_set(err, "\"%s\" is declared as a toolchain and as a consumer's language; "
                               "a tool is in managed mode or in adopted mode, never both",
-                        toolchain->name);
+                        toolchain->plugin);
             return FR_ERR;
         }
     }
@@ -118,12 +119,12 @@ static int generate_toolchain(const fr_toolchain *toolchain, const fr_manifest *
     if (refuse_if_declared_in_both_modes(toolchain, manifest, err) != FR_OK) return FR_ERR;
 
     char capability[256];
-    snprintf(capability, sizeof capability, "daukle.toolchain/%s", toolchain->name);
+    snprintf(capability, sizeof capability, "daukle.toolchain/%s", toolchain->plugin);
     const fr_toolchain_plugin *plugin = fr_registry_toolchain(registry, capability);
     if (plugin == NULL) {
         fr_error_set(err, "toolchain \"%s\": no plugin provides toolchain \"%s\"; "
                           "add it to [plugins] in daukle.toml",
-                    toolchain->name, toolchain->name);
+                    toolchain->name, toolchain->plugin);
         return FR_ERR;
     }
 
@@ -145,12 +146,19 @@ static int generate_toolchain(const fr_toolchain *toolchain, const fr_manifest *
     snprintf(project_version, sizeof project_version, "%d.%d.%d", manifest->self.version.major,
             manifest->self.version.minor, manifest->self.version.patch);
 
+    char *root = NULL;
+    if (fr_toolchain_root(toolchain, &root, err) != FR_OK) {
+        fr_resolved_free(resolved, resolved_count);
+        return FR_ERR;
+    }
+
     fr_generated_file *files = NULL;
     size_t file_count = 0;
     int result = plugin->generate(plugin->state, toolchain, manifest->self.project,
-                                  project_version, FR_DERIVED_ROOT_RELATIVE, resolved, resolved_count,
+                                  project_version, root, resolved, resolved_count,
                                   manifest->self.modules, manifest->self.module_count,
                                   &files, &file_count, err);
+    free(root);
     fr_resolved_free(resolved, resolved_count);
 
     if (result == FR_OK) result = validate(files, file_count, canonical_root, err);

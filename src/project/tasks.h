@@ -10,7 +10,8 @@
 /* One task in the collected set. plugin is NULL when the manifest created the
    task, which is the aggregator case; toolchain is NULL unless the name
    carries a "<toolchain>:" prefix. Every string is borrowed from the registry
-   or the manifest, both of which outlive the set. */
+   or the manifest, both of which outlive the set, except the name and edges of
+   a toolchain instance's node, which the set owns and frees. */
 typedef struct {
     const char *name;
     const char *part_of;
@@ -28,10 +29,15 @@ typedef struct {
 typedef struct {
     fr_task_node *nodes;
     size_t count;
+    char **owned;
+    size_t owned_count;
+    char ***owned_lists;
+    size_t owned_list_count;
 } fr_task_set;
 
 /* Builds the set every other function here works over: every task a plugin
-   declared whose toolchain (if any) the manifest declares, plus every task a
+   declared whose toolchain (if any) the manifest declares, once per manifest
+   toolchain providing it under that toolchain's own name, plus every task a
    manifest block created, with a manifest block naming a declared task adding
    edges to it rather than creating a second one. Refuses a reserved name, a
    malformed name, a bodied bare name and a manifest block claiming a

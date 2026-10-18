@@ -24,7 +24,7 @@ void fr_test_server_add_body_bytes(fr_test_server *server, const char *path, con
                                    size_t length);
 
 void fr_test_server_start(fr_test_server *server);
-/* Closes the listener, which is what ends the accept thread, then joins it. */
+/* Raises the stop flag, joins the accept thread, then closes the listener. */
 void fr_test_server_stop(fr_test_server *server);
 void fr_test_server_free(fr_test_server *server);
 

@@ -35,6 +35,13 @@ typedef struct {
        chunk. D-32. */
     char **env;
     size_t env_count;
+    /* A migrator's or translator's own strings, and a migrator's optional
+       build callback (LUA_NOREF when absent). NULL for every other kind. */
+    char *tool;
+    char *toolchain;
+    char *id;
+    char *label;
+    int second_callback;
 } fr_lua_plugin_slot;
 
 /* What each registered plugin kind is dispatched through. Every one takes the
@@ -110,5 +117,11 @@ int fr_lua_declare_take_slot(lua_State *state, const char *prefix, const char *f
                              fr_lua_plugin_slot **out);
 int fr_lua_declare_publisher(lua_State *state);
 int fr_lua_declare_plugin(lua_State *state);
+int fr_lua_declare_migrator(lua_State *state);
+int fr_lua_declare_translator(lua_State *state);
+
+/* Frees the strings a migrator or translator slot owns, called for every slot
+   by fr_lua_declare_reset. */
+void fr_lua_declare_free_migrate_strings(fr_lua_plugin_slot *slot);
 
 #endif
