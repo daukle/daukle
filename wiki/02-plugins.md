@@ -338,7 +338,7 @@ return {
 
 | key | meaning |
 | --- | --- |
-| `manifest` | a fragment of `daukle.toml`, merged with every other migrator's and translator's. Two fragments setting one key to different values is a blocker naming the key and both sources. It may not set `plugins` or `schema`, which core owns |
+| `manifest` | a fragment of `daukle.toml`, merged with every other migrator's and translator's. Two fragments setting one key to different values is a blocker naming the key and both sources. It may not set `plugins` or `schema`, nor `toolchain` or `dir` in any `toolchains` entry, which core owns |
 | `foreign` | the old tool's own plugins the project uses, each `{ kind, id, config? }`, to be replaced by a plugin that claims it in a catalog's `replaces`. One no catalog plugin claims, or two do, is a blocker |
 | `blockers` | what cannot be expressed, each `{ construct, where, why, surface? }` |
 | `owned` | the relative paths of the old tool's files, moved to `build/daukle/migrate/old` once the proof passes. `daukle.toml`, `daukle.lua`, `.`, `build` and anything at or below `build/daukle` are refused, as is a path that climbs out or holds a backslash |
