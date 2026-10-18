@@ -142,17 +142,59 @@ int fr_catalog_parse(const char *text, const char *location, size_t catalog_inde
     return FR_OK;
 }
 
+#define PLAIN_HTTP "http://"
+
 static int is_remote(const char *location) {
-    return strncmp(location, "http://", 7) == 0 || strncmp(location, "https://", 8) == 0;
+    return strncmp(location, PLAIN_HTTP, strlen(PLAIN_HTTP)) == 0
+        || strncmp(location, "https://", 8) == 0;
+}
+
+static int is_loopback_host(const char *authority, size_t length) {
+    static const char *const LOOPBACK[] = { "127.0.0.1", "localhost", "[::1]" };
+    for (size_t index = 0; index < sizeof LOOPBACK / sizeof *LOOPBACK; index++) {
+        size_t host_length = strlen(LOOPBACK[index]);
+        if (length >= host_length && strncmp(authority, LOOPBACK[index], host_length) == 0
+            && (length == host_length || authority[host_length] == ':')) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* A catalog pins the plugin code migrate runs, URL and digest alike, so it is
+   only as trustworthy as its transport; plain http stays usable for a server
+   on this machine. A userinfo part is refused outright, since it is how
+   "localhost@" would otherwise pass for a loopback host. */
+static int is_plain_http_off_this_machine(const char *location) {
+    if (strncmp(location, PLAIN_HTTP, strlen(PLAIN_HTTP)) != 0) return 0;
+    const char *authority = location + strlen(PLAIN_HTTP);
+    size_t length = strcspn(authority, "/?#");
+    if (memchr(authority, '@', length) != NULL) return 1;
+    return !is_loopback_host(authority, length);
 }
 
 static int read_location(const char *location, char **body, fr_error *err) {
+    if (is_plain_http_off_this_machine(location)) {
+        fr_error_set(err, "reading catalog %s: a catalog pins the plugin code migrate runs, so it"
+                          " must arrive over https; plain http is accepted only from 127.0.0.1,"
+                          " localhost or [::1]", location);
+        return FR_ERR;
+    }
     size_t length = 0;
     fr_error inner;
     int status = is_remote(location) ? fr_http_get(location, NULL, 0, body, &length, &inner)
                                      : fr_file_read_bytes(location, body, &length, &inner);
-    if (status != FR_OK) fr_error_set(err, "reading catalog %s: %s", location, inner.message);
-    return status;
+    if (status != FR_OK) {
+        fr_error_set(err, "reading catalog %s: %s", location, inner.message);
+        return FR_ERR;
+    }
+    if (*body == NULL || length == 0) {
+        free(*body);
+        *body = NULL;
+        fr_error_set(err, "reading catalog %s: the catalog is empty", location);
+        return FR_ERR;
+    }
+    return FR_OK;
 }
 
 int fr_catalog_load(const char *const *locations, size_t count, fr_catalog *out, fr_error *err) {

@@ -1,8 +1,11 @@
 #include "greatest.h"
 #include "migrate/catalog.h"
+#include "net/http.h"
+#include "support.h"
 
 #include "cJSON.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -140,6 +143,87 @@ TEST an_unreadable_location_is_an_error_naming_it(void) {
     PASS();
 }
 
+static const char *served_body;
+static int fetch_count;
+
+static int serve_fixed_body(const char *url, const fr_http_header *headers, size_t header_count,
+                            char **out_body, size_t *out_length, fr_error *err) {
+    (void) url;
+    (void) headers;
+    (void) header_count;
+    (void) err;
+    fetch_count++;
+    *out_body = NULL;
+    *out_length = 0;
+    if (served_body == NULL) return FR_OK;
+    size_t length = strlen(served_body);
+    *out_body = malloc(length + 1);
+    if (*out_body == NULL) return FR_ERR;
+    memcpy(*out_body, served_body, length + 1);
+    *out_length = length;
+    return FR_OK;
+}
+
+static int load_one(const char *location, const char *body, fr_catalog *catalog, fr_error *err) {
+    served_body = body;
+    fetch_count = 0;
+    fr_http_fn previous = fr_http_set_backend(serve_fixed_body);
+    const char *locations[] = { location };
+    int status = fr_catalog_load(locations, 1, catalog, err);
+    fr_http_set_backend(previous);
+    return status;
+}
+
+TEST an_empty_catalog_is_an_error_naming_it(void) {
+    fr_catalog catalog;
+    static fr_error err;
+    err.message[0] = '\0';
+    ASSERT_EQ(FR_ERR, load_one("https://example.test/empty.json", NULL, &catalog, &err));
+    ASSERTm(err.message, strstr(err.message, "https://example.test/empty.json") != NULL);
+    ASSERTm(err.message, strstr(err.message, "the catalog is empty") != NULL);
+
+    char path[1024];
+    snprintf(path, sizeof path, "%s/daukle_test_catalog_empty_%d.json", fr_test_temp_base(),
+             fr_test_process_id());
+    FILE *file = fopen(path, "wb");
+    ASSERT(file != NULL);
+    fclose(file);
+    err.message[0] = '\0';
+    int status = load_one(path, NULL, &catalog, &err);
+    remove(path);
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(err.message, strstr(err.message, "the catalog is empty") != NULL);
+    PASS();
+}
+
+TEST a_plain_http_catalog_is_refused_unless_it_is_loopback(void) {
+    const char *refused[] = { "http://example.test/c.json", "http://127.0.0.1.example.test/c.json",
+                              "http://localhost@example.test/c.json", "http://localhost.example.test",
+                              "http://[::1].example.test/c.json" };
+    for (size_t index = 0; index < sizeof refused / sizeof *refused; index++) {
+        fr_catalog catalog;
+        static fr_error err;
+        err.message[0] = '\0';
+        ASSERT_EQm(refused[index], FR_ERR, load_one(refused[index], "{\"plugins\":[]}", &catalog,
+                                                    &err));
+        ASSERT_EQm(refused[index], 0, fetch_count);
+        ASSERTm(err.message, strstr(err.message, refused[index]) != NULL);
+        ASSERTm(err.message, strstr(err.message, "https") != NULL);
+    }
+    const char *accepted[] = { "http://127.0.0.1:8080/c.json", "http://localhost/c.json",
+                               "http://[::1]:9/c.json", "http://localhost", "https://example.test/c.json" };
+    for (size_t index = 0; index < sizeof accepted / sizeof *accepted; index++) {
+        fr_catalog catalog;
+        static fr_error err;
+        err.message[0] = '\0';
+        ASSERT_EQm(err.message, FR_OK, load_one(accepted[index], GOOD, &catalog, &err));
+        ASSERT_EQm(accepted[index], 1, fetch_count);
+        ASSERT_EQ(2, catalog.count);
+        fr_catalog_free(&catalog);
+    }
+    PASS();
+}
+
 SUITE(catalog) {
     RUN_TEST(a_catalog_reads_ids_assets_rules_and_replaces);
     RUN_TEST(a_bare_hyphen_is_found_outside_a_set_and_not_inside_one);
@@ -151,6 +235,8 @@ SUITE(catalog) {
     RUN_TEST(the_first_catalog_wins_an_id_and_the_second_is_a_warning);
     RUN_TEST(locations_with_no_environment_are_just_the_flags);
     RUN_TEST(an_unreadable_location_is_an_error_naming_it);
+    RUN_TEST(an_empty_catalog_is_an_error_naming_it);
+    RUN_TEST(a_plain_http_catalog_is_refused_unless_it_is_loopback);
 }
 
 GREATEST_MAIN_DEFS();
