@@ -172,10 +172,46 @@ static int read_replaces(const cJSON *entry, fr_catalog_plugin *out, fr_error *r
     return out->replaces != NULL ? FR_ENTRY_OK : FR_ENTRY_NO_MEMORY;
 }
 
+static int is_valid_skip_name(const char *name) {
+    if (name[0] == '\0' || strcmp(name, ".") == 0 || strcmp(name, "..") == 0) return 0;
+    if (strpbrk(name, "/\\*?:") != NULL) return 0;
+    for (const unsigned char *cursor = (const unsigned char *) name; *cursor != '\0'; cursor++) {
+        if (*cursor < 0x20 || *cursor == 0x7f) return 0;
+    }
+    return 1;
+}
+
+static int copy_skip_names(const cJSON *skip, fr_catalog_plugin *out, fr_error *reason) {
+    out->skip = calloc((size_t) cJSON_GetArraySize(skip), sizeof *out->skip);
+    if (out->skip == NULL) return FR_ENTRY_NO_MEMORY;
+    const cJSON *item;
+    cJSON_ArrayForEach(item, skip) {
+        if (!cJSON_IsString(item)) return refuse(reason, "has a non-string item in a \"skip\" list");
+        if (!is_valid_skip_name(item->valuestring)) {
+            fr_error_set(reason, "holds the skip name \"%s\", which is not a single directory name "
+                         "without wildcards, colons or control characters", item->valuestring);
+            return FR_ENTRY_REFUSED;
+        }
+        out->skip[out->skip_count] = fr_dup_string(item->valuestring);
+        if (out->skip[out->skip_count] == NULL) return FR_ENTRY_NO_MEMORY;
+        out->skip_count++;
+    }
+    return FR_ENTRY_OK;
+}
+
+static int read_skip(const cJSON *entry, fr_catalog_plugin *out, fr_error *reason) {
+    const cJSON *skip = cJSON_GetObjectItemCaseSensitive(entry, "skip");
+    if (skip == NULL) return FR_ENTRY_OK;
+    if (!cJSON_IsArray(skip)) return refuse(reason, "has a \"skip\" that is not an array");
+    if (cJSON_GetArraySize(skip) == 0) return FR_ENTRY_OK;
+    return copy_skip_names(skip, out, reason);
+}
+
 static int read_fields(const cJSON *entry, fr_catalog_plugin *out, fr_error *reason) {
     int status = read_asset(entry, out, reason);
     if (status == FR_ENTRY_OK) status = read_rules(entry, out, reason);
     if (status == FR_ENTRY_OK) status = read_replaces(entry, out, reason);
+    if (status == FR_ENTRY_OK) status = read_skip(entry, out, reason);
     return status;
 }
 
@@ -187,6 +223,8 @@ void fr_catalog_plugin_release(fr_catalog_plugin *plugin) {
     for (size_t index = 0; index < plugin->rule_count; index++) release_rule(&plugin->rules[index]);
     free(plugin->rules);
     cJSON_Delete(plugin->replaces);
+    for (size_t index = 0; index < plugin->skip_count; index++) free(plugin->skip[index]);
+    free(plugin->skip);
     memset(plugin, 0, sizeof *plugin);
 }
 

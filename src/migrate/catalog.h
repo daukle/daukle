@@ -25,6 +25,8 @@ typedef struct {
     fr_detect_rule *rules;
     size_t rule_count;
     struct cJSON *replaces;
+    char **skip;
+    size_t skip_count;
     size_t catalog_index;
     char *location;
 } fr_catalog_plugin;
