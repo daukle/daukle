@@ -22,10 +22,10 @@ typedef struct {
 } fr_detections;
 
 /* Walks root, evaluates every catalog plugin's rules, settles claims on the
-   same file (a contains match beats a name-only match, then the earlier
-   catalog, and a remaining tie is an error naming every claimant unless one of
-   them is in with), collapses each plugin's matches to the outermost
-   directories, and adds every id in with at the root. An id in with that no
+   same file (a plugin in with wins every file it claims; otherwise a contains
+   match beats a name-only match, then the earlier catalog, and a remaining tie
+   is an error naming every claimant), collapses each plugin's matches to the
+   outermost directories, and adds every id in with at the root. An id in with that no
    catalog lists is an error naming it, and so is a root that is not a
    directory. Links are never followed. The result is sorted by catalog order,
    then by directory. */

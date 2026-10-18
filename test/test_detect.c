@@ -151,6 +151,24 @@ TEST with_breaks_a_tie_and_adds_a_plugin(void) {
     PASS();
 }
 
+TEST with_wins_a_file_another_plugin_outranked_it_on(void) {
+    begin_tree("withforces");
+    write_file("pkg.json", "{\"scripts\": {}}");
+    fr_catalog catalog;
+    CHECK_CALL(parse_catalog(CATALOG, &catalog));
+    const char *with[] = { "pkg-plain" };
+    fr_detections found;
+    static fr_error err;
+    ASSERT_EQm(err.message, FR_OK, fr_detect(scratch, &catalog, with, 1, &found, &err));
+    ASSERT_EQ(1, found.count);
+    ASSERT_STR_EQ("pkg-plain", found.items[0].plugin->id);
+    ASSERT_STR_EQ("", found.items[0].dir);
+    fr_detections_free(&found);
+    fr_catalog_free(&catalog);
+    fr_test_remove_tree(scratch);
+    PASS();
+}
+
 TEST with_adds_a_plugin_that_matched_nothing(void) {
     begin_tree("withadd");
     fr_catalog catalog;
@@ -348,6 +366,7 @@ SUITE(detect) {
     RUN_TEST(a_file_without_the_contains_text_falls_back_to_the_name_only_plugin);
     RUN_TEST(a_name_only_tie_in_one_catalog_is_refused_naming_both);
     RUN_TEST(with_breaks_a_tie_and_adds_a_plugin);
+    RUN_TEST(with_wins_a_file_another_plugin_outranked_it_on);
     RUN_TEST(with_adds_a_plugin_that_matched_nothing);
     RUN_TEST(with_naming_no_catalog_id_is_an_error_naming_it);
     RUN_TEST(a_root_scoped_rule_ignores_subdirectories);

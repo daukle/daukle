@@ -216,33 +216,40 @@ static int first_claim_of_file(const claim_list *claims, size_t index) {
     return 1;
 }
 
-static int outranks(const claim *left, const claim *right) {
+/* --with comes first: it is the user forcing one choice over another, so it
+   outranks whatever the catalogs would have chosen. */
+static int outranks(const fr_detect_run *run, const claim *left, const claim *right) {
+    int left_with = fr_detect_is_with(run, left->plugin);
+    int right_with = fr_detect_is_with(run, right->plugin);
+    if (left_with != right_with) return left_with > right_with;
     if (left->specific != right->specific) return left->specific > right->specific;
     return left->plugin->catalog_index < right->plugin->catalog_index;
 }
 
-static int ties_with(const claim *left, const claim *right) {
-    return left->specific == right->specific &&
-           left->plugin->catalog_index == right->plugin->catalog_index;
+static int ties_with(const fr_detect_run *run, const claim *left, const claim *right) {
+    return fr_detect_is_with(run, left->plugin) == fr_detect_is_with(run, right->plugin)
+           && left->specific == right->specific
+           && left->plugin->catalog_index == right->plugin->catalog_index;
 }
 
-static const claim *best_claim_of_file(const claim_list *claims, const char *file) {
+static const claim *best_claim_of_file(const fr_detect_run *run, const claim_list *claims,
+                                       const char *file) {
     const claim *best = NULL;
     for (size_t index = 0; index < claims->count; index++) {
         const claim *candidate = &claims->items[index];
         if (strcmp(candidate->file, file) != 0) continue;
-        if (best == NULL || outranks(candidate, best)) best = candidate;
+        if (best == NULL || outranks(run, candidate, best)) best = candidate;
     }
     return best;
 }
 
-static void describe_tie(const claim_list *claims, const claim *best, const char *relative_dir,
-                         fr_error *err) {
+static void describe_tie(const fr_detect_run *run, const claim_list *claims, const claim *best,
+                         const char *relative_dir, fr_error *err) {
     fr_strbuf names;
     fr_strbuf_init(&names);
     for (size_t index = 0; index < claims->count; index++) {
         const claim *candidate = &claims->items[index];
-        if (strcmp(candidate->file, best->file) != 0 || !ties_with(candidate, best)) continue;
+        if (strcmp(candidate->file, best->file) != 0 || !ties_with(run, candidate, best)) continue;
         if (names.length > 0) fr_strbuf_append(&names, ", ");
         fr_strbuf_append(&names, candidate->plugin->id);
     }
@@ -253,22 +260,22 @@ static void describe_tie(const claim_list *claims, const claim *best, const char
     free(joined);
 }
 
-static size_t count_tied(const claim_list *claims, const claim *best) {
+static size_t count_tied(const fr_detect_run *run, const claim_list *claims, const claim *best) {
     size_t tied = 0;
     for (size_t index = 0; index < claims->count; index++) {
         const claim *candidate = &claims->items[index];
-        if (strcmp(candidate->file, best->file) == 0 && ties_with(candidate, best)) tied++;
+        if (strcmp(candidate->file, best->file) == 0 && ties_with(run, candidate, best)) tied++;
     }
     return tied;
 }
 
 static int record_winners(fr_detect_run *run, const claim_list *claims, const claim *best,
                           const char *relative_dir, fr_error *err) {
-    int is_tie = count_tied(claims, best) > 1;
+    int is_tie = count_tied(run, claims, best) > 1;
     size_t recorded = 0;
     for (size_t index = 0; index < claims->count; index++) {
         const claim *candidate = &claims->items[index];
-        if (strcmp(candidate->file, best->file) != 0 || !ties_with(candidate, best)) continue;
+        if (strcmp(candidate->file, best->file) != 0 || !ties_with(run, candidate, best)) continue;
         if (is_tie && !fr_detect_is_with(run, candidate->plugin)) continue;
         if (fr_detections_add(run->found, candidate->plugin, relative_dir, err) != FR_OK) {
             return FR_ERR;
@@ -276,7 +283,7 @@ static int record_winners(fr_detect_run *run, const claim_list *claims, const cl
         recorded++;
     }
     if (recorded > 0) return FR_OK;
-    describe_tie(claims, best, relative_dir, err);
+    describe_tie(run, claims, best, relative_dir, err);
     return FR_ERR;
 }
 
@@ -284,7 +291,7 @@ static int settle_claims(fr_detect_run *run, const claim_list *claims, const cha
                          fr_error *err) {
     for (size_t index = 0; index < claims->count; index++) {
         if (!first_claim_of_file(claims, index)) continue;
-        const claim *best = best_claim_of_file(claims, claims->items[index].file);
+        const claim *best = best_claim_of_file(run, claims, claims->items[index].file);
         if (record_winners(run, claims, best, relative_dir, err) != FR_OK) return FR_ERR;
     }
     return FR_OK;
