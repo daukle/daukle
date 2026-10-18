@@ -26,6 +26,26 @@ static const cJSON *member(const cJSON *object, const char *key) {
     return cJSON_IsNull(value) ? NULL : value;
 }
 
+/* fr_migrate_set_instance writes these from the detection, and it must be
+   their only writer: a fragment's value would otherwise win for a root
+   instance and lose for a subdirectory one. */
+static int check_instance_keys(const cJSON *manifest, const char *who, fr_error *err) {
+    static const char *const INSTANCE_KEYS[] = { "toolchain", "dir" };
+    const cJSON *instance = NULL;
+    cJSON_ArrayForEach(instance, cJSON_GetObjectItemCaseSensitive(manifest, "toolchains")) {
+        if (!cJSON_IsObject(instance)) continue;
+        for (size_t index = 0; index < sizeof INSTANCE_KEYS / sizeof *INSTANCE_KEYS; index++) {
+            if (cJSON_GetObjectItemCaseSensitive(instance, INSTANCE_KEYS[index]) != NULL) {
+                fr_error_set(err, "%s returned a malformed result: manifest sets toolchains.%s.%s,"
+                                  " which core writes from the detection and a plugin may not",
+                             who, instance->string, INSTANCE_KEYS[index]);
+                return FR_ERR;
+            }
+        }
+    }
+    return FR_OK;
+}
+
 static int check_manifest(const cJSON *result, const char *who, fr_error *err) {
     const cJSON *manifest = member(result, "manifest");
     if (manifest == NULL) return FR_OK;
@@ -38,7 +58,7 @@ static int check_manifest(const cJSON *result, const char *who, fr_error *err) {
             return FR_ERR;
         }
     }
-    return FR_OK;
+    return check_instance_keys(manifest, who, err);
 }
 
 static int check_foreign(const cJSON *result, const char *who, fr_error *err) {
@@ -156,6 +176,12 @@ static int check_compare_entry(const cJSON *entry, const char *who, fr_error *er
         fr_error_set(err, "%s returned a malformed result: proof.compare paths \"%s\" and \"%s\""
                           " must be relative paths below the project", who, old_path->valuestring,
                      new_path->valuestring);
+        return FR_ERR;
+    }
+    if (equals_ignoring_case(old_path->valuestring, new_path->valuestring)) {
+        fr_error_set(err, "%s returned a malformed result: proof.compare old \"%s\" and new \"%s\""
+                          " name the same file, so comparing them proves nothing", who,
+                     old_path->valuestring, new_path->valuestring);
         return FR_ERR;
     }
     return FR_OK;

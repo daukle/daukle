@@ -306,6 +306,61 @@ TEST malformed_list_entries_are_errors_naming_the_field(void) {
     PASS();
 }
 
+TEST a_compare_entry_naming_one_file_twice_is_an_error(void) {
+    const char *same[][2] = { { "dist/app.js", "dist/app.js" }, { "dist/App.js", "DIST/app.JS" } };
+    for (size_t index = 0; index < sizeof same / sizeof *same; index++) {
+        char json[512];
+        snprintf(json, sizeof json,
+                 "{\"proof\":{\"task\":\"t\",\"compare\":[{\"old\":\"%s\",\"new\":\"%s\","
+                 "\"as\":\"bytes\"}]}}", same[index][0], same[index][1]);
+        fr_blockers blockers = { 0 };
+        static fr_error err;
+        CHECK_CALL(run_check(json, FR_ERR, &blockers, &err));
+        ASSERTm(err.message, strstr(err.message, "gradle") != NULL);
+        ASSERTm(err.message, strstr(err.message, same[index][0]) != NULL);
+        ASSERTm(err.message, strstr(err.message, "the same file") != NULL);
+        fr_blockers_free(&blockers);
+    }
+    fr_blockers blockers = { 0 };
+    fr_error err;
+    CHECK_CALL(run_check("{\"proof\":{\"task\":\"t\",\"compare\":[{\"old\":\"dist/app.js\","
+                         "\"new\":\"dist/app.jsx\",\"as\":\"bytes\"}]}}", FR_OK, &blockers, &err));
+    fr_blockers_free(&blockers);
+    PASS();
+}
+
+TEST a_fragment_setting_an_instance_key_core_owns_is_an_error(void) {
+    const char *keys[] = { "toolchain", "dir" };
+    for (size_t index = 0; index < sizeof keys / sizeof *keys; index++) {
+        char json[512];
+        snprintf(json, sizeof json, "{\"manifest\":{\"toolchains\":{\"stub\":{\"%s\":\"x\"}}},%s}",
+                 keys[index], PROOF);
+        fr_blockers blockers = { 0 };
+        static fr_error err;
+        CHECK_CALL(run_check(json, FR_ERR, &blockers, &err));
+        ASSERTm(err.message, strstr(err.message, "gradle") != NULL);
+        ASSERTm(err.message, strstr(err.message, keys[index]) != NULL);
+        ASSERTm(err.message, strstr(err.message, "toolchains.stub") != NULL);
+
+        cJSON *translation = parse(json);
+        ASSERT(translation != NULL);
+        ASSERT_EQ(FR_ERR, fr_migrate_check_translation(translation, "translator gradle/dep",
+                                                       &blockers, &err));
+        ASSERTm(err.message, strstr(err.message, "translator gradle/dep") != NULL);
+        cJSON_Delete(translation);
+        fr_blockers_free(&blockers);
+    }
+    char json[512];
+    snprintf(json, sizeof json,
+             "{\"manifest\":{\"toolchains\":{\"stub\":{\"version\":\"1\"},\"other\":\"2\"}},%s}",
+             PROOF);
+    fr_blockers blockers = { 0 };
+    fr_error err;
+    CHECK_CALL(run_check(json, FR_OK, &blockers, &err));
+    fr_blockers_free(&blockers);
+    PASS();
+}
+
 TEST a_translation_records_blockers_and_refuses_core_keys(void) {
     fr_blockers blockers = { 0 };
     fr_error err;
@@ -386,6 +441,8 @@ SUITE(migrate_merge) {
     RUN_TEST(the_derived_directory_refusal_names_both_cases);
     RUN_TEST(owned_paths_next_to_the_derived_directory_are_accepted);
     RUN_TEST(malformed_list_entries_are_errors_naming_the_field);
+    RUN_TEST(a_compare_entry_naming_one_file_twice_is_an_error);
+    RUN_TEST(a_fragment_setting_an_instance_key_core_owns_is_an_error);
     RUN_TEST(a_translation_records_blockers_and_refuses_core_keys);
     RUN_TEST(the_report_groups_blockers_by_source);
 }
