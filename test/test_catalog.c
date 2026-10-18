@@ -62,6 +62,59 @@ TEST an_entry_with_a_bare_hyphen_is_refused_and_named(void) {
     PASS();
 }
 
+TEST a_skip_list_is_parsed_into_the_entry(void) {
+    fr_catalog catalog;
+    memset(&catalog, 0, sizeof catalog);
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_catalog_parse(
+        "{\"plugins\":[{\"id\":\"with\",\"asset\":null,\"skip\":[\"deps\",\"vendor dir\"]},"
+        "{\"id\":\"without\",\"asset\":null}]}", "cat", 0, &catalog, &err));
+    ASSERT_EQ(2, catalog.count);
+    const fr_catalog_plugin *with = fr_catalog_find(&catalog, "with");
+    ASSERT_EQ(2, with->skip_count);
+    ASSERT_STR_EQ("deps", with->skip[0]);
+    ASSERT_STR_EQ("vendor dir", with->skip[1]);
+    const fr_catalog_plugin *without = fr_catalog_find(&catalog, "without");
+    ASSERT_EQ(0, without->skip_count);
+    ASSERT(without->skip == NULL);
+    fr_catalog_free(&catalog);
+    PASS();
+}
+
+static enum greatest_test_res refuses_skip(const char *skip_json, const char *named_value) {
+    char document[256];
+    snprintf(document, sizeof document,
+             "{\"plugins\":[{\"id\":\"bad\",\"asset\":null,\"skip\":%s}]}", skip_json);
+    fr_catalog catalog;
+    memset(&catalog, 0, sizeof catalog);
+    fr_error err;
+    ASSERT_EQm(skip_json, FR_OK, fr_catalog_parse(document, "cat", 0, &catalog, &err));
+    ASSERT_EQm(skip_json, 0, catalog.count);
+    ASSERT_EQm(skip_json, 1, catalog.warning_count);
+    ASSERTm(skip_json, strstr(catalog.warnings[0], "\"bad\"") != NULL);
+    ASSERTm(skip_json, strstr(catalog.warnings[0], "skip") != NULL);
+    if (named_value != NULL) ASSERTm(skip_json, strstr(catalog.warnings[0], named_value) != NULL);
+    fr_catalog_free(&catalog);
+    return GREATEST_TEST_RES_PASS;
+}
+
+TEST an_invalid_skip_refuses_the_entry_naming_the_id(void) {
+    CHECK_CALL(refuses_skip("\"x\"", NULL));
+    CHECK_CALL(refuses_skip("{}", NULL));
+    CHECK_CALL(refuses_skip("[\"\"]", NULL));
+    CHECK_CALL(refuses_skip("[\"a/b\"]", "a/b"));
+    CHECK_CALL(refuses_skip("[\"a\\\\b\"]", "a\\b"));
+    CHECK_CALL(refuses_skip("[\"*\"]", "*"));
+    CHECK_CALL(refuses_skip("[\"a?\"]", "a?"));
+    CHECK_CALL(refuses_skip("[\".\"]", NULL));
+    CHECK_CALL(refuses_skip("[\"..\"]", ".."));
+    CHECK_CALL(refuses_skip("[\"c:\"]", "c:"));
+    CHECK_CALL(refuses_skip("[\"a\\u0007b\"]", NULL));
+    CHECK_CALL(refuses_skip("[1]", NULL));
+    CHECK_CALL(refuses_skip("[\"ok\", 1]", NULL));
+    PASS();
+}
+
 TEST a_wildcard_inside_a_path_is_refused(void) {
     fr_catalog catalog;
     memset(&catalog, 0, sizeof catalog);
@@ -228,6 +281,8 @@ SUITE(catalog) {
     RUN_TEST(a_catalog_reads_ids_assets_rules_and_replaces);
     RUN_TEST(a_bare_hyphen_is_found_outside_a_set_and_not_inside_one);
     RUN_TEST(an_entry_with_a_bare_hyphen_is_refused_and_named);
+    RUN_TEST(a_skip_list_is_parsed_into_the_entry);
+    RUN_TEST(an_invalid_skip_refuses_the_entry_naming_the_id);
     RUN_TEST(a_wildcard_inside_a_path_is_refused);
     RUN_TEST(an_id_that_cannot_be_a_label_is_refused);
     RUN_TEST(a_document_with_no_plugins_array_is_an_error);

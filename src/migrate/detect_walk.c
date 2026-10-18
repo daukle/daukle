@@ -48,9 +48,20 @@ static void free_listing(fr_detect_listing *listing) {
 static int walk_directory(fr_detect_run *run, const char *root, const char *relative_dir, int depth,
                           fr_error *err);
 
+static int is_skipped_name(const fr_detect_run *run, const char *name) {
+    for (size_t plugin = 0; plugin < run->catalog->count; plugin++) {
+        const fr_catalog_plugin *entry = &run->catalog->plugins[plugin];
+        for (size_t index = 0; index < entry->skip_count; index++) {
+            if (strcmp(entry->skip[index], name) == 0) return 1;
+        }
+    }
+    return 0;
+}
+
 static int walk_children(fr_detect_run *run, const char *root, const char *relative_dir, int depth,
                          const fr_detect_listing *listing, fr_error *err) {
     for (size_t index = 0; index < listing->subdirectory_count; index++) {
+        if (is_skipped_name(run, listing->subdirectories[index])) continue;
         char *child = fr_detect_join(relative_dir, listing->subdirectories[index]);
         if (child == NULL) {
             fr_error_set(err, "out of memory while walking the project for detection");
