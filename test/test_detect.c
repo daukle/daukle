@@ -27,6 +27,23 @@ static const char *BAD_PATTERN =
     "   \"contains\":[\"[unclosed\"],\"scope\":\"tree\"}]}"
     "]}";
 
+static const char *SKIP_DEPS =
+    "{\"plugins\":["
+    " {\"id\":\"pkg-scripts\",\"asset\":null,\"skip\":[\"deps\"],"
+    "  \"detect\":[{\"files\":[\"pkg.json\"],\"contains\":[\"\\\"scripts\\\"%s*:\"],\"scope\":\"tree\"}]}"
+    "]}";
+
+static const char *NO_SKIP =
+    "{\"plugins\":["
+    " {\"id\":\"pkg-scripts\",\"asset\":null,"
+    "  \"detect\":[{\"files\":[\"pkg.json\"],\"contains\":[\"\\\"scripts\\\"%s*:\"],\"scope\":\"tree\"}]}"
+    "]}";
+
+static const char *SKIP_ONLY_PLUGIN =
+    "{\"plugins\":["
+    " {\"id\":\"hider\",\"asset\":null,\"skip\":[\"deps\"]}"
+    "]}";
+
 static char scratch[1024];
 
 static void begin_tree(const char *name) {
@@ -53,6 +70,12 @@ static void write_file(const char *relative_path, const char *text) {
     if (file == NULL) return;
     fputs(text, file);
     fclose(file);
+}
+
+static void write_skip_tree(void) {
+    write_file("pkg.json", "{}");
+    write_file("deps/a/pkg.json", "{\"scripts\": {}}");
+    write_file("deps/b/pkg.json", "{\"scripts\": {}}");
 }
 
 static enum greatest_test_res parse_catalog(const char *text, fr_catalog *catalog) {
@@ -360,6 +383,73 @@ TEST an_entry_holding_a_slash_names_a_file_below_the_directory(void) {
     PASS();
 }
 
+TEST a_skipped_directory_name_is_not_walked_at_any_depth(void) {
+    begin_tree("skip");
+    write_skip_tree();
+    write_file("app/deps/c/pkg.json", "{\"scripts\": {}}");
+    fr_catalog catalog;
+    CHECK_CALL(parse_catalog(SKIP_DEPS, &catalog));
+    fr_detections found;
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_detect(scratch, &catalog, NULL, 0, &found, &err));
+    ASSERT_EQ(0, found.count);
+    fr_detections_free(&found);
+    fr_catalog_free(&catalog);
+    fr_test_remove_tree(scratch);
+    PASS();
+}
+
+TEST without_skip_the_same_tree_reports_the_dependencies(void) {
+    begin_tree("noskip");
+    write_skip_tree();
+    fr_catalog catalog;
+    CHECK_CALL(parse_catalog(NO_SKIP, &catalog));
+    fr_detections found;
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_detect(scratch, &catalog, NULL, 0, &found, &err));
+    ASSERT_EQ(2, found.count);
+    ASSERT_STR_EQ("deps/a", found.items[0].dir);
+    ASSERT_STR_EQ("deps/b", found.items[1].dir);
+    fr_detections_free(&found);
+    fr_catalog_free(&catalog);
+    fr_test_remove_tree(scratch);
+    PASS();
+}
+
+TEST a_skip_from_another_plugin_hides_the_directory_from_every_plugin(void) {
+    begin_tree("skipunion");
+    write_skip_tree();
+    fr_catalog catalog;
+    CHECK_CALL(parse_catalog(NO_SKIP, &catalog));
+    fr_error parse_err;
+    ASSERT_EQ(FR_OK, fr_catalog_parse(SKIP_ONLY_PLUGIN, "second", 1, &catalog, &parse_err));
+    fr_detections found;
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_detect(scratch, &catalog, NULL, 0, &found, &err));
+    ASSERT_EQ(0, found.count);
+    fr_detections_free(&found);
+    fr_catalog_free(&catalog);
+    fr_test_remove_tree(scratch);
+    PASS();
+}
+
+TEST a_file_named_like_a_skip_entry_is_still_matched(void) {
+    begin_tree("skipfile");
+    write_file("web/pkg.json", "{\"scripts\": {}}");
+    write_file("web/deps", "not a directory");
+    fr_catalog catalog;
+    CHECK_CALL(parse_catalog(SKIP_DEPS, &catalog));
+    fr_detections found;
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_detect(scratch, &catalog, NULL, 0, &found, &err));
+    ASSERT_EQ(1, found.count);
+    ASSERT_STR_EQ("web", found.items[0].dir);
+    fr_detections_free(&found);
+    fr_catalog_free(&catalog);
+    fr_test_remove_tree(scratch);
+    PASS();
+}
+
 SUITE(detect) {
     RUN_TEST(nested_matches_collapse_to_the_outermost);
     RUN_TEST(a_contains_match_beats_a_name_only_match_on_the_same_file);
@@ -376,6 +466,10 @@ SUITE(detect) {
     RUN_TEST(with_keeps_the_subdirectory_where_it_broke_a_tie);
     RUN_TEST(a_root_that_is_not_a_directory_is_an_error_naming_it);
     RUN_TEST(an_entry_holding_a_slash_names_a_file_below_the_directory);
+    RUN_TEST(a_skipped_directory_name_is_not_walked_at_any_depth);
+    RUN_TEST(without_skip_the_same_tree_reports_the_dependencies);
+    RUN_TEST(a_skip_from_another_plugin_hides_the_directory_from_every_plugin);
+    RUN_TEST(a_file_named_like_a_skip_entry_is_still_matched);
     RUN_TEST(name_matching_handles_star_and_question);
     RUN_TEST(a_malformed_pattern_is_an_error_naming_plugin_and_pattern);
 }
