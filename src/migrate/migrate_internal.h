@@ -76,7 +76,9 @@ int fr_migrate_assemble(fr_migrate_state *state, fr_error *err);
 
 /* Records a blocker for every owned path that could not be moved aside once
    daukle.toml is written: one that does not exist, one that is or lies inside
-   another owned path, and one whose place in build/daukle/migrate/old is taken. */
+   another owned path, and one whose place in build/daukle/migrate/old is taken;
+   and one blocker for the whole move when that directory, or one above it, is a
+   link or resolves outside the project. */
 int fr_migrate_check_owned(fr_migrate_state *state, fr_error *err);
 
 /* Writes daukle.toml, proves it in session C, compares, moves the old files. */

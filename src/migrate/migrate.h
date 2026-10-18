@@ -32,7 +32,9 @@ typedef enum {
 int fr_migrate_run(const fr_migrate_options *options, fr_migrate_outcome *out_outcome,
                    fr_error *err);
 
-/* Deletes build/daukle/migrate/old. FR_ERR naming it when there is nothing to finish. */
+/* Deletes build/daukle/migrate/old. FR_ERR naming it when there is nothing to
+   finish, and refusing, before anything is deleted, when it or a directory
+   above it is a link or resolves outside the project. */
 int fr_migrate_done(fr_error *err);
 
 #endif

@@ -13,6 +13,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
+
 GREATEST_MAIN_DEFS();
 
 #define FIXTURES "test/fixtures/migrate-stub"
@@ -121,16 +127,22 @@ static void serve_plugin(migrate_case *test_case, const char *route, const char 
     snprintf(url, url_size, "http://127.0.0.1:%d%s", fr_test_server_port(test_case->server), route);
 }
 
-/* One catalog naming the stub plugin, detected by faketool.conf at the root. */
-static void serve_stub_catalog(migrate_case *test_case, const char *fixture, const char *rule_file) {
+static void serve_stub_catalog_rule(migrate_case *test_case, const char *fixture, const char *rule) {
     char url[256];
     serve_plugin(test_case, "/stub.lua", fixture, test_case->stub_digest, url, sizeof url);
     char catalog[CATALOG_SIZE];
     snprintf(catalog, sizeof catalog,
              "{\"plugins\":[{\"id\":\"stub\",\"asset\":{\"url\":\"%s\",\"sha256\":\"%s\"},"
-             "\"detect\":[{\"files\":[\"%s\"]}]}]}",
-             url, test_case->stub_digest, rule_file);
+             "\"detect\":[%s]}]}",
+             url, test_case->stub_digest, rule);
     fr_test_server_add_body(test_case->server, "/catalog.json", catalog);
+}
+
+/* One catalog naming the stub plugin, detected by rule_file at the root. */
+static void serve_stub_catalog(migrate_case *test_case, const char *fixture, const char *rule_file) {
+    char rule[256];
+    snprintf(rule, sizeof rule, "{\"files\":[\"%s\"]}", rule_file);
+    serve_stub_catalog_rule(test_case, fixture, rule);
 }
 
 static void run_case_with(migrate_case *test_case, const char *const *catalogs,
@@ -570,8 +582,197 @@ TEST a_chunk_that_gates_on_the_manifest_name_loads_during_migrate(void) {
     PASS();
 }
 
+static void make_project_directories(const migrate_case *test_case, const char *const *relatives,
+                                     size_t count) {
+    char path[1024];
+    for (size_t index = 0; index < count; index++) {
+        project_path(test_case, relatives[index], path, sizeof path);
+        fr_test_make_directory(path);
+    }
+}
+
+/* A junction on Windows, where an unprivileged process can make no other
+   directory link, and a symlink elsewhere; it worked only if the marker
+   below the target reads through it. */
+static int link_directory(const char *link_path, const char *target_path, const char *marker) {
+#ifdef _WIN32
+    char command[2400];
+    snprintf(command, sizeof command, "cmd /c mklink /J \"%s\" \"%s\" >nul 2>&1", link_path,
+             target_path);
+    if (system(command) != 0) return 0;
+#else
+    if (symlink(target_path, link_path) != 0) return 0;
+#endif
+    char probe[1200];
+    snprintf(probe, sizeof probe, "%s/%s", link_path, marker);
+    return fr_cache_file_exists(probe);
+}
+
+static void unlink_directory(const char *link_path) {
+#ifdef _WIN32
+    _rmdir(link_path);
+#else
+    remove(link_path);
+#endif
+}
+
+typedef struct {
+    char link[1024];
+    char outside[640];
+    char marker[1024];
+    int linked;
+} planted_link;
+
+/* Plants link_at inside the project as a link to a directory outside it that
+   holds marker_below, then the marker itself. */
+static void plant_link(const migrate_case *test_case, const char *link_at,
+                       const char *const *target_directories, size_t directory_count,
+                       const char *marker_below, planted_link *out) {
+    snprintf(out->outside, sizeof out->outside, "%s/outside", test_case->scratch);
+    fr_test_make_directory(out->outside);
+    char path[1024];
+    for (size_t index = 0; index < directory_count; index++) {
+        snprintf(path, sizeof path, "%s/%s", out->outside, target_directories[index]);
+        fr_test_make_directory(path);
+    }
+    snprintf(out->marker, sizeof out->marker, "%s/%s", out->outside, marker_below);
+    write_bytes(out->marker, "precious\n");
+    project_path(test_case, link_at, out->link, sizeof out->link);
+    out->linked = link_directory(out->link, out->outside, marker_below);
+}
+
+static int done_through(const char *label, const char *link_at, const char *const *parents,
+                        size_t parent_count, const char *const *targets, size_t target_count,
+                        const char *marker_below, int *out_linked, char *message,
+                        size_t message_size) {
+    migrate_case test_case;
+    open_case(&test_case, label, NULL);
+    make_project_directories(&test_case, parents, parent_count);
+    planted_link planted;
+    plant_link(&test_case, link_at, targets, target_count, marker_below, &planted);
+    *out_linked = planted.linked;
+    int status = FR_OK;
+    fr_error err;
+    err.message[0] = '\0';
+    fr_test_get_working_directory(test_case.original_dir, sizeof test_case.original_dir);
+    if (planted.linked && fr_test_set_working_directory(test_case.project)) {
+        status = fr_migrate_done(&err);
+        fr_test_set_working_directory(test_case.original_dir);
+    }
+    int survived = fr_cache_file_exists(planted.marker);
+    snprintf(message, message_size, "%s", err.message);
+    unlink_directory(planted.link);
+    close_case(&test_case);
+    return status == FR_ERR && survived && strstr(message, "refusing") != NULL;
+}
+
+TEST done_refuses_an_old_directory_that_is_a_link(void) {
+    const char *parents[] = { "build", "build/daukle", "build/daukle/migrate" };
+    int linked = 0;
+    static char message[512];
+    int refused = done_through("donelink", "build/daukle/migrate/old", parents, 3, NULL, 0,
+                               "marker.txt", &linked, message, sizeof message);
+    if (!linked) SKIPm("could not create a junction or symlink on this machine");
+    ASSERTm(message, refused);
+    ASSERTm(message, strstr(message, "build/daukle/migrate/old") != NULL);
+    ASSERTm(message, strstr(message, "link") != NULL);
+    PASS();
+}
+
+TEST done_refuses_an_old_directory_that_resolves_outside_the_project(void) {
+    const char *targets[] = { "daukle", "daukle/migrate", "daukle/migrate/old" };
+    int linked = 0;
+    static char message[512];
+    int refused = done_through("doneescape", "build", NULL, 0, targets, 3,
+                               "daukle/migrate/old/marker.txt", &linked, message, sizeof message);
+    if (!linked) SKIPm("could not create a junction or symlink on this machine");
+    ASSERTm(message, refused);
+    ASSERTm(message, strstr(message, "outside") != NULL);
+    PASS();
+}
+
+TEST a_linked_old_directory_blocks_before_anything_is_written(void) {
+    migrate_case test_case;
+    open_case(&test_case, "ownedlink", "hello");
+    serve_stub_catalog(&test_case, FIXTURES "/plugin.lua", "faketool.conf");
+    const char *parents[] = { "build", "build/daukle", "build/daukle/migrate" };
+    make_project_directories(&test_case, parents, 3);
+    planted_link planted;
+    plant_link(&test_case, "build/daukle/migrate/old", NULL, 0, "marker.txt", &planted);
+    if (planted.linked) run_case(&test_case);
+    char moved_out[1024];
+    snprintf(moved_out, sizeof moved_out, "%s/faketool.conf", planted.outside);
+    int status = test_case.status;
+    fr_migrate_outcome outcome = test_case.outcome;
+    int wrote = project_file_exists(&test_case, "daukle.toml");
+    int untouched = old_files_still_in_place(&test_case);
+    int leaked = fr_cache_file_exists(moved_out);
+    int explained = printed_holds(&test_case, "is a link");
+    unlink_directory(planted.link);
+    close_case(&test_case);
+
+    if (!planted.linked) SKIPm("could not create a junction or symlink on this machine");
+    ASSERT_EQm(last_message, FR_OK, status);
+    ASSERT_EQm(last_message, FR_MIGRATE_BLOCKED, outcome);
+    ASSERT_FALSE(wrote);
+    ASSERT(untouched);
+    ASSERT_FALSE(leaked);
+    ASSERTm(last_message, explained);
+    PASS();
+}
+
+TEST a_detection_in_a_subdirectory_migrates_as_its_own_instance(void) {
+    migrate_case test_case;
+    open_case(&test_case, "subdir", NULL);
+    char path[1024];
+    project_path(&test_case, "faketool.conf", path, sizeof path);
+    remove(path);
+    const char *directories[] = { "web", "web/out" };
+    make_project_directories(&test_case, directories, 2);
+    project_path(&test_case, "web/faketool.conf", path, sizeof path);
+    copy_fixture_file(FIXTURES "/project/faketool.conf", path);
+    project_path(&test_case, "web/out/greeting.txt", path, sizeof path);
+    write_bytes(path, "hello");
+    serve_stub_catalog_rule(&test_case, FIXTURES "/plugin-subdir.lua",
+                            "{\"files\":[\"faketool.conf\"],\"scope\":\"tree\"}");
+    run_case(&test_case);
+
+    char *manifest = project_text(&test_case, "daukle.toml");
+    int names_instance = manifest != NULL && strstr(manifest, "[toolchains.stub-web]") != NULL;
+    int names_toolchain = manifest != NULL && strstr(manifest, "toolchain = \"stub\"") != NULL;
+    int names_dir = manifest != NULL && strstr(manifest, "dir = \"web\"") != NULL;
+    free(manifest);
+    char *root = project_text(&test_case, "build/daukle/stub-web/root.txt");
+    int saw_root = root != NULL && strcmp(root, "../../../web") == 0;
+    free(root);
+    int conf_gone = !project_file_exists(&test_case, "web/faketool.conf");
+    int out_gone = !project_directory_exists(&test_case, "web/out");
+    int conf_kept = project_file_exists(&test_case, "build/daukle/migrate/old/web/faketool.conf");
+    int out_kept = project_file_exists(&test_case,
+                                       "build/daukle/migrate/old/web/out/greeting.txt");
+    int status = test_case.status;
+    fr_migrate_outcome outcome = test_case.outcome;
+    close_case(&test_case);
+
+    ASSERT_EQm(last_message, FR_OK, status);
+    ASSERT_EQm(last_message, FR_MIGRATE_DONE, outcome);
+    ASSERT(names_instance);
+    ASSERT(names_toolchain);
+    ASSERT(names_dir);
+    ASSERT(saw_root);
+    ASSERT(conf_gone);
+    ASSERT(out_gone);
+    ASSERT(conf_kept);
+    ASSERT(out_kept);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
+    RUN_TEST(done_refuses_an_old_directory_that_is_a_link);
+    RUN_TEST(done_refuses_an_old_directory_that_resolves_outside_the_project);
+    RUN_TEST(a_linked_old_directory_blocks_before_anything_is_written);
+    RUN_TEST(a_detection_in_a_subdirectory_migrates_as_its_own_instance);
     RUN_TEST(a_clean_migration_writes_proves_and_moves_aside);
     RUN_TEST(migrate_refuses_a_project_that_has_a_manifest);
     RUN_TEST(no_catalog_is_refused_naming_both_inputs);

@@ -198,6 +198,7 @@ static void print_already_moved(const fr_migrate_state *state, size_t moved) {
    anything was written, so a rename failing here is the filesystem's; every
    path already moved is printed, since the error itself has room for one. */
 static int move_aside(const fr_migrate_state *state, fr_error *err) {
+    if (fr_derived_check_real(".", FR_DERIVED_MIGRATE_OLD_NAME, err) != FR_OK) return FR_ERR;
     size_t moved = 0;
     for (size_t index = 0; index < state->kept_count; index++) {
         const cJSON *path = NULL;
@@ -280,6 +281,11 @@ static int check_one_owned(fr_migrate_state *state, size_t kept_index, const cJS
 }
 
 int fr_migrate_check_owned(fr_migrate_state *state, fr_error *err) {
+    fr_error unsafe;
+    if (fr_derived_check_real(".", FR_DERIVED_MIGRATE_OLD_NAME, &unsafe) != FR_OK) {
+        return fr_migrate_core_blocker(state, "derived directory", FR_MIGRATE_OLD_SHOWN,
+                                       unsafe.message, err);
+    }
     for (size_t index = 0; index < state->kept_count; index++) {
         const cJSON *path = NULL;
         cJSON_ArrayForEach(path, cJSON_GetObjectItemCaseSensitive(state->kept[index].result,
@@ -311,6 +317,7 @@ int fr_migrate_finish(fr_migrate_state *state, fr_migrate_outcome *out_outcome, 
 }
 
 int fr_migrate_done(fr_error *err) {
+    if (fr_derived_check_real(".", FR_DERIVED_MIGRATE_OLD_NAME, err) != FR_OK) return FR_ERR;
     if (!fr_cache_directory_exists(FR_MIGRATE_OLD_SHOWN)) {
         fr_error_set(err, "there is no unfinished migration here: " FR_MIGRATE_OLD_SHOWN
                           " does not exist");

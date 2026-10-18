@@ -86,6 +86,15 @@ int fr_derived_ensure_dir(const char *derived_dir, fr_error *err);
    that did not happen. */
 int fr_derived_clean(const char *manifest_dir, fr_error *err);
 
+/* The guard every path that deletes or moves into build/daukle runs first:
+   clean, "migrate --done" and the migrate move-aside. below_root is "" for
+   the derived root itself or a "/"-separated path below it ("migrate/old").
+   Refuses when any existing component from the derived root down is a symlink
+   or a junction, dangling or not, or when the deepest existing one does not
+   canonicalise to a strict descendant of manifest_dir. Components that do not
+   exist yet pass, since whatever creates them creates real directories. */
+int fr_derived_check_real(const char *manifest_dir, const char *below_root, fr_error *err);
+
 /* The containment predicate fr_derived_clean applies to a canonicalised root
    against a canonicalised base: a strict descendant passes; the base itself,
    or anything sharing only a name prefix with it, does not. Exposed, rather
@@ -94,7 +103,7 @@ int fr_derived_clean(const char *manifest_dir, fr_error *err);
    without a real symlink or junction on disk, so this predicate's own
    boundary logic is the one part of the containment check a path-only test
    can exercise on every machine. Every real caller reaches it only through
-   fr_derived_clean. */
+   fr_derived_check_real. */
 int fr_derived_root_is_contained(const char *canonical_base, const char *canonical_root);
 
 /* write == 0 reports what would change and touches nothing, including the

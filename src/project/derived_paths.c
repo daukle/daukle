@@ -152,6 +152,69 @@ static int holds_unfinished_migration(const char *root, fr_error *err) {
     return unfinished;
 }
 
+static int check_contained(const char *base, const char *path, fr_error *err) {
+    char *canonical_base = NULL;
+    if (fr_lua_sandbox_canonical_dir(base, &canonical_base, err) != FR_OK) return FR_ERR;
+    char *canonical_path = NULL;
+    int status = fr_lua_sandbox_canonical_dir(path, &canonical_path, err);
+    if (status == FR_OK && !fr_derived_root_is_contained(canonical_base, canonical_path)) {
+        fr_error_set(err, "\"%s\" resolves outside \"%s\"; refusing to delete or move anything"
+                          " through it", path, base);
+        status = FR_ERR;
+    }
+    free(canonical_base);
+    free(canonical_path);
+    return status;
+}
+
+/* Walks path one component at a time from root_length on, so a link at any
+   level is seen before anything opens what lies beyond it. */
+static int check_components(const char *base, char *path, size_t root_length, fr_error *err) {
+    size_t end = root_length;
+    size_t deepest = 0;
+    for (;;) {
+        char saved = path[end];
+        path[end] = '\0';
+        if (derived_root_is_link(path)) {
+            fr_error_set(err, "\"%s\" is a link or a junction; refusing to delete or move anything"
+                              " through it", path);
+            return FR_ERR;
+        }
+        int exists = derived_root_exists(path);
+        path[end] = saved;
+        if (!exists) break;
+        deepest = end;
+        if (saved == '\0') break;
+        const char *next = strchr(path + end + 1, '/');
+        end = next != NULL ? (size_t) (next - path) : strlen(path);
+    }
+    if (deepest == 0) return FR_OK;
+    char saved = path[deepest];
+    path[deepest] = '\0';
+    int status = check_contained(base, path, err);
+    path[deepest] = saved;
+    return status;
+}
+
+int fr_derived_check_real(const char *manifest_dir, const char *below_root, fr_error *err) {
+    char *root = NULL;
+    if (fr_derived_root(manifest_dir, &root, err) != FR_OK) return FR_ERR;
+    size_t root_length = strlen(root);
+    size_t length = root_length + 1 + strlen(below_root) + 1;
+    char *path = malloc(length);
+    if (path == NULL) {
+        free(root);
+        fr_error_set(err, "out of memory checking the derived directory");
+        return FR_ERR;
+    }
+    snprintf(path, length, "%s%s%s", root, below_root[0] != '\0' ? "/" : "", below_root);
+    free(root);
+    const char *base = (manifest_dir == NULL || manifest_dir[0] == '\0') ? "." : manifest_dir;
+    int status = check_components(base, path, root_length, err);
+    free(path);
+    return status;
+}
+
 int fr_derived_clean(const char *manifest_dir, fr_error *err) {
     char *root = NULL;
     if (fr_derived_root(manifest_dir, &root, err) != FR_OK) return FR_ERR;
@@ -161,36 +224,8 @@ int fr_derived_clean(const char *manifest_dir, fr_error *err) {
         return FR_OK;
     }
 
-    const char *base = (manifest_dir == NULL || manifest_dir[0] == '\0') ? "." : manifest_dir;
-
-    if (holds_unfinished_migration(root, err)) {
-        free(root);
-        return FR_ERR;
-    }
-
-    if (derived_root_is_link(root)) {
-        fr_error_set(err, "the derived directory for \"%s\" is a link; refusing to delete anything",
-                     base);
-        free(root);
-        return FR_ERR;
-    }
-
-    char *canonical_base = NULL;
-    if (fr_lua_sandbox_canonical_dir(base, &canonical_base, err) != FR_OK) {
-        free(root);
-        return FR_ERR;
-    }
-
-    char *canonical_root = NULL;
-    int status = fr_lua_sandbox_canonical_dir(root, &canonical_root, err);
-    if (status == FR_OK && !fr_derived_root_is_contained(canonical_base, canonical_root)) {
-        fr_error_set(err, "the derived directory for \"%s\" escapes it; refusing to delete anything",
-                     base);
-        status = FR_ERR;
-    }
-    free(canonical_base);
-    free(canonical_root);
-    if (status != FR_OK) {
+    if (holds_unfinished_migration(root, err)
+        || fr_derived_check_real(manifest_dir, "", err) != FR_OK) {
         free(root);
         return FR_ERR;
     }
