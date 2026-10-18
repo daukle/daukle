@@ -137,11 +137,12 @@ compares the artifacts each migrator named, and only then moves the old tool's f
 A catalog is read at run time and never cached. It is a JSON document with a `plugins` list; each
 entry has an `id`, an `asset` of `{ url, sha256 }` that migrate pins into the `[plugins]` table of
 the manifest it writes, `detect` rules of `files`, optional `contains` patterns and a `scope` of
-`root` or `tree`, and a `replaces` map of tool, then kind, then foreign plugin ids. An optional `skip` is a list of
-directory names the detection walk never enters, at any depth; it is the union across every plugin
-of every catalog loaded, so one entry can keep installed dependencies out of all the rules. A
-malformed entry is dropped with a warning, and an id listed twice keeps the earlier catalog's entry. A plugin
-with no `asset` that migrate would need is a blocker, since there is nothing to pin.
+`root` or `tree`, and a `replaces` map of tool, then kind, then foreign plugin ids. An optional
+`skip` is a list of directory names the detection walk never enters, at any depth; it is the union
+across every plugin of every catalog loaded, so one entry can keep installed dependencies out of
+all the rules. A malformed entry is dropped with a warning, and an id listed twice keeps the
+earlier catalog's entry. A plugin with no `asset` that migrate would need is a blocker, since there
+is nothing to pin.
 
 The plugin side is on [[daukle/02-plugins]].
 

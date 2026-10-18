@@ -421,13 +421,8 @@ TEST a_skip_from_another_plugin_hides_the_directory_from_every_plugin(void) {
     write_skip_tree();
     fr_catalog catalog;
     CHECK_CALL(parse_catalog(NO_SKIP, &catalog));
-    fr_catalog hider;
-    CHECK_CALL(parse_catalog(SKIP_ONLY_PLUGIN, &hider));
-    fr_catalog_plugin *grown = realloc(catalog.plugins, (catalog.count + 1) * sizeof *grown);
-    ASSERT(grown != NULL);
-    catalog.plugins = grown;
-    catalog.plugins[catalog.count++] = hider.plugins[0];
-    free(hider.plugins);
+    fr_error parse_err;
+    ASSERT_EQ(FR_OK, fr_catalog_parse(SKIP_ONLY_PLUGIN, "second", 1, &catalog, &parse_err));
     fr_detections found;
     fr_error err;
     ASSERT_EQ(FR_OK, fr_detect(scratch, &catalog, NULL, 0, &found, &err));
