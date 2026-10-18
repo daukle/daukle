@@ -408,6 +408,42 @@ TEST a_task_sees_the_module_list_and_its_requires_in_lua(void) {
     PASS();
 }
 
+TEST an_instance_sees_its_dir_in_root_and_not_in_config(void) {
+    static const char *manifest_path = "test/fixtures/generate-instance-root/daukle.toml";
+    fr_registry *registry = NULL;
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, fr_config_load_file(manifest_path, registry, &manifest, &err));
+
+    fr_sync_report report;
+    memset(&report, 0, sizeof report);
+    char *dir = manifest_directory_of(manifest_path);
+    int status = fr_generate(&manifest, manifest_path, dir, registry, 1, &report, &err);
+
+    char *root_text = NULL;
+    char *instance_text = NULL;
+    int read_root = fr_file_read_text(
+        "test/fixtures/generate-instance-root/build/daukle/echo/root.txt", &root_text, &err) == FR_OK;
+    int read_instance = fr_file_read_text(
+        "test/fixtures/generate-instance-root/build/daukle/web/root.txt", &instance_text, &err)
+        == FR_OK;
+
+    free(dir);
+    fr_sync_report_free(&report);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(read_root);
+    ASSERT(read_instance);
+    ASSERT_STR_EQ("../../..\n\n", root_text);
+    ASSERT_STR_EQ("../../../apps/web\n\n", instance_text);
+    free(root_text);
+    free(instance_text);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -418,7 +454,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_generated_newline_path_is_refused_naming_the_key);
     RUN_TEST(a_generated_number_value_is_refused_naming_the_key);
     RUN_TEST(a_generated_file_over_the_size_limit_is_refused_naming_the_key);
-    RUN_TEST(a_generated_file_naming_the_project_root_is_refused);
+    RUN_TEST(a_generated_file_naming_the_project_root_is_refused);    RUN_TEST(an_instance_sees_its_dir_in_root_and_not_in_config);
+
     RUN_TEST(a_generated_file_naming_the_project_root_is_refused_with_an_empty_manifest_dir);
 #ifdef _WIN32
     RUN_TEST(a_generated_file_naming_the_project_root_with_forward_slashes_is_refused);

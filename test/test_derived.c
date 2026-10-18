@@ -618,6 +618,39 @@ TEST clean_removes_the_derived_tree_and_nothing_beside_it(void) {
     PASS();
 }
 
+TEST clean_refuses_while_a_migration_keeps_the_old_files(void) {
+    make_scratch("cleanmigrate");
+    char old[700];
+    snprintf(old, sizeof old, "%s/build/daukle/migrate/old", scratch);
+    char path[800];
+    snprintf(path, sizeof path, "%s/build", scratch);
+    fr_test_make_directory(path);
+    snprintf(path, sizeof path, "%s/build/daukle", scratch);
+    fr_test_make_directory(path);
+    snprintf(path, sizeof path, "%s/build/daukle/migrate", scratch);
+    fr_test_make_directory(path);
+    fr_test_make_directory(old);
+    char kept[800];
+    snprintf(kept, sizeof kept, "%s/faketool.conf", old);
+    fr_error err;
+    fr_file_write_text(kept, "greeting = hello\n", &err);
+
+    err.message[0] = '\0';
+    int status = fr_derived_clean(scratch, &err);
+    static char message[sizeof err.message];
+    snprintf(message, sizeof message, "%s", err.message);
+    char *survivor = read_file(kept);
+    int kept_survived = survivor != NULL;
+    free(survivor);
+    fr_test_remove_tree(scratch);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(message, strstr(message, "daukle migrate --done") != NULL);
+    ASSERTm(message, strstr(message, "build/daukle/migrate/old") != NULL);
+    ASSERT(kept_survived);
+    PASS();
+}
+
 TEST clean_on_a_project_that_never_generated_is_not_an_error(void) {
     make_scratch("cleanempty");
     fr_error err;
@@ -901,6 +934,7 @@ int main(int argc, char **argv) {
     RUN_TEST(containment_rejects_the_base_directory_itself);
     RUN_TEST(containment_matches_a_strict_descendant_contract);
     RUN_TEST(clean_removes_the_derived_tree_and_nothing_beside_it);
+    RUN_TEST(clean_refuses_while_a_migration_keeps_the_old_files);
     RUN_TEST(clean_on_a_project_that_never_generated_is_not_an_error);
     RUN_TEST(clean_refuses_when_the_derived_root_escapes_through_a_link);
     RUN_TEST(clean_refuses_when_the_derived_root_is_a_link_inside_the_project);

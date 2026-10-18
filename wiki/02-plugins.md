@@ -140,9 +140,10 @@ any pin exists. A chunk that declares a source or a language beside `exec` or `p
 `api = 2`, which `daukle 0.8.0` is the first to provide.
 
 **And anywhere else, too: since `daukle 0.8.1` the two verbs run ONLY inside a task's `run` or a
-publisher's `publish`.** The named refusals above come first because they tell you which phase you
-are in; beneath them, any call from outside those two callbacks is refused with `daukle.exec is
-available only inside a task or publish callback`. **A plugin may not set a `__gc` finalizer**
+publisher's `publish`, and since the migrator kind also a migrator's `run` and `build`.** The named
+refusals above come first because they tell you which phase you are in; beneath them, any call from
+outside those callbacks is refused with `daukle.exec is available only inside a task, publish or
+migrator callback`. **A plugin may not set a `__gc` finalizer**
 either, since one runs at whatever moment Lua collects garbage, outside every callback:
 `setmetatable` refuses a metatable carrying `__gc`, and since `daukle 0.9.1` so does the one in the
 project's own `daukle.lua`. `__close` is unaffected, because a to-be-closed variable runs at scope
@@ -170,8 +171,8 @@ file is refused by name, and a link the build left behind is followed and must s
 the derived directory. **No extension is guessed**: on Windows name the `.exe` yourself. A `.bat`
 or `.cmd` is refused exactly as `daukle.tool` refuses one, because starting it takes `cmd.exe`.
 
-`daukle.built` is available exactly where `daukle.exec` is, inside a task's `run` or a publisher's
-`publish`, and refused with the same phase-naming messages everywhere else. A daukle that predates
+`daukle.built` is available exactly where `daukle.exec` is, inside a task's `run`, a publisher's
+`publish` or a migrator's `run` and `build`, and refused with the same phase-naming messages everywhere else. A daukle that predates
 it refuses `uses = { "built" }` by name, so it needs no api bump.
 
 ## What `api` is for, and when to raise it
@@ -242,6 +243,140 @@ Three things to know:
   be spelled `publish-github`.
 - **A duplicate name is fatal to the whole project**, not just to that task, so refuse a collision
   where the entries are written.
+
+## One toolchain, several directories
+
+A manifest names a toolchain instance with `[toolchains.<name>]`. Two keys let the name differ from
+the plugin and point it at a subdirectory:
+
+```toml
+[toolchains.web]
+toolchain = "npm"
+dir = "web"
+```
+
+- **`toolchain`** is the plugin's toolchain that provides this instance. It defaults to `<name>`,
+  so a manifest that never writes it reads as before.
+- **`dir`** is a relative directory below the project, with `/` separators and no `.` or `..`
+  segment. It is absent for the project root.
+
+The instance's name is what its tasks, its `build/daukle/<name>/` directory and a publish `from` are
+keyed on. The plugin's tasks are declared once per instance under that name, so the instance `web`
+of a toolchain `npm` runs `web:build`, and an edge from `npm:install` to `npm:build` becomes one from
+`web:install` to `web:build`. A bare edge such as `partOf = "build"`, and an edge naming another
+toolchain, are left as they are.
+
+**`context.root` is where the toolchain builds.** For an instance with no `dir` it is the project
+root as seen from the derived directory, `../../..`. With `dir = "web"` it is `../../../web`.
+`generate` and every task receive the same value, so a plugin never joins a directory of its own.
+
+A toolchain may not be named `migrate`, because `build/daukle/migrate` belongs to `daukle migrate`.
+These keys arrived with `api = 3`, so a plugin that relies on `dir` declares it.
+
+## Migrating: `daukle.migrator` and `daukle.translator`
+
+`daukle migrate` (see [[daukle/index]]) asks plugins two questions, and a plugin answers with one
+declaration each. Both are available only to a plugin that a manifest or `daukle migrate` loaded,
+and both need `api = 3`.
+
+```lua
+daukle.plugin{ api = 3, uses = { "exec" } }
+
+daukle.toolchain{ name = "stub", generate = function() return {} end }
+
+daukle.migrator{
+  tool = "faketool",
+  toolchain = "stub",
+  run = function(context) ... end,
+  build = function(context) ... end,
+}
+```
+
+**`daukle.migrator{ tool, toolchain, run, build }`** is the plugin for the OLD tool `tool`.
+`toolchain` names a toolchain this same plugin declared above the migrator, the one the migrated
+project will build with. `run` is required and `build` is optional. A plugin declares at most one
+migrator.
+
+Both callbacks receive a `context` table:
+
+| field | holds |
+| --- | --- |
+| `tool` | the migrator's `tool` |
+| `instance` | the toolchain instance name migrate gave this detection |
+| `dir` | the directory the detection was found in, absent at the project root |
+| `root` | what `context.root` will be for that instance, as in the section above |
+| `host` | `{ os, arch }`, as in a task's context |
+| `proof` | in `build` only: the `proof` table `run` returned |
+
+The instance is the toolchain's own name for a detection at the root, and `<toolchain>-<dir>` with
+each `/` in `dir` replaced by `-` for one in a subdirectory. A name that is not a usable task name,
+or that another detection already took, is a blocker.
+
+**`exec` and `provision` work inside `run` and `build`**, and `daukle.built` and `daukle.write` as
+well. The working directory is the instance's derived directory, `build/daukle/<instance>/`, which
+daukle creates before the call, and `daukle.write` writes inside it only, as it does in a task.
+Declare the verbs in `uses` as for a toolchain.
+
+`run` asks the old tool for the project's model and **returns data only**:
+
+```lua
+return {
+  manifest = { toolchains = { [context.instance] = {} } },
+  foreign = {},
+  blockers = {},
+  owned = { "faketool.conf", "out" },
+  proof = {
+    task = context.instance .. ":build",
+    compare = {
+      { old = "out/greeting.txt",
+        new = "build/daukle/" .. context.instance .. "/greeting.txt",
+        as = "bytes" },
+    },
+  },
+}
+```
+
+| key | meaning |
+| --- | --- |
+| `manifest` | a fragment of `daukle.toml`, merged with every other migrator's and translator's. Two fragments setting one key to different values is a blocker naming the key and both sources. It may not set `plugins` or `schema`, nor `toolchain` or `dir` in any `toolchains` entry, which core owns |
+| `foreign` | the old tool's own plugins the project uses, each `{ kind, id, config? }`, to be replaced by a plugin that claims it in a catalog's `replaces`. One no catalog plugin claims, or two do, is a blocker |
+| `blockers` | what cannot be expressed, each `{ construct, where, why, surface? }` |
+| `owned` | the relative paths of the old tool's files, moved to `build/daukle/migrate/old` once the proof passes. `daukle.toml`, `daukle.lua`, `.`, `build` and anything at or below `build/daukle` are refused, as is a path that climbs out or holds a backslash |
+| `proof` | `{ task, compare }`: the task to run in the new project, and the artifacts to compare, each `{ old, new, as }` with `as` either `"bytes"` or `"archive"` and both paths relative to the project |
+
+**A result that is not this shape is an error naming the plugin**, because it is a plugin bug and
+not a fact about the user's project. A missing `proof`, or an empty `compare`, is a blocker instead:
+the migration cannot be shown to build the same artifacts. An empty Lua table arrives as an empty
+object, and every list key accepts it as an empty list.
+
+`as = "archive"` compares the file members' names and bytes and ignores their order, directory
+members and timestamps, so a jar written by a different tool still compares equal for the same
+content. A symlink member is always a difference. `as = "bytes"` compares the two files.
+
+After the manifest is written, migrate runs the new project's `proof.task`, and `build` has already
+built the old project with `context.proof` set to the same `proof` table, so `compare.old` exists
+before the comparison. `build` returns nothing.
+
+**`daukle.translator{ tool, id, translate }`** replaces one foreign plugin: `id` of `tool`. It is
+the plugin a catalog's `replaces` names, and it declares the settings that foreign plugin carried:
+
+```lua
+daukle.translator{
+  tool = "faketool",
+  id = "org.example.release",
+  translate = function(foreign)
+    return { manifest = { publish = { release = { from = foreign.instance } } }, blockers = {} }
+  end,
+}
+```
+
+`translate` receives `{ tool, kind, id, instance, config? }` and returns `{ manifest, blockers }`,
+checked as above. **A translator is process free**: `exec` and `provision` are refused by name,
+exactly as in a source's `load`, so it cannot start the old tool.
+
+**`daukle.manifest` is the empty string while migrate loads plugins**, since no manifest exists
+yet. A chunk that tests the name with `string.match` still works, and one that reads the file
+named by it finds nothing to read.
 
 ## Where generated files go
 

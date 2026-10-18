@@ -47,8 +47,14 @@ typedef struct {
     size_t dependency_count;
 } fr_consumer;
 
+/* name is the instance a manifest declares and every task, derived directory and
+   publish "from" is keyed on; plugin is the toolchain a plugin registered, which
+   is name unless the [toolchains.<name>] table says otherwise. dir is NULL for
+   the project root. */
 typedef struct {
     char *name;
+    char *plugin;
+    char *dir;
     char *version;
     const struct cJSON *block;
     fr_dependency *dependencies;

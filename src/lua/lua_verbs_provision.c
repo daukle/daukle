@@ -167,15 +167,15 @@ int fr_lua_verb_provision(lua_State *state) {
        `daukle check`, so the refusal reaches the call, exactly as daukle.exec's does. */
     if (fr_lua_plugin_exec_is_refused()) {
         return luaL_error(state, "daukle.provision is not available while a plugin chunk is"
-                                 " loading; call it from a task or publish callback");
+                                 " loading; call it from a task, publish or migrator callback");
     }
     const char *phase = fr_lua_process_free_callback_phase();
     if (phase != NULL) {
         return luaL_error(state, "daukle.provision is not available while %s; call it from a"
-                                 " task or publish callback", phase);
+                                 " task, publish or migrator callback", phase);
     }
     if (!fr_lua_task_dispatch_is_running()) {
-        return luaL_error(state, "daukle.provision is available only inside a task or publish"
+        return luaL_error(state, "daukle.provision is available only inside a task, publish or migrator"
                                  " callback");
     }
     luaL_checktype(state, 1, LUA_TTABLE);
@@ -233,7 +233,7 @@ int fr_lua_verb_artifact(lua_State *state) {
     }
     if (fr_lua_plugin_exec_is_refused()) {
         return luaL_error(state, "daukle.artifact is not available while a plugin chunk is"
-                                 " loading; call it from a task or publish callback");
+                                 " loading; call it from a task, publish or migrator callback");
     }
     luaL_checktype(state, 1, LUA_TTABLE);
     refuse_an_unknown_provision_field(state, "daukle.artifact");
@@ -308,7 +308,7 @@ int fr_lua_verb_pin(lua_State *state) {
     }
     if (fr_lua_plugin_exec_is_refused()) {
         return luaL_error(state, "daukle.pin is not available while a plugin chunk is"
-                                 " loading; call it from a task or publish callback");
+                                 " loading; call it from a task, publish or migrator callback");
     }
     luaL_checktype(state, 1, LUA_TTABLE);
     refuse_an_unknown_pin_field(state);

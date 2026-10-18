@@ -1,0 +1,14 @@
+schema = 1
+project = "instance-root"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+echo = "./plugins/echo.lua"
+
+[toolchains.echo]
+
+[toolchains.web]
+toolchain = "echo"
+dir = "apps/web"

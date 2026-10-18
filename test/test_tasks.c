@@ -1214,6 +1214,77 @@ TEST a_manifest_block_adding_edges_may_not_also_carry_a_run(void) {
     PASS();
 }
 
+TEST an_instance_gets_its_plugins_tasks_under_its_own_name(void) {
+    fr_registry *registry = fr_registry_create();
+    const char *edges[] = { "node:install" };
+    fr_task_plugin install = { "daukle.task/node:install", NULL, NULL, 0, never_runs, NULL };
+    fr_task_plugin build = { "daukle.task/node:build", "build", edges, 1, never_runs, NULL };
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_registry_add_task(registry, &install, &err));
+    ASSERT_EQ(FR_OK, fr_registry_add_task(registry, &build, &err));
+
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"p\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"node\":{},\"web\":{\"toolchain\":\"node\",\"dir\":\"web\"}}}");
+
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+    ASSERT_EQ(4u, set.count);
+    const fr_task_node *own = fr_tasks_find(&set, "node:build");
+    ASSERT(own != NULL);
+    ASSERT_STR_EQ("node", own->toolchain->name);
+    ASSERT_STR_EQ("node:install", own->depends_on[0]);
+    const fr_task_node *web = fr_tasks_find(&set, "web:build");
+    ASSERT(web != NULL);
+    ASSERT_STR_EQ("web", web->toolchain->name);
+    ASSERT_STR_EQ("build", web->part_of);
+    ASSERT_STR_EQ("web:install", web->depends_on[0]);
+
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST an_instance_alone_does_not_bring_the_default_name(void) {
+    fr_registry *registry = fr_registry_create();
+    fr_task_plugin build = { "daukle.task/node:build", NULL, NULL, 0, never_runs, NULL };
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_registry_add_task(registry, &build, &err));
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"p\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"web\":{\"toolchain\":\"node\",\"dir\":\"web\"}}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+    ASSERT_EQ(NULL, fr_tasks_find(&set, "node:build"));
+    ASSERT(fr_tasks_find(&set, "web:build") != NULL);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
+TEST an_instance_keeps_a_bare_edge_and_another_toolchains_edge(void) {
+    fr_registry *registry = fr_registry_create();
+    const char *edges[] = { "lint", "other:prepare" };
+    fr_task_plugin build = { "daukle.task/node:build", NULL, edges, 2, never_runs, NULL };
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_registry_add_task(registry, &build, &err));
+    fr_manifest manifest = manifest_of(
+        "{\"schema\":1,\"project\":\"p\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"web\":{\"toolchain\":\"node\"}}}");
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(registry, &manifest, &set, &err));
+    const fr_task_node *web = fr_tasks_find(&set, "web:build");
+    ASSERT(web != NULL);
+    ASSERT_STR_EQ("lint", web->depends_on[0]);
+    ASSERT_STR_EQ("other:prepare", web->depends_on[1]);
+    fr_tasks_set_free(&set);
+    fr_manifest_free(&manifest);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -1259,6 +1330,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_failing_program_stops_the_plan_and_leaves_what_ran_run);
     RUN_TEST(depends_on_orders_a_manifest_run_after_a_plugin_task);
     RUN_TEST(a_run_cwd_is_relative_to_the_project_and_cannot_leave_it);
-    RUN_TEST(a_manifest_block_adding_edges_may_not_also_carry_a_run);
+    RUN_TEST(a_manifest_block_adding_edges_may_not_also_carry_a_run);    RUN_TEST(an_instance_gets_its_plugins_tasks_under_its_own_name);
+    RUN_TEST(an_instance_alone_does_not_bring_the_default_name);
+    RUN_TEST(an_instance_keeps_a_bare_edge_and_another_toolchains_edge);
+
     GREATEST_MAIN_END();
 }

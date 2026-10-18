@@ -238,6 +238,8 @@ void fr_manifest_free(fr_manifest *manifest) {
     for (size_t index = 0; index < manifest->toolchain_count; index++) {
         fr_toolchain *toolchain = &manifest->toolchains[index];
         free(toolchain->name);
+        free(toolchain->plugin);
+        free(toolchain->dir);
         free(toolchain->version);
         for (size_t d = 0; d < toolchain->dependency_count; d++) {
             dependency_free(&toolchain->dependencies[d]);

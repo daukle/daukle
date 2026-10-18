@@ -21,15 +21,15 @@ static void refuse_outside_a_task(lua_State *state) {
     }
     if (fr_lua_plugin_exec_is_refused()) {
         luaL_error(state, "daukle.built is not available while a plugin chunk is"
-                          " loading; call it from a task or publish callback");
+                          " loading; call it from a task, publish or migrator callback");
     }
     const char *phase = fr_lua_process_free_callback_phase();
     if (phase != NULL) {
-        luaL_error(state, "daukle.built is not available while %s; call it from a task or"
-                          " publish callback", phase);
+        luaL_error(state, "daukle.built is not available while %s; call it from a task,"
+                          " publish or migrator callback", phase);
     }
     if (!fr_lua_task_dispatch_is_running()) {
-        luaL_error(state, "daukle.built is available only inside a task or publish callback");
+        luaL_error(state, "daukle.built is available only inside a task, publish or migrator callback");
     }
 }
 

@@ -302,12 +302,44 @@ TEST accepts_an_empty_requires_from_a_source_plugin(void) {
     PASS();
 }
 
+TEST an_instance_reads_the_language_block_of_its_plugin(void) {
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer/daukle.toml", &manifest, &err));
+    fr_registry *registry = with_path_source("test/fixtures/consumer");
+    ASSERT(registry != NULL);
+
+    fr_toolchain instance;
+    memset(&instance, 0, sizeof instance);
+    instance.name = "app";
+    instance.plugin = "gradle";
+    instance.dependencies = manifest.consumers[0].dependencies;
+    instance.dependency_count = manifest.consumers[0].dependency_count;
+
+    fr_resolved *items = NULL; size_t count = 0;
+    int status = fr_resolve_toolchain(&instance, &manifest, "test/fixtures/consumer", registry,
+                                      &items, &count, &err);
+    char message[256];
+    snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
+    char module[64] = "";
+    if (status == FR_OK && count > 1) snprintf(module, sizeof module, "%s", items[1].module);
+
+    fr_resolved_free(items, count);
+    without_path_source(registry);
+    fr_manifest_free(&manifest);
+
+    ASSERT_STR_EQ("", message);
+    ASSERT_EQ(2, (int) count);
+    ASSERT_STR_EQ("ir", module);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(hands_the_source_plugin_its_own_state);
-    RUN_TEST(pulls_in_transitive_requires);
+    RUN_TEST(pulls_in_transitive_requires);    RUN_TEST(an_instance_reads_the_language_block_of_its_plugin);
+
     RUN_TEST(accepts_an_empty_requires_from_a_source_plugin);
     RUN_TEST(reports_a_module_that_has_no_block_for_the_language);
     RUN_TEST(deduplicates_a_module_reached_twice);

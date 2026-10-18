@@ -2,6 +2,7 @@
 #include "config/config_toml.h"
 #include "config/manifest.h"
 #include "project/region.h"
+#include "util/error.h"
 
 #include "cJSON.h"
 
@@ -429,6 +430,77 @@ TEST a_toolchain_named_publish_is_refused(void) {
     PASS();
 }
 
+static int read_manifest_json(const char *json, fr_manifest *out, fr_error *err) {
+    cJSON *root = cJSON_Parse(json);
+    if (root == NULL) {
+        fr_error_set(err, "test JSON did not parse");
+        return FR_ERR;
+    }
+    return fr_manifest_from_document(root, "daukle.toml", out, err);
+}
+
+TEST a_toolchain_without_the_key_is_its_own_plugin(void) {
+    fr_manifest manifest;
+    fr_error err;
+    ASSERT_EQ(FR_OK, read_manifest_json(
+        "{\"schema\":1,\"project\":\"p\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"node\":{\"version\":\"20\"},\"short\":\"1.0\"}}", &manifest, &err));
+    ASSERT_STR_EQ("node", manifest.toolchains[0].plugin);
+    ASSERT_EQ(NULL, manifest.toolchains[0].dir);
+    ASSERT_STR_EQ("short", manifest.toolchains[1].plugin);
+    ASSERT_EQ(NULL, manifest.toolchains[1].dir);
+    fr_manifest_free(&manifest);
+    PASS();
+}
+
+TEST a_second_instance_names_its_plugin_and_dir(void) {
+    fr_manifest manifest;
+    fr_error err;
+    ASSERT_EQ(FR_OK, read_manifest_json(
+        "{\"schema\":1,\"project\":\"p\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"node\":{},\"web\":{\"toolchain\":\"node\",\"dir\":\"apps/web\"}}}",
+        &manifest, &err));
+    ASSERT_STR_EQ("web", manifest.toolchains[1].name);
+    ASSERT_STR_EQ("node", manifest.toolchains[1].plugin);
+    ASSERT_STR_EQ("apps/web", manifest.toolchains[1].dir);
+    fr_manifest_free(&manifest);
+    PASS();
+}
+
+TEST a_dir_that_climbs_out_is_refused(void) {
+    const char *bad[] = { "../x", "/abs", "a/../b", "a\\\\b", "", ".", "a/", "C:/x", "a//b", "a/./b" };
+    for (size_t index = 0; index < sizeof bad / sizeof *bad; index++) {
+        char json[256];
+        snprintf(json, sizeof json,
+                 "{\"schema\":1,\"project\":\"p\",\"version\":\"1.0.0\",\"modules\":{},"
+                 "\"toolchains\":{\"web\":{\"toolchain\":\"node\",\"dir\":\"%s\"}}}", bad[index]);
+        fr_manifest manifest;
+        fr_error err;
+        ASSERT_EQm(bad[index], FR_ERR, read_manifest_json(json, &manifest, &err));
+        ASSERT(strstr(err.message, "toolchains.web.dir") != NULL);
+    }
+    PASS();
+}
+
+TEST the_shared_path_check_accepts_only_one_spelling(void) {
+    ASSERT(fr_manifest_relative_path_is_safe("apps/web"));
+    ASSERT(fr_manifest_relative_path_is_safe("a.b/c-d"));
+    ASSERT(!fr_manifest_relative_path_is_safe("a\\b"));
+    ASSERT(!fr_manifest_relative_path_is_safe("a/\x01/b"));
+    ASSERT(!fr_manifest_relative_path_is_safe("a/b/"));
+    PASS();
+}
+
+TEST a_toolchain_named_migrate_is_refused(void) {
+    fr_manifest manifest;
+    fr_error err;
+    ASSERT_EQ(FR_ERR, read_manifest_json(
+        "{\"schema\":1,\"project\":\"p\",\"version\":\"1.0.0\",\"modules\":{},"
+        "\"toolchains\":{\"migrate\":{}}}", &manifest, &err));
+    ASSERT(strstr(err.message, "toolchains.migrate may not be named \"migrate\"") != NULL);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -462,6 +534,11 @@ int main(int argc, char **argv) {
     RUN_TEST(a_publish_block_carries_its_from_and_its_block);
     RUN_TEST(a_publish_block_without_from_is_refused);
     RUN_TEST(a_publish_from_naming_no_toolchain_is_refused);
-    RUN_TEST(a_toolchain_named_publish_is_refused);
+    RUN_TEST(a_toolchain_named_publish_is_refused);    RUN_TEST(a_toolchain_without_the_key_is_its_own_plugin);
+    RUN_TEST(a_second_instance_names_its_plugin_and_dir);
+    RUN_TEST(a_dir_that_climbs_out_is_refused);
+    RUN_TEST(the_shared_path_check_accepts_only_one_spelling);
+    RUN_TEST(a_toolchain_named_migrate_is_refused);
+
     GREATEST_MAIN_END();
 }

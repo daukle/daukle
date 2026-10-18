@@ -29,8 +29,9 @@
    of its own is a new FIELD inside a context table a callback already receives,
    which is how `context.modules` reached 0.7.0 and `context.toolchain.version`
    before it, and how a plugin needing one got a green build that compiled
-   nothing. D-116. */
-#define FR_PLUGIN_API_PROVIDED 2
+   nothing. D-116. Api 3 is a toolchain's `dir` and `toolchain` keys and the
+   migrator and translator kinds. */
+#define FR_PLUGIN_API_PROVIDED 3
 
 static fr_plugin_declaration *declaration_in_progress;
 

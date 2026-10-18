@@ -18,4 +18,6 @@ int fr_cli_run_task(const char *task_name, int use_cache, int verbose);
 int fr_cli_run_publish(const char *only, int use_cache, int verbose);
 int fr_cli_list_tasks(int use_cache, int verbose);
 
+int fr_cli_migrate(const fr_cli_options *options);
+
 #endif

@@ -130,10 +130,12 @@ static int load_chunk(const fr_plugin_entry *entry, const char *module,
         fr_lua_verbs_set_declared_env((const char *const *) declaration.env,
                                       declaration.env_count);
         fr_lua_declare_set_required_aliases(declaration.requires, declaration.requires_count);
+        fr_lua_declare_set_chunk_label(entry->label);
         status = fr_lua_plugin_load(chunk, chunk_length, origin,
                                     (const char *const *) declaration.uses,
                                     declaration.uses_count, artifact->source, deps, err);
         fr_lua_declare_set_required_aliases(NULL, 0);
+        fr_lua_declare_set_chunk_label(NULL);
         fr_lua_verbs_set_declared_env(NULL, 0);
     }
     if (status == FR_OK) {
