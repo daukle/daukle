@@ -67,6 +67,61 @@ TEST different_bytes_name_both_digests(void) {
     PASS();
 }
 
+static int compare_texts(const char *old_text, size_t old_length, const char *new_text,
+                         size_t new_length, char *difference) {
+    if (!write_file("old.txt", old_text, old_length) || !write_file("new.txt", new_text, new_length)) {
+        return 0;
+    }
+    int same = 1;
+    fr_error err;
+    if (compare(FR_PROOF_BYTES, "old.txt", "new.txt", &same, difference, &err) != FR_OK) return 0;
+    return !same;
+}
+
+TEST bytes_proof_names_the_lines_only_on_each_side(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    ASSERT(compare_texts("a\nb\nc\n", 6, "a\nc\nd\n", 6, difference));
+    ASSERT(strstr(difference, "only in the old build: \"b\"") != NULL);
+    ASSERT(strstr(difference, "only in the new build: \"d\"") != NULL);
+    ASSERT(strstr(difference, "\"a\"") == NULL);
+    PASS();
+}
+
+TEST bytes_proof_counts_lines_past_the_first_five(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    const char *old_text = "l1\nl2\nl3\nl4\nl5\nl6\nl7\n";
+    ASSERT(compare_texts(old_text, strlen(old_text), "", 0, difference));
+    ASSERT(strstr(difference, "\"l5\"") != NULL);
+    ASSERT(strstr(difference, "\"l6\"") == NULL);
+    ASSERT(strstr(difference, "and 2 more") != NULL);
+    PASS();
+}
+
+TEST bytes_proof_keeps_only_the_digests_for_binary_files(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    char old_digest[65];
+    fr_sha256_hex("a\0b", 3, old_digest);
+    ASSERT(compare_texts("a\0b", 3, "a\0c", 3, difference));
+    ASSERT(strstr(difference, "only in") == NULL);
+    ASSERT(strstr(difference, old_digest) != NULL);
+    PASS();
+}
+
+TEST bytes_proof_reports_a_reordering(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    ASSERT(compare_texts("a\nb\n", 4, "b\na\n", 4, difference));
+    ASSERT(strstr(difference, "the same lines in a different order") != NULL);
+    PASS();
+}
+
+TEST bytes_proof_treats_crlf_as_different(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    ASSERT(compare_texts("a\r\n", 3, "a\n", 2, difference));
+    ASSERT(strstr(difference, "only in the old build: \"a\\r\"") != NULL);
+    ASSERT(strstr(difference, "only in the new build: \"a\"") != NULL);
+    PASS();
+}
+
 TEST archives_with_the_same_members_in_another_order_are_the_same(void) {
     const char *first_names[] = { "a.class", "b.class" };
     const char *first_contents[] = { "1", "2" };
@@ -183,6 +238,11 @@ TEST the_kind_vocabulary_is_parsed_in_one_place(void) {
 SUITE(migrate_proof) {
     RUN_TEST(identical_bytes_are_the_same);
     RUN_TEST(different_bytes_name_both_digests);
+    RUN_TEST(bytes_proof_names_the_lines_only_on_each_side);
+    RUN_TEST(bytes_proof_counts_lines_past_the_first_five);
+    RUN_TEST(bytes_proof_keeps_only_the_digests_for_binary_files);
+    RUN_TEST(bytes_proof_reports_a_reordering);
+    RUN_TEST(bytes_proof_treats_crlf_as_different);
     RUN_TEST(archives_with_the_same_members_in_another_order_are_the_same);
     RUN_TEST(an_archive_member_missing_on_one_side_is_named);
     RUN_TEST(an_archive_member_with_other_bytes_is_named);
