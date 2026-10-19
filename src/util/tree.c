@@ -1,5 +1,8 @@
 #include "util/tree.h"
 
+#include "util/error.h"
+
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -13,14 +16,26 @@
 #endif
 
 void fr_list_directory(const char *directory, fr_directory_visitor visit, void *context) {
+    fr_error ignored;
+    (void) fr_list_directory_checked(directory, visit, context, &ignored);
+}
+
+int fr_list_directory_checked(const char *directory, fr_directory_visitor visit, void *context,
+                              fr_error *err) {
 #ifdef _WIN32
     char pattern[1024];
     int written = snprintf(pattern, sizeof pattern, "%s/*", directory);
-    if (written < 0 || (size_t) written >= sizeof pattern) return;
+    if (written < 0 || (size_t) written >= sizeof pattern) {
+        fr_error_set(err, "the path \"%s\" is too long to list", directory);
+        return FR_ERR;
+    }
 
     WIN32_FIND_DATAA found;
     HANDLE handle = FindFirstFileA(pattern, &found);
-    if (handle == INVALID_HANDLE_VALUE) return;
+    if (handle == INVALID_HANDLE_VALUE) {
+        fr_error_set(err, "cannot open \"%s\" (Windows error %lu)", directory, GetLastError());
+        return FR_ERR;
+    }
     do {
         if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) continue;
         int is_directory = (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -30,7 +45,10 @@ void fr_list_directory(const char *directory, fr_directory_visitor visit, void *
     FindClose(handle);
 #else
     DIR *dir = opendir(directory);
-    if (dir == NULL) return;
+    if (dir == NULL) {
+        fr_error_set(err, "cannot open \"%s\" (%s)", directory, strerror(errno));
+        return FR_ERR;
+    }
     const struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
@@ -44,6 +62,7 @@ void fr_list_directory(const char *directory, fr_directory_visitor visit, void *
     }
     closedir(dir);
 #endif
+    return FR_OK;
 }
 
 /* A link is removed as the single node it is rather than descended into:

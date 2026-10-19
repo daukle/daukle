@@ -21,6 +21,7 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <windows.h>
 #else
 #include <sys/stat.h>
 #include <unistd.h>
@@ -1018,6 +1019,163 @@ TEST read_returns_the_text_of_a_file_inside_the_base_directory(void) {
     lua_settop(state, 0);
     fr_registry_destroy(registry);
     fr_lua_runtime_shutdown();
+    PASS();
+}
+
+static void list_scratch(char *out, size_t out_size, const char *name) {
+    snprintf(out, out_size, "%s/daukle_test_list_%s_%d", fr_test_temp_base(), name,
+             fr_test_process_id());
+    fr_test_remove_tree(out);
+    fr_test_make_directory(out);
+}
+
+static void list_write(const char *base, const char *relative) {
+    char path[900];
+    snprintf(path, sizeof path, "%s/%s", base, relative);
+    fr_error err;
+    fr_file_write_text(path, "x\n", &err);
+}
+
+static const char *LIST_RENDER =
+    "local entries, why = daukle.list(target)\n"
+    "if entries == nil then out = 'nil:' .. tostring(why) return end\n"
+    "local parts = {}\n"
+    "for _, entry in ipairs(entries) do parts[#parts + 1] = entry.name .. '=' .. entry.kind end\n"
+    "out = 'list:' .. table.concat(parts, ',')\n";
+
+static int list_run(const char *base, const char *target, char *out, size_t out_size) {
+    fr_error err;
+    fr_registry *registry = fr_registry_create();
+    if (fr_lua_runtime_begin(base, registry, &err) != FR_OK) {
+        fr_registry_destroy(registry);
+        return FR_ERR;
+    }
+    lua_State *state = fr_lua_runtime_state();
+    const char *verbs[] = { "list" };
+    int status = fr_lua_verbs_push_env(state, verbs, 1, &err);
+    int env = lua_gettop(state);
+    if (status == FR_OK) {
+        lua_pushstring(state, target);
+        lua_setfield(state, env, "target");
+        status = fr_lua_run_in_env(state, LIST_RENDER, "=t", env, &err);
+    }
+    if (status == FR_OK) {
+        lua_getfield(state, env, "out");
+        snprintf(out, out_size, "%s", lua_tostring(state, -1) != NULL ? lua_tostring(state, -1) : "");
+    } else {
+        snprintf(out, out_size, "error:%s", err.message);
+    }
+    lua_settop(state, 0);
+    fr_registry_destroy(registry);
+    fr_lua_runtime_shutdown();
+    return status;
+}
+
+TEST list_returns_sorted_entries_with_their_kinds(void) {
+    char base[700];
+    list_scratch(base, sizeof base, "sorted");
+    list_write(base, "b");
+    list_write(base, "a");
+    char directory[800];
+    snprintf(directory, sizeof directory, "%s/d", base);
+    fr_test_make_directory(directory);
+
+    char out[512];
+    ASSERT_EQ(FR_OK, list_run(base, ".", out, sizeof out));
+    ASSERT_STR_EQ("list:a=file,b=file,d=directory", out);
+    fr_test_remove_tree(base);
+    PASS();
+}
+
+TEST list_returns_an_empty_table_for_an_empty_directory(void) {
+    char base[700];
+    list_scratch(base, sizeof base, "empty");
+    char directory[800];
+    snprintf(directory, sizeof directory, "%s/hollow", base);
+    fr_test_make_directory(directory);
+
+    char out[512];
+    ASSERT_EQ(FR_OK, list_run(base, "hollow", out, sizeof out));
+    ASSERT_STR_EQ("list:", out);
+    fr_test_remove_tree(base);
+    PASS();
+}
+
+TEST list_returns_nil_for_a_missing_path(void) {
+    char base[700];
+    list_scratch(base, sizeof base, "missing");
+
+    char out[512];
+    ASSERT_EQ(FR_OK, list_run(base, "absent", out, sizeof out));
+    ASSERT_STR_EQ("nil:nil", out);
+    fr_test_remove_tree(base);
+    PASS();
+}
+
+TEST list_returns_nil_and_a_reason_for_a_file(void) {
+    char base[700];
+    list_scratch(base, sizeof base, "file");
+    list_write(base, "plain.txt");
+
+    char out[512];
+    ASSERT_EQ(FR_OK, list_run(base, "plain.txt", out, sizeof out));
+    ASSERT(strstr(out, "nil:") == out);
+    ASSERT(strstr(out, "plain.txt is not a directory") != NULL);
+    fr_test_remove_tree(base);
+    PASS();
+}
+
+TEST list_refuses_a_path_outside_the_base_directory(void) {
+    char base[700];
+    list_scratch(base, sizeof base, "outside");
+
+    char out[512];
+    ASSERT_EQ(FR_ERR, list_run(base, "..", out, sizeof out));
+    ASSERT(strstr(out, "outside the project directory") != NULL);
+    fr_test_remove_tree(base);
+    PASS();
+}
+
+/* @implNote a junction on Windows, because an unprivileged process there can only make a
+   directory link as one, and node:install places node_modules exactly that way. */
+TEST list_reports_a_link_without_following_it(void) {
+    char base[700];
+    list_scratch(base, sizeof base, "link");
+    char target[800];
+    snprintf(target, sizeof target, "%s/real", base);
+    fr_test_make_directory(target);
+    list_write(base, "real/marker.txt");
+    char link_path[800];
+    snprintf(link_path, sizeof link_path, "%s/linked", base);
+#ifdef _WIN32
+    char command[2048];
+    snprintf(command, sizeof command, "cmd /c mklink /J \"%s\" \"%s\" >nul 2>&1", link_path, target);
+    system(command);
+#else
+    int created = symlink(target, link_path);
+    (void) created;
+#endif
+    char probe[900];
+    snprintf(probe, sizeof probe, "%s/marker.txt", link_path);
+    fr_error err;
+    char *text = NULL;
+    int linked = fr_file_read_text(probe, &text, &err) == FR_OK;
+    free(text);
+    if (!linked) {
+        fr_test_remove_tree(base);
+        SKIPm("could not create a junction or symlink on this machine; the link assertion did not run");
+    }
+
+    char out[512];
+    int status = list_run(base, ".", out, sizeof out);
+#ifdef _WIN32
+    RemoveDirectoryA(link_path);
+#else
+    unlink(link_path);
+#endif
+    fr_test_remove_tree(base);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_STR_EQ("list:linked=link,real=directory", out);
     PASS();
 }
 
@@ -3441,6 +3599,12 @@ int main(int argc, char **argv) {
     RUN_TEST(env_reads_a_variable_and_nil_for_an_absent_one);
     RUN_TEST(read_refuses_a_path_outside_the_base_directory);
     RUN_TEST(read_returns_the_text_of_a_file_inside_the_base_directory);
+    RUN_TEST(list_returns_sorted_entries_with_their_kinds);
+    RUN_TEST(list_returns_an_empty_table_for_an_empty_directory);
+    RUN_TEST(list_returns_nil_for_a_missing_path);
+    RUN_TEST(list_returns_nil_and_a_reason_for_a_file);
+    RUN_TEST(list_refuses_a_path_outside_the_base_directory);
+    RUN_TEST(list_reports_a_link_without_following_it);
     RUN_TEST(fetch_returns_the_body_and_passes_headers);
     RUN_TEST(cache_calls_the_producer_once);
     RUN_TEST(cache_propagates_a_read_failure_rather_than_refetching);

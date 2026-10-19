@@ -31,6 +31,7 @@ int fr_lua_verbs_is_resolving(void);
 int fr_lua_verb_env(lua_State *state);
 
 int fr_lua_verb_read(lua_State *state);
+int fr_lua_verb_list(lua_State *state);
 int fr_lua_verb_fetch(lua_State *state);
 int fr_lua_verb_cache(lua_State *state);
 int fr_lua_verb_region(lua_State *state);
