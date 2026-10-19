@@ -5,7 +5,9 @@
 #include "util/sha256.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 GREATEST_MAIN_DEFS();
 
@@ -64,6 +66,97 @@ TEST different_bytes_name_both_digests(void) {
     ASSERT(!same);
     ASSERT(strstr(difference, old_digest) != NULL);
     ASSERT(strstr(difference, new_digest) != NULL);
+    PASS();
+}
+
+static int compare_texts(const char *old_text, size_t old_length, const char *new_text,
+                         size_t new_length, char *difference) {
+    if (!write_file("old.txt", old_text, old_length) || !write_file("new.txt", new_text, new_length)) {
+        return 0;
+    }
+    int same = 1;
+    fr_error err;
+    if (compare(FR_PROOF_BYTES, "old.txt", "new.txt", &same, difference, &err) != FR_OK) return 0;
+    return !same;
+}
+
+TEST bytes_proof_names_the_lines_only_on_each_side(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    ASSERT(compare_texts("a\nb\nc\n", 6, "a\nc\nd\n", 6, difference));
+    ASSERT(strstr(difference, "only in the old build: \"b\"") != NULL);
+    ASSERT(strstr(difference, "only in the new build: \"d\"") != NULL);
+    ASSERT(strstr(difference, "\"a\"") == NULL);
+    PASS();
+}
+
+TEST bytes_proof_counts_lines_past_the_first_five(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    const char *old_text = "l1\nl2\nl3\nl4\nl5\nl6\nl7\n";
+    ASSERT(compare_texts(old_text, strlen(old_text), "", 0, difference));
+    ASSERT(strstr(difference, "\"l5\"") != NULL);
+    ASSERT(strstr(difference, "\"l6\"") == NULL);
+    ASSERT(strstr(difference, "and 2 more") != NULL);
+    PASS();
+}
+
+TEST bytes_proof_keeps_only_the_digests_for_binary_files(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    char old_digest[65];
+    fr_sha256_hex("a\0b", 3, old_digest);
+    ASSERT(compare_texts("a\0b", 3, "a\0c", 3, difference));
+    ASSERT(strstr(difference, "only in") == NULL);
+    ASSERT(strstr(difference, old_digest) != NULL);
+    PASS();
+}
+
+TEST bytes_proof_reports_a_reordering(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    ASSERT(compare_texts("a\nb\n", 4, "b\na\n", 4, difference));
+    ASSERT(strstr(difference, "the same lines in a different order") != NULL);
+    PASS();
+}
+
+TEST bytes_proof_treats_crlf_as_different(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    ASSERT(compare_texts("a\r\n", 3, "a\n", 2, difference));
+    ASSERT(strstr(difference, "only in the old build: \"a\\r\"") != NULL);
+    ASSERT(strstr(difference, "only in the new build: \"a\"") != NULL);
+    PASS();
+}
+
+TEST bytes_proof_names_a_final_newline_difference(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    ASSERT(compare_texts("a\nb", 3, "a\nb\n", 4, difference));
+    ASSERT(strstr(difference, "only the final newline differs") != NULL);
+    ASSERT(strstr(difference, "different order") == NULL);
+    PASS();
+}
+
+static char *numbered_lines(size_t count, const char *prefix, size_t *out_length) {
+    char *text = malloc(count * 24 + 1);
+    size_t used = 0;
+    for (size_t index = 0; text != NULL && index < count; index++) {
+        used += (size_t) snprintf(text + used, 24, "%s%zu\n", prefix, (count * 7919u + index * 104729u) % 1000003u);
+    }
+    *out_length = used;
+    return text;
+}
+
+TEST bytes_proof_stays_fast_on_a_large_text_file(void) {
+    size_t old_length = 0;
+    size_t new_length = 0;
+    char *old_text = numbered_lines(200000, "old", &old_length);
+    char *new_text = numbered_lines(200000, "new", &new_length);
+    ASSERT(old_text != NULL && new_text != NULL);
+    char difference[DIFFERENCE_SIZE] = "";
+    clock_t started = clock();
+    int differs = compare_texts(old_text, old_length, new_text, new_length, difference);
+    double seconds = (double) (clock() - started) / CLOCKS_PER_SEC;
+    free(old_text);
+    free(new_text);
+    ASSERT(differs);
+    ASSERT(strstr(difference, "and 199995 more") != NULL);
+    ASSERT(seconds < 5.0);
     PASS();
 }
 
@@ -183,6 +276,13 @@ TEST the_kind_vocabulary_is_parsed_in_one_place(void) {
 SUITE(migrate_proof) {
     RUN_TEST(identical_bytes_are_the_same);
     RUN_TEST(different_bytes_name_both_digests);
+    RUN_TEST(bytes_proof_names_the_lines_only_on_each_side);
+    RUN_TEST(bytes_proof_counts_lines_past_the_first_five);
+    RUN_TEST(bytes_proof_keeps_only_the_digests_for_binary_files);
+    RUN_TEST(bytes_proof_reports_a_reordering);
+    RUN_TEST(bytes_proof_treats_crlf_as_different);
+    RUN_TEST(bytes_proof_names_a_final_newline_difference);
+    RUN_TEST(bytes_proof_stays_fast_on_a_large_text_file);
     RUN_TEST(archives_with_the_same_members_in_another_order_are_the_same);
     RUN_TEST(an_archive_member_missing_on_one_side_is_named);
     RUN_TEST(an_archive_member_with_other_bytes_is_named);

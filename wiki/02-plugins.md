@@ -175,6 +175,32 @@ or `.cmd` is refused exactly as `daukle.tool` refuses one, because starting it t
 `publish` or a migrator's `run` and `build`, and refused with the same phase-naming messages everywhere else. A daukle that predates
 it refuses `uses = { "built" }` by name, so it needs no api bump.
 
+## Looking at a directory: `daukle.list`
+
+`daukle.list(path)` lists a directory under the plugin's base directory, held to the containment
+rule `daukle.read` is held to. Declare `"list"` in `uses`:
+
+```lua
+local entries, why = daukle.list("scripts")
+if entries == nil and why ~= nil then error(why) end   -- it exists and cannot be listed
+for _, entry in ipairs(entries or {}) do
+  -- entry.name, and entry.kind: "file", "directory" or "link"
+end
+```
+
+| `path` names | `daukle.list` returns |
+| --- | --- |
+| a directory | its entries sorted by name, without `.` and `..` |
+| nothing | `nil` |
+| a file | `nil` and `"<path> is not a directory"` |
+| a directory that cannot be opened | `nil` and the reason |
+| something outside the base directory | it raises, as `daukle.read` does |
+
+**A link is reported as `"link"` and never followed**, a Windows junction included, so a walk does
+not descend into what a link points at. **It returns rather than raises for the three cases a
+plugin has to tell apart**, because the sandbox has no `pcall`. A daukle that predates it refuses
+`uses = { "list" }` by name, so it needs no api bump.
+
 ## What `api` is for, and when to raise it
 
 `api = 1` says which plugin api your plugin was written against. **daukle refuses an api HIGHER
