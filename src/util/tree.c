@@ -1,5 +1,8 @@
 #include "util/tree.h"
 
+#include "util/error.h"
+
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -12,15 +15,41 @@
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+static void windows_reason(DWORD code, fr_error *err) {
+    char text[256];
+    DWORD length = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL,
+                                  code, 0, text, sizeof text, NULL);
+    while (length > 0 && (text[length - 1] == '\r' || text[length - 1] == '\n'
+                          || text[length - 1] == '.' || text[length - 1] == ' ')) {
+        text[--length] = '\0';
+    }
+    if (length == 0) fr_error_set(err, "Windows error %lu", (unsigned long) code);
+    else fr_error_set(err, "%s", text);
+}
+#endif
+
 void fr_list_directory(const char *directory, fr_directory_visitor visit, void *context) {
+    fr_error ignored;
+    (void) fr_list_directory_checked(directory, visit, context, &ignored);
+}
+
+int fr_list_directory_checked(const char *directory, fr_directory_visitor visit, void *context,
+                              fr_error *err) {
 #ifdef _WIN32
     char pattern[1024];
     int written = snprintf(pattern, sizeof pattern, "%s/*", directory);
-    if (written < 0 || (size_t) written >= sizeof pattern) return;
+    if (written < 0 || (size_t) written >= sizeof pattern) {
+        fr_error_set(err, "the path is too long");
+        return FR_ERR;
+    }
 
     WIN32_FIND_DATAA found;
     HANDLE handle = FindFirstFileA(pattern, &found);
-    if (handle == INVALID_HANDLE_VALUE) return;
+    if (handle == INVALID_HANDLE_VALUE) {
+        windows_reason(GetLastError(), err);
+        return FR_ERR;
+    }
     do {
         if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) continue;
         int is_directory = (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -30,7 +59,10 @@ void fr_list_directory(const char *directory, fr_directory_visitor visit, void *
     FindClose(handle);
 #else
     DIR *dir = opendir(directory);
-    if (dir == NULL) return;
+    if (dir == NULL) {
+        fr_error_set(err, "%s", strerror(errno));
+        return FR_ERR;
+    }
     const struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
@@ -44,6 +76,7 @@ void fr_list_directory(const char *directory, fr_directory_visitor visit, void *
     }
     closedir(dir);
 #endif
+    return FR_OK;
 }
 
 /* A link is removed as the single node it is rather than descended into:

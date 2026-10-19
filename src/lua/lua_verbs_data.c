@@ -11,6 +11,7 @@
 #include "project/lang_region.h"
 #include "project/region.h"
 #include "util/error.h"
+#include "util/tree.h"
 
 #include "lauxlib.h"
 
@@ -37,6 +38,162 @@ int fr_lua_verb_read(lua_State *state) {
     lua_pushstring(state, text);
     free(text);
     return 1;
+}
+
+typedef struct {
+    char **names;
+    const char **kinds;
+    size_t count;
+    size_t capacity;
+    int failed;
+} fr_list_entries;
+
+static void collect_list_entry(const char *name, int is_directory, int is_link, void *context) {
+    fr_list_entries *entries = context;
+    if (entries->failed) return;
+    if (entries->count == entries->capacity) {
+        size_t grown = entries->capacity == 0 ? 16 : entries->capacity * 2;
+        char **names = realloc(entries->names, grown * sizeof *names);
+        if (names != NULL) entries->names = names;
+        const char **kinds = realloc((void *) entries->kinds, grown * sizeof *kinds);
+        if (kinds != NULL) entries->kinds = kinds;
+        if (names == NULL || kinds == NULL) {
+            entries->failed = 1;
+            return;
+        }
+        entries->capacity = grown;
+    }
+    size_t length = strlen(name) + 1;
+    char *copy = malloc(length);
+    if (copy == NULL) {
+        entries->failed = 1;
+        return;
+    }
+    memcpy(copy, name, length);
+    entries->names[entries->count] = copy;
+    entries->kinds[entries->count] = is_link ? "link" : (is_directory ? "directory" : "file");
+    entries->count++;
+}
+
+static void free_list_entries(fr_list_entries *entries) {
+    for (size_t index = 0; index < entries->count; index++) free(entries->names[index]);
+    free(entries->names);
+    free((void *) entries->kinds);
+}
+
+static void sort_list_entries(fr_list_entries *entries) {
+    for (size_t index = 1; index < entries->count; index++) {
+        char *name = entries->names[index];
+        const char *kind = entries->kinds[index];
+        size_t slot = index;
+        while (slot > 0 && strcmp(entries->names[slot - 1], name) > 0) {
+            entries->names[slot] = entries->names[slot - 1];
+            entries->kinds[slot] = entries->kinds[slot - 1];
+            slot--;
+        }
+        entries->names[slot] = name;
+        entries->kinds[slot] = kind;
+    }
+}
+
+static int push_list_entries(lua_State *state, const char *directory) {
+    fr_list_entries entries = { 0 };
+    fr_error err;
+    if (fr_list_directory_checked(directory, collect_list_entry, &entries, &err) != FR_OK) {
+        free_list_entries(&entries);
+        lua_pushnil(state);
+        lua_pushstring(state, err.message);
+        return 2;
+    }
+    if (entries.failed) {
+        free_list_entries(&entries);
+        return luaL_error(state, "out of memory listing \"%s\"", directory);
+    }
+    sort_list_entries(&entries);
+    lua_createtable(state, (int) entries.count, 0);
+    for (size_t index = 0; index < entries.count; index++) {
+        lua_createtable(state, 0, 2);
+        lua_pushstring(state, entries.names[index]);
+        lua_setfield(state, -2, "name");
+        lua_pushstring(state, entries.kinds[index]);
+        lua_setfield(state, -2, "kind");
+        lua_rawseti(state, -2, (lua_Integer) index + 1);
+    }
+    free_list_entries(&entries);
+    return 1;
+}
+
+/* @implNote narrower than fr_lua_sandbox_climbs_out, which refuses ".." anywhere: a walk hands
+   this verb every directory name it meets, and "a..b" is an ordinary one. Containment is still
+   decided on the canonical path afterwards, so only the lexical shortcut is relaxed. */
+static int names_a_parent_segment(const char *relative) {
+    if (relative[0] == '/' || relative[0] == '\\') return 1;
+    if (relative[0] != '\0' && relative[1] == ':') return 1;
+    const char *segment = relative;
+    for (const char *cursor = relative;; cursor++) {
+        if (*cursor != '/' && *cursor != '\\' && *cursor != '\0') continue;
+        if (cursor - segment == 2 && segment[0] == '.' && segment[1] == '.') return 1;
+        if (*cursor == '\0') return 0;
+        segment = cursor + 1;
+    }
+}
+
+static int contained_directory(const char *base, const char *directory, char **out_canonical,
+                               fr_error *err) {
+    if (fr_lua_sandbox_canonical_dir(directory, out_canonical, err) != FR_OK) return FR_ERR;
+    if (strcmp(base, *out_canonical) == 0 || fr_lua_sandbox_is_within(base, *out_canonical)) {
+        return FR_OK;
+    }
+    free(*out_canonical);
+    *out_canonical = NULL;
+    return FR_ERR;
+}
+
+static void parent_of(char *path) {
+    char *slash = strrchr(path, '/');
+    char *backslash = strrchr(path, '\\');
+    if (backslash != NULL && (slash == NULL || backslash > slash)) slash = backslash;
+    if (slash != NULL) *slash = '\0';
+}
+
+/* @implNote returns nil (and a reason when the path exists) instead of raising, because a
+   plugin has no pcall to tell a missing path from an unreadable one; a path outside the base
+   still raises, exactly as daukle.read does. A missing path is answered before containment is
+   checked, since it cannot be canonicalised and points nowhere. */
+int fr_lua_verb_list(lua_State *state) {
+    const char *relative = luaL_checkstring(state, 1);
+    if (names_a_parent_segment(relative)) {
+        return luaL_error(state, "\"%s\" is outside the project directory", relative);
+    }
+    fr_error err;
+    char *base = NULL;
+    if (fr_lua_sandbox_base_dir(state, &base, &err) != FR_OK) return luaL_error(state, "%s", err.message);
+    char lexical[1024];
+    int written = snprintf(lexical, sizeof lexical, "%s/%s", base, relative);
+    if (written < 0 || (size_t) written >= sizeof lexical) {
+        free(base);
+        return luaL_error(state, "the path is too long (%d characters)", (int) strlen(relative));
+    }
+    int is_directory = fr_cache_directory_exists(lexical);
+    if (!is_directory && !fr_cache_file_exists(lexical)) {
+        free(base);
+        lua_pushnil(state);
+        return 1;
+    }
+    if (!is_directory) parent_of(lexical);
+    char *canonical = NULL;
+    int status = contained_directory(base, lexical, &canonical, &err);
+    free(base);
+    if (status != FR_OK) return luaL_error(state, "\"%s\" is outside the project directory", relative);
+    if (!is_directory) {
+        free(canonical);
+        lua_pushnil(state);
+        lua_pushfstring(state, "%s is not a directory", relative);
+        return 2;
+    }
+    int results = push_list_entries(state, canonical);
+    free(canonical);
+    return results;
 }
 
 int fr_lua_verb_fetch(lua_State *state) {
