@@ -230,20 +230,71 @@ static int split_lines(const char *bytes, size_t length, proof_lines *out) {
     return FR_OK;
 }
 
-static void match_lines(proof_lines *old_lines, proof_lines *new_lines) {
-    for (size_t old_index = 0; old_index < old_lines->count; old_index++) {
-        proof_line wanted = old_lines->lines[old_index];
-        for (size_t new_index = 0; new_index < new_lines->count; new_index++) {
-            proof_line candidate = new_lines->lines[new_index];
-            if (new_lines->matched[new_index] || candidate.length != wanted.length
-                || memcmp(candidate.start, wanted.start, wanted.length) != 0) {
-                continue;
-            }
-            old_lines->matched[old_index] = 1;
-            new_lines->matched[new_index] = 1;
-            break;
+typedef struct {
+    proof_line line;
+    size_t index;
+} proof_sorted_line;
+
+static int compare_lines(proof_line left, proof_line right) {
+    size_t shorter = left.length < right.length ? left.length : right.length;
+    int order = shorter > 0 ? memcmp(left.start, right.start, shorter) : 0;
+    if (order != 0) return order;
+    return (left.length > right.length) - (left.length < right.length);
+}
+
+static int compare_sorted_lines(const void *left, const void *right) {
+    const proof_sorted_line *a = left;
+    const proof_sorted_line *b = right;
+    int order = compare_lines(a->line, b->line);
+    if (order != 0) return order;
+    return (a->index > b->index) - (a->index < b->index);
+}
+
+static proof_sorted_line *sorted_copy(const proof_lines *lines) {
+    proof_sorted_line *sorted = malloc((lines->count > 0 ? lines->count : 1) * sizeof *sorted);
+    if (sorted == NULL) return NULL;
+    for (size_t index = 0; index < lines->count; index++) {
+        sorted[index].line = lines->lines[index];
+        sorted[index].index = index;
+    }
+    qsort(sorted, lines->count, sizeof *sorted, compare_sorted_lines);
+    return sorted;
+}
+
+/* @implNote sorted and merged rather than searched pairwise, because a proof file can be a
+   generated listing of hundreds of thousands of lines and a pairwise search is quadratic. */
+static int match_lines(proof_lines *old_lines, proof_lines *new_lines) {
+    proof_sorted_line *old_sorted = sorted_copy(old_lines);
+    proof_sorted_line *new_sorted = sorted_copy(new_lines);
+    if (old_sorted == NULL || new_sorted == NULL) {
+        free(old_sorted);
+        free(new_sorted);
+        return FR_ERR;
+    }
+    size_t old_at = 0;
+    size_t new_at = 0;
+    while (old_at < old_lines->count && new_at < new_lines->count) {
+        int order = compare_lines(old_sorted[old_at].line, new_sorted[new_at].line);
+        if (order < 0) {
+            old_at++;
+        } else if (order > 0) {
+            new_at++;
+        } else {
+            old_lines->matched[old_sorted[old_at++].index] = 1;
+            new_lines->matched[new_sorted[new_at++].index] = 1;
         }
     }
+    free(old_sorted);
+    free(new_sorted);
+    return FR_OK;
+}
+
+static int same_sequence(const proof_lines *old_lines, const proof_lines *new_lines) {
+    if (old_lines->count != new_lines->count) return 0;
+    for (size_t index = 0; index < old_lines->count; index++) {
+        if (compare_lines(old_lines->lines[index], new_lines->lines[index]) != 0) return 0;
+    }
+    return 1;
 }
 
 static size_t report_side(proof_report *report, const char *side, const proof_lines *lines) {
@@ -274,11 +325,15 @@ static void report_line_difference(proof_report *report, const char *old_bytes, 
     proof_lines old_lines = { 0 };
     proof_lines new_lines = { 0 };
     if (split_lines(old_bytes, old_length, &old_lines) == FR_OK
-        && split_lines(new_bytes, new_length, &new_lines) == FR_OK) {
-        match_lines(&old_lines, &new_lines);
+        && split_lines(new_bytes, new_length, &new_lines) == FR_OK
+        && match_lines(&old_lines, &new_lines) == FR_OK) {
         size_t differing = report_side(report, "old", &old_lines);
         differing += report_side(report, "new", &new_lines);
-        if (differing == 0) report_append(report, "the same lines in a different order");
+        if (differing == 0) {
+            report_append(report, same_sequence(&old_lines, &new_lines)
+                                      ? "only the final newline differs"
+                                      : "the same lines in a different order");
+        }
     }
     free(old_lines.lines);
     free(old_lines.matched);

@@ -1136,8 +1136,62 @@ TEST list_refuses_a_path_outside_the_base_directory(void) {
     PASS();
 }
 
+TEST list_lists_a_directory_whose_name_holds_two_dots(void) {
+    char base[700];
+    list_scratch(base, sizeof base, "dots");
+    char directory[800];
+    snprintf(directory, sizeof directory, "%s/a..b", base);
+    fr_test_make_directory(directory);
+    list_write(base, "a..b/inner");
+
+    char out[512];
+    ASSERT_EQ(FR_OK, list_run(base, "a..b", out, sizeof out));
+    ASSERT_STR_EQ("list:inner=file", out);
+    fr_test_remove_tree(base);
+    PASS();
+}
+
+TEST list_refuses_a_parent_segment_inside_a_path(void) {
+    char base[700];
+    list_scratch(base, sizeof base, "segment");
+    char directory[800];
+    snprintf(directory, sizeof directory, "%s/sub", base);
+    fr_test_make_directory(directory);
+
+    char out[512];
+    ASSERT_EQ(FR_ERR, list_run(base, "sub/../..", out, sizeof out));
+    ASSERT(strstr(out, "outside the project directory") != NULL);
+    fr_test_remove_tree(base);
+    PASS();
+}
+
+TEST list_returns_nil_and_only_a_reason_for_an_unreadable_directory(void) {
+#ifdef _WIN32
+    SKIPm("an unprivileged process cannot make a directory it owns unlistable on Windows");
+#else
+    char base[700];
+    list_scratch(base, sizeof base, "unreadable");
+    char directory[800];
+    snprintf(directory, sizeof directory, "%s/locked", base);
+    fr_test_make_directory(directory);
+    chmod(directory, 0);
+    char out[512];
+    int status = list_run(base, "locked", out, sizeof out);
+    chmod(directory, 0700);
+    fr_test_remove_tree(base);
+    if (status == FR_OK && strcmp(out, "list:") == 0) {
+        SKIPm("this process can list a mode 000 directory (running as root); the assertion did not run");
+    }
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(strstr(out, "nil:") == out);
+    ASSERT(strstr(out, base) == NULL);
+    ASSERT(strstr(out, "locked") == NULL);
+    PASS();
+#endif
+}
+
 /* @implNote a junction on Windows, because an unprivileged process there can only make a
-   directory link as one, and node:install places node_modules exactly that way. */
+   directory link as one, which is how a directory link usually arrives there. */
 TEST list_reports_a_link_without_following_it(void) {
     char base[700];
     list_scratch(base, sizeof base, "link");
@@ -3605,6 +3659,9 @@ int main(int argc, char **argv) {
     RUN_TEST(list_returns_nil_and_a_reason_for_a_file);
     RUN_TEST(list_refuses_a_path_outside_the_base_directory);
     RUN_TEST(list_reports_a_link_without_following_it);
+    RUN_TEST(list_lists_a_directory_whose_name_holds_two_dots);
+    RUN_TEST(list_refuses_a_parent_segment_inside_a_path);
+    RUN_TEST(list_returns_nil_and_only_a_reason_for_an_unreadable_directory);
     RUN_TEST(fetch_returns_the_body_and_passes_headers);
     RUN_TEST(cache_calls_the_producer_once);
     RUN_TEST(cache_propagates_a_read_failure_rather_than_refetching);

@@ -123,13 +123,46 @@ static int push_list_entries(lua_State *state, const char *directory) {
     return 1;
 }
 
+/* @implNote narrower than fr_lua_sandbox_climbs_out, which refuses ".." anywhere: a walk hands
+   this verb every directory name it meets, and "a..b" is an ordinary one. Containment is still
+   decided on the canonical path afterwards, so only the lexical shortcut is relaxed. */
+static int names_a_parent_segment(const char *relative) {
+    if (relative[0] == '/' || relative[0] == '\\') return 1;
+    if (relative[0] != '\0' && relative[1] == ':') return 1;
+    const char *segment = relative;
+    for (const char *cursor = relative;; cursor++) {
+        if (*cursor != '/' && *cursor != '\\' && *cursor != '\0') continue;
+        if (cursor - segment == 2 && segment[0] == '.' && segment[1] == '.') return 1;
+        if (*cursor == '\0') return 0;
+        segment = cursor + 1;
+    }
+}
+
+static int contained_directory(const char *base, const char *directory, char **out_canonical,
+                               fr_error *err) {
+    if (fr_lua_sandbox_canonical_dir(directory, out_canonical, err) != FR_OK) return FR_ERR;
+    if (strcmp(base, *out_canonical) == 0 || fr_lua_sandbox_is_within(base, *out_canonical)) {
+        return FR_OK;
+    }
+    free(*out_canonical);
+    *out_canonical = NULL;
+    return FR_ERR;
+}
+
+static void parent_of(char *path) {
+    char *slash = strrchr(path, '/');
+    char *backslash = strrchr(path, '\\');
+    if (backslash != NULL && (slash == NULL || backslash > slash)) slash = backslash;
+    if (slash != NULL) *slash = '\0';
+}
+
 /* @implNote returns nil (and a reason when the path exists) instead of raising, because a
    plugin has no pcall to tell a missing path from an unreadable one; a path outside the base
-   still raises, exactly as daukle.read does. A missing path is checked lexically before any
-   containment check, since it cannot be canonicalised and points nowhere. */
+   still raises, exactly as daukle.read does. A missing path is answered before containment is
+   checked, since it cannot be canonicalised and points nowhere. */
 int fr_lua_verb_list(lua_State *state) {
     const char *relative = luaL_checkstring(state, 1);
-    if (fr_lua_sandbox_climbs_out(relative)) {
+    if (names_a_parent_segment(relative)) {
         return luaL_error(state, "\"%s\" is outside the project directory", relative);
     }
     fr_error err;
@@ -137,27 +170,29 @@ int fr_lua_verb_list(lua_State *state) {
     if (fr_lua_sandbox_base_dir(state, &base, &err) != FR_OK) return luaL_error(state, "%s", err.message);
     char lexical[1024];
     int written = snprintf(lexical, sizeof lexical, "%s/%s", base, relative);
-    free(base);
     if (written < 0 || (size_t) written >= sizeof lexical) {
+        free(base);
         return luaL_error(state, "the path is too long (%d characters)", (int) strlen(relative));
     }
     int is_directory = fr_cache_directory_exists(lexical);
     if (!is_directory && !fr_cache_file_exists(lexical)) {
+        free(base);
         lua_pushnil(state);
         return 1;
     }
-    char *resolved = NULL;
-    int status = is_directory ? fr_lua_sandbox_resolve_dir(state, relative, &resolved, &err)
-                              : fr_lua_sandbox_resolve(state, relative, &resolved, &err);
-    if (status != FR_OK) return luaL_error(state, "%s", err.message);
+    if (!is_directory) parent_of(lexical);
+    char *canonical = NULL;
+    int status = contained_directory(base, lexical, &canonical, &err);
+    free(base);
+    if (status != FR_OK) return luaL_error(state, "\"%s\" is outside the project directory", relative);
     if (!is_directory) {
-        free(resolved);
+        free(canonical);
         lua_pushnil(state);
         lua_pushfstring(state, "%s is not a directory", relative);
         return 2;
     }
-    int results = push_list_entries(state, resolved);
-    free(resolved);
+    int results = push_list_entries(state, canonical);
+    free(canonical);
     return results;
 }
 

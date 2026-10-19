@@ -5,7 +5,9 @@
 #include "util/sha256.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 GREATEST_MAIN_DEFS();
 
@@ -119,6 +121,42 @@ TEST bytes_proof_treats_crlf_as_different(void) {
     ASSERT(compare_texts("a\r\n", 3, "a\n", 2, difference));
     ASSERT(strstr(difference, "only in the old build: \"a\\r\"") != NULL);
     ASSERT(strstr(difference, "only in the new build: \"a\"") != NULL);
+    PASS();
+}
+
+TEST bytes_proof_names_a_final_newline_difference(void) {
+    char difference[DIFFERENCE_SIZE] = "";
+    ASSERT(compare_texts("a\nb", 3, "a\nb\n", 4, difference));
+    ASSERT(strstr(difference, "only the final newline differs") != NULL);
+    ASSERT(strstr(difference, "different order") == NULL);
+    PASS();
+}
+
+static char *numbered_lines(size_t count, const char *prefix, size_t *out_length) {
+    char *text = malloc(count * 24 + 1);
+    size_t used = 0;
+    for (size_t index = 0; text != NULL && index < count; index++) {
+        used += (size_t) snprintf(text + used, 24, "%s%zu\n", prefix, (count * 7919u + index * 104729u) % 1000003u);
+    }
+    *out_length = used;
+    return text;
+}
+
+TEST bytes_proof_stays_fast_on_a_large_text_file(void) {
+    size_t old_length = 0;
+    size_t new_length = 0;
+    char *old_text = numbered_lines(200000, "old", &old_length);
+    char *new_text = numbered_lines(200000, "new", &new_length);
+    ASSERT(old_text != NULL && new_text != NULL);
+    char difference[DIFFERENCE_SIZE] = "";
+    clock_t started = clock();
+    int differs = compare_texts(old_text, old_length, new_text, new_length, difference);
+    double seconds = (double) (clock() - started) / CLOCKS_PER_SEC;
+    free(old_text);
+    free(new_text);
+    ASSERT(differs);
+    ASSERT(strstr(difference, "and 199995 more") != NULL);
+    ASSERT(seconds < 5.0);
     PASS();
 }
 
@@ -243,6 +281,8 @@ SUITE(migrate_proof) {
     RUN_TEST(bytes_proof_keeps_only_the_digests_for_binary_files);
     RUN_TEST(bytes_proof_reports_a_reordering);
     RUN_TEST(bytes_proof_treats_crlf_as_different);
+    RUN_TEST(bytes_proof_names_a_final_newline_difference);
+    RUN_TEST(bytes_proof_stays_fast_on_a_large_text_file);
     RUN_TEST(archives_with_the_same_members_in_another_order_are_the_same);
     RUN_TEST(an_archive_member_missing_on_one_side_is_named);
     RUN_TEST(an_archive_member_with_other_bytes_is_named);
