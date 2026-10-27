@@ -9,7 +9,7 @@
 # cmake/write_wrapper_pin.cmake once every cell has uploaded, which is the first moment the
 # digests exist, and publishes the result as the wrapper.toml asset. The ctest entry
 # wrapper_pin_matches_release holds this copy to the latest published release.
-version = "0.11.0"
+version = "0.12.0"
 
 # Where daukle migrate looks for plugins, passed to daukle as DAUKLE_CATALOGS when that is unset.
 # Only the locations are pinned here: what each catalog lists is fetched when migrate runs, so a
@@ -21,16 +21,16 @@ catalogs = ["https://raw.githubusercontent.com/daukle/manifest/main/plugins.json
 # cells this release does not cover say so. Both Mac hosts name ONE universal binary.
 [assets."linux/x86_64"]
 asset = "daukle-linux-x86_64"
-sha256 = "27910579b4dd4f62d77fcf13392ad6c31433a68305171d4f1a7fbbc932c5b8a8"
+sha256 = "4d352283dd859fc028f23fcb692ff082479d57d4f28869e8a36607619d8d790a"
 
 [assets."macos/aarch64"]
 asset = "daukle-macos-universal"
-sha256 = "9b99ea4c52a89ead935530b7135b1f289fc136335d99a87baaa478f6f6504b0c"
+sha256 = "75953da0c85150b22764500de374277e1e114fd18ea64022be50c3df562dd48d"
 
 [assets."macos/x86_64"]
 asset = "daukle-macos-universal"
-sha256 = "9b99ea4c52a89ead935530b7135b1f289fc136335d99a87baaa478f6f6504b0c"
+sha256 = "75953da0c85150b22764500de374277e1e114fd18ea64022be50c3df562dd48d"
 
 [assets."windows/x86_64"]
 asset = "daukle-windows-x86_64.exe"
-sha256 = "f2307e06cf2700c664dc9d6f63788c1ab159b8e296dadc3c7a10159c35105298"
+sha256 = "5464ccc850ca07db3e1bab6ff934ec9fab09a9d0d25f1f8c3dfe8fd09e9d2f91"
