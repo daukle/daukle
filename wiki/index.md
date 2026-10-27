@@ -117,7 +117,7 @@ compares the artifacts each migrator named, and only then moves the old tool's f
 | --- | --- |
 | 0 | migrated; the old files are in `build/daukle/migrate/old` |
 | 3 | blocked; nothing was written |
-| 4 | the proof failed; `daukle.toml` is kept for inspection and nothing was moved |
+| 4 | the proof failed; `daukle.toml` and the migrator's files are kept for inspection and nothing was moved |
 | 1 | an error in migrate itself, such as a fetch, a plugin error or a malformed catalog |
 
 - **`--catalog <location>`** adds a catalog, an https url or a path, and can be repeated. A catalog

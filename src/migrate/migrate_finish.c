@@ -25,9 +25,21 @@
 
 static const char *const FIRST_KEYS[] = { "schema", "project", "version", "modules", "plugins" };
 
-static void report_unproved(const char *what) {
-    fprintf(stderr, "daukle migrate: %s; daukle.toml is kept for inspection and nothing was"
-                    " removed\n", what);
+static int returned_any_files(const fr_migrate_state *state) {
+    for (size_t index = 0; index < state->kept_count; index++) {
+        const cJSON *files = cJSON_GetObjectItemCaseSensitive(state->kept[index].result, "files");
+        if (files != NULL && cJSON_GetArraySize(files) > 0) return 1;
+    }
+    return 0;
+}
+
+/** @implNote the wording without files is byte for byte what plugins released
+    before `files` assert on, so it must not change. */
+static void report_unproved(const fr_migrate_state *state, const char *what) {
+    const char *kept = returned_any_files(state) ? "daukle.toml and the migrator's files are"
+                                                  : "daukle.toml is";
+    fprintf(stderr, "daukle migrate: %s; %s kept for inspection and nothing was removed\n", what,
+            kept);
 }
 
 static int write_manifest(const fr_migrate_state *state, fr_error *err) {
@@ -138,7 +150,7 @@ static int compare_artifacts(const fr_migrate_state *state, int *out_same, fr_er
     }
     *out_same = count == 0;
     if (count > 0) {
-        report_unproved("the new build differs from the old one");
+        report_unproved(state, "the new build differs from the old one");
         fputs(text, stderr);
     }
     free(text);
@@ -296,13 +308,34 @@ int fr_migrate_check_owned(fr_migrate_state *state, fr_error *err) {
     return FR_OK;
 }
 
+static int write_carried_file(const cJSON *entry, fr_error *err) {
+    const char *path = cJSON_GetObjectItemCaseSensitive(entry, "path")->valuestring;
+    const char *text = cJSON_GetObjectItemCaseSensitive(entry, "text")->valuestring;
+    make_parent_directories(path);
+    return fr_file_write_text(path, text, err);
+}
+
+/** The paths were checked by fr_migrate_check_run_result, which confines each
+    to daukle/<instance>/, so nothing here can reach the old tool's files. */
+static int write_files(const fr_migrate_state *state, fr_error *err) {
+    for (size_t index = 0; index < state->kept_count; index++) {
+        const cJSON *entry = NULL;
+        cJSON_ArrayForEach(entry, cJSON_GetObjectItemCaseSensitive(state->kept[index].result,
+                                                                   "files")) {
+            if (write_carried_file(entry, err) != FR_OK) return FR_ERR;
+        }
+    }
+    return FR_OK;
+}
+
 int fr_migrate_finish(fr_migrate_state *state, fr_migrate_outcome *out_outcome, fr_error *err) {
     if (write_manifest(state, err) != FR_OK) return FR_ERR;
+    if (write_files(state, err) != FR_OK) return FR_ERR;
 
     *out_outcome = FR_MIGRATE_UNPROVED;
     char failure[FR_MIGRATE_FAILURE_SIZE];
     if (!run_proofs(state, failure, sizeof failure)) {
-        report_unproved(failure);
+        report_unproved(state, failure);
         return FR_OK;
     }
     int same = 0;

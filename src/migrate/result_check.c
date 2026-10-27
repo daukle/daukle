@@ -11,6 +11,7 @@
 #include <string.h>
 
 #define DERIVED_DIR "build/daukle"
+#define FR_MIGRATE_INSTANCE_PREFIX_SIZE 320
 
 static int malformed(fr_error *err, const char *who, const char *field, const char *what) {
     fr_error_set(err, "%s returned a malformed result: %s %s", who, field, what);
@@ -158,6 +159,56 @@ static int check_owned(const cJSON *result, const char *who, fr_error *err) {
     return FR_OK;
 }
 
+static const char *single_instance_name(const cJSON *result) {
+    const cJSON *manifest = member(result, "manifest");
+    const cJSON *toolchains = manifest != NULL
+        ? cJSON_GetObjectItemCaseSensitive(manifest, "toolchains") : NULL;
+    if (!cJSON_IsObject(toolchains) || cJSON_GetArraySize(toolchains) != 1) return NULL;
+    return toolchains->child->string;
+}
+
+static int is_inside_instance_directory(const char *path, const char *instance) {
+    char prefix[FR_MIGRATE_INSTANCE_PREFIX_SIZE];
+    int length = snprintf(prefix, sizeof prefix, "daukle/%s/", instance);
+    return length > 0 && (size_t) length < sizeof prefix
+           && strncmp(path, prefix, (size_t) length) == 0 && path[length] != '\0';
+}
+
+static int check_file_entry(const cJSON *entry, const char *instance, const char *who,
+                            fr_error *err) {
+    const cJSON *path = cJSON_IsObject(entry) ? cJSON_GetObjectItemCaseSensitive(entry, "path") : NULL;
+    const cJSON *text = cJSON_IsObject(entry) ? cJSON_GetObjectItemCaseSensitive(entry, "text") : NULL;
+    if (!is_string(path) || !is_string(text)) {
+        return malformed(err, who, "files", "must hold { path, text } entries with both strings");
+    }
+    if (!fr_manifest_relative_path_is_safe(path->valuestring)
+        || !is_inside_instance_directory(path->valuestring, instance)) {
+        fr_error_set(err, "%s returned a malformed result: files path \"%s\" must be a relative"
+                          " file path below daukle/%s/, with \"/\" separators and no \"..\"",
+                     who, path->valuestring, instance);
+        return FR_ERR;
+    }
+    return FR_OK;
+}
+
+static int check_files(const cJSON *result, const char *who, fr_error *err) {
+    const cJSON *files = member(result, "files");
+    if (files == NULL) return FR_OK;
+    if (!fr_json_is_array_or_empty_table(files)) {
+        return malformed(err, who, "files", "must be a list of { path, text } entries");
+    }
+    const char *instance = single_instance_name(result);
+    if (instance == NULL) {
+        return malformed(err, who, "files", "needs a manifest with exactly one toolchain, whose"
+                                            " name is the directory the files belong to");
+    }
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, files) {
+        if (check_file_entry(entry, instance, who, err) != FR_OK) return FR_ERR;
+    }
+    return FR_OK;
+}
+
 static int check_compare_entry(const cJSON *entry, const char *who, fr_error *err) {
     const cJSON *old_path = cJSON_GetObjectItemCaseSensitive(entry, "old");
     const cJSON *new_path = cJSON_GetObjectItemCaseSensitive(entry, "new");
@@ -224,6 +275,7 @@ int fr_migrate_check_run_result(const cJSON *result, const char *label, fr_block
     if (check_foreign(result, who, err) != FR_OK) return FR_ERR;
     if (check_blockers(result, who, blockers, err) != FR_OK) return FR_ERR;
     if (check_owned(result, who, err) != FR_OK) return FR_ERR;
+    if (check_files(result, who, err) != FR_OK) return FR_ERR;
     return check_proof(result, who, blockers, err);
 }
 

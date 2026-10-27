@@ -39,8 +39,11 @@ set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
 # other nine patterns on that file, which is too much for a 700-line reader that
 # will never resolve a plugin. archive/archive_tar.c carries "path" and "linkpath"
 # because those are pax extended-header KEYWORDS, a tar format's vocabulary that
-# predates this project. D-56.
-set(EXEMPTIONS "archive/archive_tar.c|\"path\"")
+# predates this project. D-56. A migrator result's `files` entries are { path, text },
+# the result protocol's own vocabulary, so the two migrate files that read it carry
+# "path" for the same reason.
+set(EXEMPTIONS "archive/archive_tar.c|\"path\""
+                "migrate/result_check.c|\"path\"" "migrate/migrate_finish.c|\"path\"")
 
 set(FINDINGS "")
 foreach(name ${CORE_FILES})

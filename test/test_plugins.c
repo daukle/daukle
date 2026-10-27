@@ -823,8 +823,8 @@ TEST a_plugin_written_against_a_later_api_says_which(void) {
     fr_error err;
     ASSERT_EQ(FR_ERR, load_manifest("test/fixtures/plugin-future-api/daukle.toml", &err));
     ASSERT(strstr(err.message, "gradle") != NULL);
-    ASSERT(strstr(err.message, "needs daukle api 4") != NULL);
-    ASSERT(strstr(err.message, "provides 3") != NULL);
+    ASSERT(strstr(err.message, "needs daukle api 5") != NULL);
+    ASSERT(strstr(err.message, "provides 4") != NULL);
     /* The running version, so the message is actionable without the reader
        knowing which release first provided which api. D-116. */
     ASSERT(strstr(err.message, fr_self_version()) != NULL);
