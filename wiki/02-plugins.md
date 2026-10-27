@@ -368,6 +368,7 @@ return {
 | `foreign` | the old tool's own plugins the project uses, each `{ kind, id, config? }`, to be replaced by a plugin that claims it in a catalog's `replaces`. One no catalog plugin claims, or two do, is a blocker |
 | `blockers` | what cannot be expressed, each `{ construct, where, why, surface? }` |
 | `owned` | the relative paths of the old tool's files, moved to `build/daukle/migrate/old` once the proof passes. `daukle.toml`, `daukle.lua`, `.`, `build` and anything at or below `build/daukle` are refused, as is a path that climbs out or holds a backslash |
+| `files` | optional, `api = 4`: a list of `{ path, text }` that daukle writes beside `daukle.toml` before the proof runs, creating directories. `path` is relative to the project and must be a file below `daukle/<instance>/`, where `<instance>` is the one toolchain the returned `manifest` names; an absolute path, `..`, a backslash, a control character or a directory is refused, and so is a `text` that is not a string. On a failed proof the files stay beside `daukle.toml` |
 | `proof` | `{ task, compare }`: the task to run in the new project, and the artifacts to compare, each `{ old, new, as }` with `as` either `"bytes"` or `"archive"` and both paths relative to the project |
 
 **A result that is not this shape is an error naming the plugin**, because it is a plugin bug and

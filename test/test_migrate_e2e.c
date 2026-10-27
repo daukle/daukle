@@ -516,6 +516,47 @@ TEST a_failed_proof_keeps_the_manifest_and_moves_nothing(void) {
     PASS();
 }
 
+TEST migrate_files_written_before_the_proof(void) {
+    migrate_case test_case;
+    open_case(&test_case, "files", "hello");
+    serve_stub_catalog(&test_case, FIXTURES "/plugin-files.lua", "faketool.conf");
+    run_case(&test_case);
+    char *carried = project_text(&test_case, "daukle/stub/carried.txt");
+    int carried_matches = carried != NULL && strcmp(carried, "hello") == 0;
+    free(carried);
+    int status = test_case.status;
+    fr_migrate_outcome outcome = test_case.outcome;
+    close_case(&test_case);
+
+    ASSERT_EQm(last_message, FR_OK, status);
+    ASSERT_EQm(last_message, FR_MIGRATE_DONE, outcome);
+    ASSERT(carried_matches);
+    PASS();
+}
+
+TEST migrate_files_kept_when_the_proof_fails(void) {
+    migrate_case test_case;
+    open_case(&test_case, "files-unproved", "goodbye");
+    serve_stub_catalog(&test_case, FIXTURES "/plugin-files.lua", "faketool.conf");
+    run_case(&test_case);
+    int carried = project_file_exists(&test_case, "daukle/stub/carried.txt");
+    int manifest_kept = project_file_exists(&test_case, "daukle.toml");
+    int untouched = old_files_still_in_place(&test_case);
+    int explained = printed_holds(&test_case,
+                                  "daukle.toml and the migrator's files are kept for inspection");
+    int status = test_case.status;
+    fr_migrate_outcome outcome = test_case.outcome;
+    close_case(&test_case);
+
+    ASSERT_EQm(last_message, FR_OK, status);
+    ASSERT_EQ(FR_MIGRATE_UNPROVED, outcome);
+    ASSERT(carried);
+    ASSERT(manifest_kept);
+    ASSERT(untouched);
+    ASSERT(explained);
+    PASS();
+}
+
 TEST clean_refuses_while_a_migration_is_unfinished(void) {
     migrate_case test_case;
     open_case(&test_case, "unfinished", "hello");
@@ -786,6 +827,8 @@ int main(int argc, char **argv) {
     RUN_TEST(an_occupied_place_in_the_old_directory_writes_nothing);
     RUN_TEST(a_candidate_with_no_asset_is_a_blocker);
     RUN_TEST(a_failed_proof_keeps_the_manifest_and_moves_nothing);
+    RUN_TEST(migrate_files_written_before_the_proof);
+    RUN_TEST(migrate_files_kept_when_the_proof_fails);
     RUN_TEST(clean_refuses_while_a_migration_is_unfinished);
     RUN_TEST(done_with_nothing_to_finish_says_so);
     RUN_TEST(a_chunk_that_gates_on_the_manifest_name_loads_during_migrate);

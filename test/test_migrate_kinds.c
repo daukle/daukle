@@ -4,6 +4,7 @@
 #include "config/config_dispatch_migrate.h"
 #include "config/config_lua.h"
 #include "config/manifest.h"
+#include "migrate/result.h"
 #include "plugin/plugins.h"
 #include "plugin/registry.h"
 #include "plugin/resolvers.h"
@@ -247,6 +248,56 @@ TEST a_migrator_needs_its_toolchain_declared_above_it(void) {
     PASS();
 }
 
+#define FILES_PROOF "\"proof\":{\"task\":\"t\",\"compare\":[{\"old\":\"a\",\"new\":\"b\",\"as\":\"bytes\"}]}"
+
+static int files_result_status(const char *files_json, fr_error *err) {
+    char json[1024];
+    snprintf(json, sizeof json, "{\"manifest\":{\"toolchains\":{\"gradle\":{}}},\"files\":%s,%s}",
+             files_json, FILES_PROOF);
+    cJSON *result = cJSON_Parse(json);
+    fr_blockers blockers = { 0 };
+    int status = result != NULL ? fr_migrate_check_run_result(result, "gradle", &blockers, err) : -1;
+    cJSON_Delete(result);
+    fr_blockers_free(&blockers);
+    return status;
+}
+
+TEST migrate_files_refuses_a_path_outside_the_instance(void) {
+    const char *refused[] = {
+        "[{\"path\":\"daukle/other/x\",\"text\":\"t\"}]",
+        "[{\"path\":\"../x\",\"text\":\"t\"}]",
+        "[{\"path\":\"/abs/x\",\"text\":\"t\"}]",
+        "[{\"path\":\"daukle/gradle/a\\\\b\",\"text\":\"t\"}]",
+        "[{\"path\":\"daukle/gradle/..\",\"text\":\"t\"}]",
+        "[{\"path\":\"daukle/gradle/\",\"text\":\"t\"}]",
+        "[{\"path\":\"daukle/gradle\",\"text\":\"t\"}]",
+    };
+    for (size_t index = 0; index < sizeof refused / sizeof *refused; index++) {
+        fr_error err = { { 0 } };
+        ASSERT_EQm(refused[index], FR_ERR, files_result_status(refused[index], &err));
+        ASSERTm(err.message, strstr(err.message, "files") != NULL);
+        ASSERTm(err.message, strstr(err.message, "malformed") != NULL);
+    }
+    PASS();
+}
+
+TEST migrate_files_accepts_a_path_inside_the_instance(void) {
+    fr_error err = { { 0 } };
+    ASSERT_EQ(FR_OK, files_result_status(
+        "[{\"path\":\"daukle/gradle/logic/a.kts\",\"text\":\"t\"}]", &err));
+    PASS();
+}
+
+TEST migrate_files_refuses_a_non_string_text(void) {
+    fr_error err = { { 0 } };
+    ASSERT_EQ(FR_ERR, files_result_status("[{\"path\":\"daukle/gradle/x\",\"text\":7}]", &err));
+    ASSERT(strstr(err.message, "files") != NULL);
+    fr_error missing = { { 0 } };
+    ASSERT_EQ(FR_ERR, files_result_status("[{\"path\":\"daukle/gradle/x\"}]", &missing));
+    ASSERT(strstr(missing.message, "files") != NULL);
+    PASS();
+}
+
 SUITE(migrate_kinds) {
     RUN_TEST(a_migrator_registers_under_its_plugin_label);
     RUN_TEST(run_returns_its_table_as_json);
@@ -256,6 +307,9 @@ SUITE(migrate_kinds) {
     RUN_TEST(a_migrator_run_is_inside_the_exec_window);
     RUN_TEST(a_translator_may_not_exec);
     RUN_TEST(a_migrator_needs_its_toolchain_declared_above_it);
+    RUN_TEST(migrate_files_refuses_a_path_outside_the_instance);
+    RUN_TEST(migrate_files_accepts_a_path_inside_the_instance);
+    RUN_TEST(migrate_files_refuses_a_non_string_text);
 }
 
 GREATEST_MAIN_DEFS();
