@@ -504,7 +504,9 @@ TEST a_failed_proof_keeps_the_manifest_and_moves_nothing(void) {
     int kept = project_file_exists(&test_case, "daukle.toml");
     int untouched = old_files_still_in_place(&test_case);
     int nothing_aside = !project_directory_exists(&test_case, "build/daukle/migrate/old");
-    int explained = printed_holds(&test_case, "the new build differs from the old one");
+    int explained = printed_holds(&test_case, "daukle migrate: the new build differs from the old one;"
+                                              " daukle.toml is kept for inspection and nothing was removed");
+    int names_no_files = !printed_holds(&test_case, "migrator's files");
     close_case(&test_case);
 
     ASSERT_EQm(last_message, FR_OK, status);
@@ -513,6 +515,7 @@ TEST a_failed_proof_keeps_the_manifest_and_moves_nothing(void) {
     ASSERT(untouched);
     ASSERT(nothing_aside);
     ASSERT(explained);
+    ASSERT(names_no_files);
     PASS();
 }
 
