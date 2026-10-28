@@ -50,6 +50,58 @@ static void append_escaped(fr_strbuf *buffer, const char *text) {
     fr_strbuf_append(buffer, "\"");
 }
 
+/* @implNote TOML forbids every control character but tab, LF and a CR ending a CRLF in a
+   literal string, DEL included, and a literal has no way to hold three single quotes. */
+static int fits_multi_line_literal(const char *text) {
+    for (const unsigned char *cursor = (const unsigned char *) text; *cursor != '\0'; cursor++) {
+        if (begins_triple_quote(cursor)) return 0;
+        if (*cursor == '\r' && cursor[1] != '\n') return 0;
+        int control = *cursor < 0x20 && *cursor != '\t' && *cursor != '\n' && *cursor != '\r';
+        if (control || *cursor == 0x7F) return 0;
+    }
+    return 1;
+}
+
+static void append_multi_line_literal(fr_strbuf *buffer, const char *text) {
+    fr_strbuf_append(buffer, "'''\n");
+    fr_strbuf_append(buffer, text);
+    fr_strbuf_append(buffer, "'''");
+}
+
+/* @implNote a final backslash is written as \ because tomlc99 reads \""" as an
+   escaped quote and then finds no closing delimiter. */
+static void append_multi_line_basic(fr_strbuf *buffer, const char *text) {
+    fr_strbuf_append(buffer, "\"\"\"\n");
+    for (const unsigned char *cursor = (const unsigned char *) text; *cursor != '\0'; cursor++) {
+        switch (*cursor) {
+            case '\\':
+                fr_strbuf_append(buffer, cursor[1] == '\0' ? "\\u005C" : "\\\\");
+                break;
+            case '"': fr_strbuf_append(buffer, "\\\""); break;
+            case '\r': fr_strbuf_append(buffer, "\\r"); break;
+            case '\t':
+            case '\n': fr_strbuf_append_bytes(buffer, (const char *) cursor, 1); break;
+            default:
+                if (*cursor < 0x20 || *cursor == 0x7F) {
+                    fr_strbuf_append_format(buffer, "\\u%04X", (unsigned) *cursor);
+                } else {
+                    fr_strbuf_append_bytes(buffer, (const char *) cursor, 1);
+                }
+        }
+    }
+    fr_strbuf_append(buffer, "\"\"\"");
+}
+
+static void append_string_member(fr_strbuf *buffer, const char *text) {
+    if (strchr(text, '\n') == NULL) {
+        append_escaped(buffer, text);
+    } else if (fits_multi_line_literal(text)) {
+        append_multi_line_literal(buffer, text);
+    } else {
+        append_multi_line_basic(buffer, text);
+    }
+}
+
 static int is_bare_key(const char *key) {
     if (key[0] == '\0') return 0;
     for (const char *cursor = key; *cursor != '\0'; cursor++) {
@@ -214,7 +266,11 @@ static int write_table(fr_strbuf *buffer, const char *path, const cJSON *object,
         if (is_nested(items[index])) continue;
         append_key(buffer, items[index]->string);
         fr_strbuf_append(buffer, " = ");
-        status = write_value(buffer, items[index], items[index]->string, err);
+        if (cJSON_IsString(items[index])) {
+            append_string_member(buffer, items[index]->valuestring);
+        } else {
+            status = write_value(buffer, items[index], items[index]->string, err);
+        }
         fr_strbuf_append(buffer, "\n");
     }
     for (int pass = 0; pass < 2; pass++) {
