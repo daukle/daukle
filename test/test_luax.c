@@ -109,6 +109,48 @@ TEST reads_a_lua_table_back_as_json(void) {
     PASS();
 }
 
+TEST marks_a_table_pushed_from_an_array(void) {
+    fr_error err;
+    lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    cJSON *document = cJSON_Parse("{\"empty\":[],\"list\":[\"a\"],\"table\":{},\"nested\":[[]]}");
+    ASSERT_EQ(FR_OK, fr_lua_push_json(state, document, &err));
+    lua_setglobal(state, "document");
+    cJSON_Delete(document);
+
+    ASSERT_EQ(FR_OK, fr_lua_run(state,
+        "assert(getmetatable(document.empty) == 'daukle.array')\n"
+        "assert(getmetatable(document.list) == 'daukle.array')\n"
+        "assert(getmetatable(document.nested[1]) == 'daukle.array')\n"
+        "assert(getmetatable(document.table) == nil)\n"
+        "assert(getmetatable(document) == nil)\n"
+        "assert(not pcall(setmetatable, document.empty, {}))\n", "=check", &err));
+    fr_lua_close(state);
+    PASS();
+}
+
+TEST writes_an_empty_array_back_as_an_array(void) {
+    fr_error err;
+    lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    cJSON *document = cJSON_Parse("{\"empty\":[],\"table\":{},\"grown\":[]}");
+    ASSERT_EQ(FR_OK, fr_lua_push_json(state, document, &err));
+    lua_setglobal(state, "document");
+    cJSON_Delete(document);
+    ASSERT_EQ(FR_OK, fr_lua_run(state, "document.grown.key = 'value'", "=edit", &err));
+    lua_getglobal(state, "document");
+
+    cJSON *back = NULL;
+    ASSERT_EQ(FR_OK, fr_lua_to_json(state, -1, &back, &err));
+    ASSERT(cJSON_IsArray(cJSON_GetObjectItemCaseSensitive(back, "empty")));
+    ASSERT(cJSON_IsObject(cJSON_GetObjectItemCaseSensitive(back, "table")));
+    cJSON *grown = cJSON_GetObjectItemCaseSensitive(back, "grown");
+    ASSERT(cJSON_IsObject(grown));
+    ASSERT_STR_EQ("value", cJSON_GetObjectItemCaseSensitive(grown, "key")->valuestring);
+
+    cJSON_Delete(back);
+    fr_lua_close(state);
+    PASS();
+}
+
 TEST rejects_a_table_key_that_is_not_a_string(void) {
     fr_error err;
     lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
@@ -276,6 +318,8 @@ int main(int argc, char **argv) {
     RUN_TEST(fails_gracefully_when_the_cap_is_too_tight_for_the_standard_libraries);
     RUN_TEST(pushes_a_json_document_as_a_lua_table);
     RUN_TEST(reads_a_lua_table_back_as_json);
+    RUN_TEST(marks_a_table_pushed_from_an_array);
+    RUN_TEST(writes_an_empty_array_back_as_an_array);
     RUN_TEST(rejects_a_table_key_that_is_not_a_string);
     RUN_TEST(reads_a_lua_array_back_in_written_order);
     RUN_TEST(refuses_a_lua_table_nested_past_the_depth_cap);

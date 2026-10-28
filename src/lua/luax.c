@@ -215,6 +215,28 @@ static int reserve_slots(lua_State *state, int slots, fr_error *err) {
     return 0;
 }
 
+/* Lua cannot tell an empty array from an empty table, so every table pushed
+   from a json array carries this metatable and getmetatable answers with the
+   name instead of the table: a plugin can ask, nobody can reach the shared
+   table to make it a channel between plugins, and a protected metatable also
+   refuses setmetatable. D-176. */
+#define FR_LUA_ARRAY_MARK "daukle.array"
+
+static void push_array_mark(lua_State *state) {
+    if (luaL_newmetatable(state, FR_LUA_ARRAY_MARK)) {
+        lua_pushliteral(state, FR_LUA_ARRAY_MARK);
+        lua_setfield(state, -2, "__metatable");
+    }
+}
+
+static int is_marked_array(lua_State *state, int index) {
+    if (!lua_getmetatable(state, index)) return 0;
+    luaL_getmetatable(state, FR_LUA_ARRAY_MARK);
+    int marked = lua_rawequal(state, -1, -2);
+    lua_pop(state, 2);
+    return marked;
+}
+
 static int push_json(lua_State *state, const cJSON *value, int depth, fr_error *err) {
     if (too_deep(depth, err)) return FR_ERR;
     if (!reserve_slots(state, 3, err)) return FR_ERR;
@@ -249,6 +271,8 @@ static int push_json(lua_State *state, const cJSON *value, int depth, fr_error *
             }
             lua_rawseti(state, -2, position++);
         }
+        push_array_mark(state);
+        lua_setmetatable(state, -2);
         return FR_OK;
     }
     if (cJSON_IsObject(value)) {
@@ -274,8 +298,9 @@ int fr_lua_push_json(lua_State *state, const cJSON *value, fr_error *err) {
 
 /* A table whose keys are exactly 1..n is an array; anything else, an empty
    table included, is an object, because lua cannot tell an empty table from an
-   empty sequence. The ambiguity is resolved by the callers that require an
-   array rather than here, since only they know which one a key wants: see
+   empty sequence. An empty table pushed from a json array keeps its mark and is
+   written back as one; for a table a script built, the callers that require an
+   array resolve it, since only they know which one a key wants: see
    fr_json_is_array_or_empty_table. */
 static int table_sequence_length(lua_State *state, int index, lua_Integer *count) {
     lua_Integer total = 0;
@@ -294,6 +319,13 @@ static int table_sequence_length(lua_State *state, int index, lua_Integer *count
     /* total distinct keys with the largest equal to total forces the set to be exactly 1..total. */
     *count = total;
     return total > 0 && max_key == total;
+}
+
+static int is_empty_table(lua_State *state, int index) {
+    lua_pushnil(state);
+    if (lua_next(state, index) == 0) return 1;
+    lua_pop(state, 2);
+    return 0;
 }
 
 static int to_json(lua_State *state, int index, int depth, cJSON **out, fr_error *err) {
@@ -317,7 +349,8 @@ static int to_json(lua_State *state, int index, int depth, cJSON **out, fr_error
             break;
         case LUA_TTABLE: {
             lua_Integer count = 0;
-            int is_array = table_sequence_length(state, absolute, &count);
+            int is_array = table_sequence_length(state, absolute, &count)
+                || (is_empty_table(state, absolute) && is_marked_array(state, absolute));
             cJSON *container = is_array ? cJSON_CreateArray() : cJSON_CreateObject();
             if (container == NULL) {
                 fr_error_set(err, "out of memory reading a lua table");
