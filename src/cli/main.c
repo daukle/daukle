@@ -18,12 +18,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <direct.h>
-#else
-#include <unistd.h>
-#endif
-
 static void print_lua_log(const char *message) {
     fprintf(stderr, "daukle: %s\n", message);
 }
@@ -143,51 +137,6 @@ static int clean_derived(const char *manifest_path, int verbose) {
     return 0;
 }
 
-/* Scaffolding a person runs once, not generation daukle owns, which is why it
-   may write at the project root at all: the no-files-at-the-root rule forbids
-   daukle WRITING generated files there, and this writes the authored file the
-   rule exists to protect. It declares no plugins, because what a project builds
-   with is a decision and an empty [modules] is already a working manifest.
-   D-70. */
-static int run_init(const char *name, int verbose) {
-    const char *path = "daukle.toml";
-    FILE *existing = fopen(path, "rb");
-    if (existing != NULL) {
-        fclose(existing);
-        fprintf(stderr, "daukle: %s already exists, and init will not overwrite it\n", path);
-        return 2;
-    }
-
-    /* The only part of this that is not in cli.c, where test_cli can reach it.
-       Both spellings of the call are the standard one for their platform and
-       neither has a branch of its own. */
-    char cwd[1024];
-#ifdef _WIN32
-    const char *working = _getcwd(cwd, (int) sizeof cwd);
-#else
-    const char *working = getcwd(cwd, sizeof cwd);
-#endif
-
-    const char *project = name != NULL ? name : fr_cli_last_path_segment(working);
-    if (project == NULL || project[0] == '\0') project = "my-project";
-
-    char text[1024];
-    if (!fr_cli_init_manifest(project, text, sizeof text)) {
-        fprintf(stderr, "daukle: the project name is too long to write into %s\n", path);
-        return 1;
-    }
-
-    fr_error err;
-    if (fr_file_write_text(path, text, &err) != FR_OK) {
-        fr_cli_report_error(&err, verbose);
-        return 1;
-    }
-
-    printf("daukle: wrote %s for \"%s\".\n", path, project);
-    printf("daukle: add a plugin under [plugins], then run \"daukle sync\".\n");
-    return 0;
-}
-
 int main(int argc, char **argv) {
     fr_cli_options options;
     fr_cli_parse(argc, argv, &options);
@@ -226,7 +175,7 @@ int main(int argc, char **argv) {
         case FR_CLI_PUBLISH:
             return fr_cli_run_publish(options.publish_name, options.use_cache, options.verbose);
         case FR_CLI_INIT:
-            return run_init(options.init_name, options.verbose);
+            return fr_cli_init(options.init_name, options.verbose);
         case FR_CLI_MIGRATE:
             return fr_cli_migrate(&options);
         case FR_CLI_HELP:

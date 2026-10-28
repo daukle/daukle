@@ -17,7 +17,9 @@ if(NOT DEFINED WRAPPER OR NOT DEFINED COPY)
             "-P cmake/check_wrapper_copy.cmake")
 endif()
 
-set(FILES daukle daukle.ps1 .daukle/wrapper.toml)
+# The pin is not compared: core commits a template, and the example keeps the pin of the release
+# it runs until init bootstraps it.
+set(FILES daukle daukle.ps1)
 set(DRIFTED "")
 set(COMPARED 0)
 
@@ -42,8 +44,8 @@ endforeach()
 
 # A loop that compared nothing reads exactly like a clean run, which is the bug
 # every other check in this directory has shipped at least once.
-if(COMPARED LESS 3 AND NOT DRIFTED)
-    message(FATAL_ERROR "check_wrapper_copy: compared ${COMPARED} files of 3, so the check has gone stale")
+if(COMPARED LESS 2 AND NOT DRIFTED)
+    message(FATAL_ERROR "check_wrapper_copy: compared ${COMPARED} files of 2, so the check has gone stale")
 endif()
 
 if(DRIFTED)

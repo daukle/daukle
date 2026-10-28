@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(daukle VERSION 0.13.0 LANGUAGES C)
+project(daukle VERSION 0.14.0 LANGUAGES C)
 
 # A published daukle must run where nothing is installed, and libcurl.so.4 is
 # absent from every bare Linux image including the one it was built on. OFF
@@ -74,6 +74,19 @@ else()
     list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/net/http_curl.c)
     list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/exec/exec_posix.c)
 endif()
+
+set(DAUKLE_WRAPPER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/generated/wrapper_scripts.c)
+add_custom_command(OUTPUT ${DAUKLE_WRAPPER_SOURCE}
+                   COMMAND ${CMAKE_COMMAND}
+                           -DPOSIX_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/wrapper/daukle
+                           -DPOWERSHELL_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/wrapper/daukle.ps1
+                           -DOUT=${DAUKLE_WRAPPER_SOURCE}
+                           -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_wrapper.cmake
+                   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/wrapper/daukle
+                           ${CMAKE_CURRENT_SOURCE_DIR}/wrapper/daukle.ps1
+                           ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_wrapper.cmake
+                   VERBATIM)
+list(APPEND DAUKLE_CORE_SOURCES ${DAUKLE_WRAPPER_SOURCE})
 
 add_library(daukle_core STATIC ${DAUKLE_CORE_SOURCES})
 target_compile_options(daukle_core PRIVATE ${DAUKLE_WARNING_FLAGS})
@@ -160,17 +173,6 @@ add_test(NAME cli_commands COMMAND ${CMAKE_COMMAND}
 add_test(NAME agnostic_core COMMAND ${CMAKE_COMMAND}
          -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_agnostic.cmake)
-
-# The only entry here that asks the forge a question, so it is the only one that
-# can be neither pass nor fail: 77 is offline or rate limited, and ctest prints
-# it as Skipped rather than hiding it inside a green run.
-add_test(NAME wrapper_pin_matches_release COMMAND ${CMAKE_COMMAND}
-         -DPIN=${CMAKE_CURRENT_SOURCE_DIR}/wrapper/.daukle/wrapper.toml
-         -DREPO=daukle/daukle
-         -DRESPONSE=${CMAKE_CURRENT_BINARY_DIR}/wrapper-pin-latest.json
-         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_wrapper_pin.cmake)
-set_tests_properties(wrapper_pin_matches_release PROPERTIES
-                     SKIP_REGULAR_EXPRESSION "check_wrapper_pin: skipped")
 
 add_test(NAME wrapper_example_matches_wrapper COMMAND ${CMAKE_COMMAND}
          -DWRAPPER=${CMAKE_CURRENT_SOURCE_DIR}/wrapper

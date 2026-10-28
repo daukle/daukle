@@ -4,13 +4,28 @@ A project that uses daukle should not require daukle to be installed first. Thes
 how: committed to a project root, they download a pinned daukle on first use, verify it against a
 digest and run it.
 
+**`daukle init` writes them**, with no network, pinning the daukle that runs it:
+
 ```
-cp wrapper/daukle wrapper/daukle.ps1 <project>/
-cp -r wrapper/.daukle <project>/
-cd <project> && ./daukle sync
+cd <project> && daukle init && ./daukle sync
 ```
 
-On Windows, `.\daukle.ps1 sync`.
+On Windows, `.\daukle.ps1 sync`. The scripts are compiled into the binary, and the pin is the
+release's `wrapper.toml`, which every release archive (`daukle-<host>.tar.gz`, or `.zip` on
+Windows) carries beside the binary. `init` reads `DAUKLE_WRAPPER_PIN` when it is set, and
+otherwise looks beside the executable, then in `../share/daukle/` from it; it refuses a pin naming
+another version. A bare
+binary downloaded alone, or a daukle built from source, has no pin, and `init` says so and exits 3.
+
+**With no daukle installed**, download the three files of a release instead:
+
+```
+mkdir -p <project>/.daukle && cd <project>
+curl -fsSLO https://github.com/daukle/daukle/releases/latest/download/daukle
+curl -fsSLO https://github.com/daukle/daukle/releases/latest/download/daukle.ps1
+curl -fsSL -o .daukle/wrapper.toml https://github.com/daukle/daukle/releases/latest/download/wrapper.toml
+chmod +x daukle && ./daukle sync
+```
 
 ## What is committed, and what is not
 
@@ -50,13 +65,12 @@ are short text you review before committing, and that nothing fetches them unles
 **The canonical pin is written by a release, not by a person** (`D-67`). Digests exist for the
 first time in the release job, once every cell has uploaded, so `cmake/write_wrapper_pin.cmake`
 runs there and the result is published as the `wrapper.toml` asset beside `daukle` and
-`daukle.ps1`. The copy in this directory is held to the latest published release by the ctest entry
-`wrapper_pin_matches_release`, which asks the forge rather than reading a local file.
-
-That is what makes a stale pin fail. Before it, nothing did: the probe tests whatever the pin says
-and `daukle-wrapper-bootstrap` pinned the same version, so a forgotten bump stayed green everywhere. The
-host-to-asset mapping is still hand written, because nothing in `daukle-macos-arm64` says it serves
-`macos/aarch64`, and an asset no mapping names now refuses the release.
+`daukle.ps1`. **This directory commits only `wrapper.template.toml`**, whose version and digests
+are empty: the release fills them in, so a release changes no committed file and no copy here can
+go stale. An empty version also makes the template unusable as a pin, since the wrapper refuses one.
+The host-to-asset mapping is still hand written in the template, because nothing in
+`daukle-macos-arm64` says it serves `macos/aarch64`, and an asset no mapping names refuses the
+release.
 
 ## This does not break the no-files-at-the-root rule
 

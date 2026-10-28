@@ -22,8 +22,14 @@ names and verifies it against a sha256 before running it:
 
 ### Starting from nothing
 
-All three files are release assets, so getting them needs something that is not daukle. There is no
-installer: you download three text files, read them, and commit them.
+**With a daukle at hand, `daukle init` writes all three**, with no network, pinning that daukle.
+Each release publishes one archive per host, `daukle-<host>.tar.gz` or `daukle-windows-x86_64.zip`,
+holding the binary and the release's `wrapper.toml`; unpack it anywhere and run its `daukle init`
+in the project directory. `init` refuses a pin naming another version, and a daukle with no pin
+beside it (a bare binary, or one built from source) writes `daukle.toml` and exits 3.
+
+**With nothing installed**, the three files are release assets, so you download three text files,
+read them, and commit them.
 
 ```sh
 base=https://github.com/daukle/daukle/releases/latest/download
@@ -58,8 +64,8 @@ is exactly one unpinned fetch, it belongs to the resolver, and it is refused out
 
 ### Which route works on which host
 
-A release carries the two wrapper scripts, the pin, and **three platform binaries** covering four
-hosts, because one of them serves both Macs. The wrapper composes a host string from the operating
+A release carries the two wrapper scripts, the pin, **three platform binaries** covering four
+hosts, because one of them serves both Macs, and an archive of each binary with the pin. The wrapper composes a host string from the operating
 system and the architecture and looks it up in the pin, so a host with no entry is refused by name
 rather than failing on a download later:
 
@@ -79,11 +85,9 @@ downloaded, and building from source needs a C compiler, CMake and libcurl's dev
 A POSIX shell on Windows (Git Bash, MSYS2, Cygwin) runs the Windows binary through `./daukle`,
 rather than being sent to `daukle.ps1`.
 
-**There is no Homebrew, winget, Scoop or apt package, and that is a decision rather than a gap.**
-Each ecosystem would be another place the version can go stale, and the wrapper already means a
-project never needs an installed daukle at all, so the only audience for a package is somebody
-evaluating daukle outside a project. One downloaded binary serves that for a fraction of the
-permanent cost.
+**There is no Homebrew, winget, AUR or npm package yet; they are planned**, for creating a project
+with a `daukle init` that works offline. A project itself never needs an installed daukle: the
+wrapper it commits fetches the pinned one. Until the packages exist, one downloaded archive serves.
 
 ## Commands
 
