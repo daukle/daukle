@@ -18,9 +18,19 @@ typedef struct {
 
 static int write_value(fr_strbuf *buffer, const cJSON *item, const char *key, fr_error *err);
 
+/* @implNote the vendored tomlc99 refuses a one-line basic string holding three single
+   quotes ("triple-s-quote inside string lit"), so the first quote of each run is escaped. */
+static int begins_triple_quote(const unsigned char *cursor) {
+    return cursor[0] == '\'' && cursor[1] == '\'' && cursor[2] == '\'';
+}
+
 static void append_escaped(fr_strbuf *buffer, const char *text) {
     fr_strbuf_append(buffer, "\"");
     for (const unsigned char *cursor = (const unsigned char *) text; *cursor != '\0'; cursor++) {
+        if (begins_triple_quote(cursor)) {
+            fr_strbuf_append(buffer, "\\u0027");
+            continue;
+        }
         switch (*cursor) {
             case '"': fr_strbuf_append(buffer, "\\\""); break;
             case '\\': fr_strbuf_append(buffer, "\\\\"); break;
