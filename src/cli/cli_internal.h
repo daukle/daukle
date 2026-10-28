@@ -20,4 +20,8 @@ int fr_cli_list_tasks(int use_cache, int verbose);
 
 int fr_cli_migrate(const fr_cli_options *options);
 
+/* Exits 0 when it wrote anything, 2 when every file was already there, 3 when the wrapper was due
+   and no pin for this daukle was found, 1 on an error. */
+int fr_cli_init(const char *name, int verbose);
+
 #endif
