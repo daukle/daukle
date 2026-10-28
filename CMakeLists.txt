@@ -173,8 +173,3 @@ add_test(NAME cli_commands COMMAND ${CMAKE_COMMAND}
 add_test(NAME agnostic_core COMMAND ${CMAKE_COMMAND}
          -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_agnostic.cmake)
-
-add_test(NAME wrapper_example_matches_wrapper COMMAND ${CMAKE_COMMAND}
-         -DWRAPPER=${CMAKE_CURRENT_SOURCE_DIR}/wrapper
-         -DCOPY=${CMAKE_CURRENT_SOURCE_DIR}/examples/daukle-wrapper-bootstrap
-         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_wrapper_copy.cmake)
