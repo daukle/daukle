@@ -12,8 +12,9 @@ cd <project> && daukle init && ./daukle sync
 
 On Windows, `.\daukle.ps1 sync`. The scripts are compiled into the binary, and the pin is the
 release's `wrapper.toml`, which every release archive (`daukle-<host>.tar.gz`, or `.zip` on
-Windows) carries beside the binary. `init` looks for it in `DAUKLE_WRAPPER_PIN`, beside the
-executable, then in `../share/daukle/` from it, and refuses one naming another version. A bare
+Windows) carries beside the binary. `init` reads `DAUKLE_WRAPPER_PIN` when it is set, and
+otherwise looks beside the executable, then in `../share/daukle/` from it; it refuses a pin naming
+another version. A bare
 binary downloaded alone, or a daukle built from source, has no pin, and `init` says so and exits 3.
 
 **With no daukle installed**, download the three files of a release instead:
