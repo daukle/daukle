@@ -108,6 +108,29 @@ hosts_allow() {
   return 1
 }
 
+# The latest release's archive for this host, unpacked once into $work/release,
+# for an example that marks itself `uses-release`: it shows what an INSTALLED
+# daukle does, so the binary under test is the published one and not the build.
+release_bin=
+fetch_release_daukle() {
+  [ -n "$release_bin" ] && return 0
+  case $host in
+    linux) archive=daukle-linux-x86_64.tar.gz ;;
+    macos) archive=daukle-macos-universal.tar.gz ;;
+    windows) archive=daukle-windows-x86_64.zip ;;
+    *) return 1 ;;
+  esac
+  mkdir -p "$work/release"
+  curl -fsSL --retry 3 -o "$work/release/$archive" \
+    "https://github.com/daukle/daukle/releases/latest/download/$archive" || return 1
+  case $archive in
+    *.zip) (cd "$work/release" && unzip -oq "$archive") || return 1 ;;
+    *) (cd "$work/release" && tar xzf "$archive") || return 1 ;;
+  esac
+  rm "$work/release/$archive"
+  release_bin="$work/release"
+}
+
 run_example() {
   example=$1
   name=$(basename "$example")
@@ -142,9 +165,19 @@ run_example() {
   mkdir -p "$(dirname "$sandbox")"
   cp -R "$example" "$sandbox"
 
+  built_path=$PATH
+  if [ -f "$example/uses-release" ]; then
+    if ! fetch_release_daukle; then
+      fail "$name" "could not download the latest release's archive for $host"
+      return
+    fi
+    PATH="$release_bin:$PATH"
+  fi
   if ! run_block "$sandbox" "$name" "$block"; then
+    PATH=$built_path
     return
   fi
+  PATH=$built_path
 
   if [ -d "$example/expected" ]; then
     rm -rf "$sandbox/expected"
