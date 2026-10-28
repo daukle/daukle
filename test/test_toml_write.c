@@ -195,6 +195,7 @@ TEST a_lone_carriage_return_or_a_control_character_is_basic(void) {
         { "x\x01\n", "x\\u0001\n" },
         { "x\x7f\n", "x\\u007F\n" },
         { "x\b\f\n", "x\\u0008\\u000C\n" },
+        { "x\n\r", "x\n\\r\"\"\"" },
     };
     for (size_t index = 0; index < sizeof cases / sizeof cases[0]; index++) {
         char *text = NULL;
