@@ -129,7 +129,7 @@ expect_text("${printed}" "--catalog" "a migrate option given to tasks")
 
 execute_process(COMMAND "${DAUKLE}" --version OUTPUT_VARIABLE version_line)
 string(REGEX MATCH "[0-9][^\n\r ]*" self_version "${version_line}")
-file(READ "${SOURCE_DIR}/wrapper/.daukle/wrapper.toml" pin_source)
+file(READ "${SOURCE_DIR}/wrapper/wrapper.template.toml" pin_source)
 string(REGEX REPLACE "\nversion = \"[^\"]*\"" "\nversion = \"${self_version}\"" own_pin "${pin_source}")
 string(REGEX REPLACE "\nversion = \"[^\"]*\"" "\nversion = \"0.0.1-other\"" other_pin "${pin_source}")
 file(WRITE "${WORK_DIR}/own-pin.toml" "${own_pin}")

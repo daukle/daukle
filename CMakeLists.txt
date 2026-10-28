@@ -174,17 +174,6 @@ add_test(NAME agnostic_core COMMAND ${CMAKE_COMMAND}
          -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_agnostic.cmake)
 
-# The only entry here that asks the forge a question, so it is the only one that
-# can be neither pass nor fail: 77 is offline or rate limited, and ctest prints
-# it as Skipped rather than hiding it inside a green run.
-add_test(NAME wrapper_pin_matches_release COMMAND ${CMAKE_COMMAND}
-         -DPIN=${CMAKE_CURRENT_SOURCE_DIR}/wrapper/.daukle/wrapper.toml
-         -DREPO=daukle/daukle
-         -DRESPONSE=${CMAKE_CURRENT_BINARY_DIR}/wrapper-pin-latest.json
-         -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_wrapper_pin.cmake)
-set_tests_properties(wrapper_pin_matches_release PROPERTIES
-                     SKIP_REGULAR_EXPRESSION "check_wrapper_pin: skipped")
-
 add_test(NAME wrapper_example_matches_wrapper COMMAND ${CMAKE_COMMAND}
          -DWRAPPER=${CMAKE_CURRENT_SOURCE_DIR}/wrapper
          -DCOPY=${CMAKE_CURRENT_SOURCE_DIR}/examples/daukle-wrapper-bootstrap
