@@ -13,9 +13,9 @@ dependencies {
     implementation project(":stub")
     // SOURCE-retention, so nothing here reaches the bundle. The processor jar is a release asset and
     // carries no transitive metadata, so the annotation types it reads are named beside it.
-    githubCompileOnly "intisy:bayonet:1.8.0:annotations"
-    githubAnnotationProcessor "intisy:bayonet:1.8.0:processor"
-    githubAnnotationProcessor "intisy:bayonet:1.8.0:annotations"
+    githubCompileOnly "weivel:java:1.8.0:annotations"
+    githubAnnotationProcessor "weivel:java:1.8.0:processor"
+    githubAnnotationProcessor "weivel:java:1.8.0:annotations"
     teavm teavm.libs.jsoApis
 }
 
