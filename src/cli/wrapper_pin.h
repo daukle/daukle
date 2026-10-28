@@ -9,9 +9,9 @@
    and per-host sections, not arbitrary TOML. */
 int fr_wrapper_pin_version(const char *text, char *out, size_t size);
 
-/* The pin a distribution ships, looked for in order: override (DAUKLE_WRAPPER_PIN) when it is
-   non-empty, then wrapper.toml in executable_directory, then ../share/daukle/wrapper.toml relative
-   to it. Returns 1 with *out_found set to the first that exists, or 0 with *out_searched set to
+/* The pin a distribution ships: override (DAUKLE_WRAPPER_PIN) alone when it is non-empty, so a
+   mistyped one is reported rather than passed over; otherwise wrapper.toml in executable_directory,
+   then ../share/daukle/wrapper.toml relative to it. Returns 1 with *out_found set to the first that exists, or 0 with *out_searched set to
    every location looked at, one per line. Either string is the caller's to free. A NULL
    executable_directory searches the override alone. */
 int fr_wrapper_pin_find(const char *override, const char *executable_directory, char **out_found,

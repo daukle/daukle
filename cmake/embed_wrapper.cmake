@@ -30,10 +30,12 @@ render_array(fr_wrapper_powershell_script "${POWERSHELL_SCRIPT}" powershell)
 
 set(rendered "#include \"cli/wrapper_scripts.h\"\n\n${posix}\n${powershell}")
 
-# Written only when it changed, so a reconfigure does not rebuild everything that links it.
+# Written only when it changed, so a reconfigure does not rebuild everything that links it, and
+# touched otherwise, or an input newer than it reruns this on every build.
 if(EXISTS "${OUT}")
     file(READ "${OUT}" previous)
     if(previous STREQUAL rendered)
+        file(TOUCH_NOCREATE "${OUT}")
         return()
     endif()
 endif()

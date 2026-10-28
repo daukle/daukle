@@ -15,6 +15,7 @@
 
 #ifdef _WIN32
 #include <direct.h>
+#include <sys/stat.h>
 #else
 #include <sys/stat.h>
 #include <unistd.h>
@@ -33,11 +34,15 @@ typedef struct {
     size_t length;
 } init_pin;
 
-static int file_exists(const char *path) {
-    FILE *file = fopen(path, "rb");
-    if (file == NULL) return 0;
-    fclose(file);
-    return 1;
+/* @implNote Not fopen: a file this process cannot read, or a dangling link, is still there, and
+   counting it absent would let a failed write's cleanup remove it. */
+static int path_exists(const char *path) {
+    struct stat status;
+#ifdef _WIN32
+    return stat(path, &status) == 0;
+#else
+    return lstat(path, &status) == 0;
+#endif
 }
 
 static int write_bytes(const char *path, const void *bytes, size_t length) {
@@ -82,7 +87,7 @@ static const char *project_name(const char *name) {
    what a project builds with is a decision and an empty [modules] is already a working manifest.
    D-70. */
 static int write_manifest(const char *name, int verbose) {
-    if (file_exists(FR_INIT_MANIFEST)) {
+    if (path_exists(FR_INIT_MANIFEST)) {
         fprintf(stderr, "daukle: %s already exists, and init will not overwrite it\n",
                 FR_INIT_MANIFEST);
         return FR_INIT_PRESENT;
@@ -106,8 +111,8 @@ static int write_manifest(const char *name, int verbose) {
 }
 
 static size_t count_wrapper_files_present(void) {
-    return (size_t) file_exists(FR_INIT_POSIX_SCRIPT) + (size_t) file_exists(FR_INIT_POWERSHELL_SCRIPT) +
-           (size_t) file_exists(FR_INIT_PIN);
+    return (size_t) path_exists(FR_INIT_POSIX_SCRIPT) + (size_t) path_exists(FR_INIT_POWERSHELL_SCRIPT) +
+           (size_t) path_exists(FR_INIT_PIN);
 }
 
 static int report_no_pin(const char *searched) {
@@ -165,28 +170,55 @@ static int load_pin(init_pin *pin, int verbose) {
     return status;
 }
 
-static void remove_partial_wrapper(void) {
-    remove(FR_INIT_POSIX_SCRIPT);
-    remove(FR_INIT_POWERSHELL_SCRIPT);
-    remove(FR_INIT_PIN);
+/* Only what this run created, so a failure never removes a file it found. */
+typedef struct {
+    const char *files[3];
+    size_t file_count;
+    int made_pin_directory;
+} wrapper_written;
+
+static int write_tracked(wrapper_written *written, const char *path, const void *bytes,
+                         size_t length) {
+    if (!write_bytes(path, bytes, length)) return 0;
+    written->files[written->file_count++] = path;
+    return 1;
+}
+
+static void remove_written(const wrapper_written *written) {
+    for (size_t index = 0; index < written->file_count; index++) remove(written->files[index]);
+#ifdef _WIN32
+    if (written->made_pin_directory) _rmdir(FR_INIT_PIN_DIRECTORY);
+#else
+    if (written->made_pin_directory) rmdir(FR_INIT_PIN_DIRECTORY);
+#endif
+}
+
+static int write_each_wrapper_file(wrapper_written *written, const init_pin *pin) {
+    if (!write_tracked(written, FR_INIT_POSIX_SCRIPT, fr_wrapper_posix_script,
+                       fr_wrapper_posix_script_length)) return 0;
+    if (!mark_executable(FR_INIT_POSIX_SCRIPT)) return 0;
+    if (!write_tracked(written, FR_INIT_POWERSHELL_SCRIPT, fr_wrapper_powershell_script,
+                       fr_wrapper_powershell_script_length)) return 0;
+    int had_pin_directory = path_exists(FR_INIT_PIN_DIRECTORY);
+    if (!make_directory(FR_INIT_PIN_DIRECTORY)) return 0;
+    written->made_pin_directory = !had_pin_directory;
+    return write_tracked(written, FR_INIT_PIN, pin->bytes, pin->length);
 }
 
 static int write_wrapper_files(const init_pin *pin) {
-    int written = write_bytes(FR_INIT_POSIX_SCRIPT, fr_wrapper_posix_script,
-                              fr_wrapper_posix_script_length) &&
-                  mark_executable(FR_INIT_POSIX_SCRIPT) &&
-                  write_bytes(FR_INIT_POWERSHELL_SCRIPT, fr_wrapper_powershell_script,
-                              fr_wrapper_powershell_script_length) &&
-                  make_directory(FR_INIT_PIN_DIRECTORY) &&
-                  write_bytes(FR_INIT_PIN, pin->bytes, pin->length);
-    if (!written) {
-        remove_partial_wrapper();
+    wrapper_written written = { { NULL, NULL, NULL }, 0, 0 };
+    if (!write_each_wrapper_file(&written, pin)) {
+        remove_written(&written);
         fprintf(stderr, "daukle: could not write the wrapper here, and removed what was written\n");
         return FR_INIT_FAILED;
     }
     printf("daukle: wrote %s\n", FR_INIT_POSIX_SCRIPT);
     printf("daukle: wrote %s\n", FR_INIT_POWERSHELL_SCRIPT);
     printf("daukle: wrote %s\n", FR_INIT_PIN);
+#ifdef _WIN32
+    printf("daukle: Windows records no mode, so run \"git update-index --chmod=+x %s\" before "
+           "committing it, or it will not run on Linux or macOS\n", FR_INIT_POSIX_SCRIPT);
+#endif
     return FR_INIT_WROTE;
 }
 

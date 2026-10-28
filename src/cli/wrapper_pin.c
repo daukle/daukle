@@ -77,9 +77,9 @@ int fr_wrapper_pin_find(const char *override, const char *executable_directory, 
     fr_strbuf searched;
     fr_strbuf_init(&searched);
 
-    int found = override != NULL && override[0] != '\0' &&
-                try_candidate(override, &searched, out_found);
-    if (!found && executable_directory != NULL) {
+    int overridden = override != NULL && override[0] != '\0';
+    int found = overridden && try_candidate(override, &searched, out_found);
+    if (!overridden && executable_directory != NULL) {
         found = try_beside(executable_directory, "wrapper.toml", &searched, out_found) ||
                 try_beside(executable_directory, "../share/daukle/wrapper.toml", &searched,
                            out_found);

@@ -132,6 +132,20 @@ TEST the_shared_pin_of_an_fhs_layout_is_found(void) {
 
 TEST no_pin_lists_every_location_searched(void) {
     make_base("absent");
+    char *found = NULL;
+    char *searched = NULL;
+    ASSERT_FALSE(fr_wrapper_pin_find(NULL, base, &found, &searched));
+    ASSERT(found == NULL);
+    ASSERT(strstr(searched, "/wrapper.toml\n") != NULL);
+    ASSERT(strstr(searched, "/../share/daukle/wrapper.toml\n") != NULL);
+    free(searched);
+    fr_test_remove_tree(base);
+    PASS();
+}
+
+TEST a_missing_override_is_not_passed_over(void) {
+    make_base("missing-override");
+    write_pin_at("wrapper.toml");
     char missing[600];
     snprintf(missing, sizeof missing, "%s/missing.toml", base);
     char *found = NULL;
@@ -139,8 +153,7 @@ TEST no_pin_lists_every_location_searched(void) {
     ASSERT_FALSE(fr_wrapper_pin_find(missing, base, &found, &searched));
     ASSERT(found == NULL);
     ASSERT(strstr(searched, "missing.toml\n") != NULL);
-    ASSERT(strstr(searched, "/wrapper.toml\n") != NULL);
-    ASSERT(strstr(searched, "/../share/daukle/wrapper.toml\n") != NULL);
+    ASSERT(strstr(searched, "share") == NULL);
     free(searched);
     fr_test_remove_tree(base);
     PASS();
@@ -170,6 +183,7 @@ int main(int argc, char **argv) {
     RUN_TEST(the_pin_beside_the_executable_is_found);
     RUN_TEST(the_shared_pin_of_an_fhs_layout_is_found);
     RUN_TEST(no_pin_lists_every_location_searched);
+    RUN_TEST(a_missing_override_is_not_passed_over);
     RUN_TEST(the_test_binary_knows_its_own_directory);
     GREATEST_MAIN_END();
 }
