@@ -75,6 +75,19 @@ else()
     list(APPEND DAUKLE_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/exec/exec_posix.c)
 endif()
 
+set(DAUKLE_WRAPPER_SOURCE ${CMAKE_CURRENT_BINARY_DIR}/generated/wrapper_scripts.c)
+add_custom_command(OUTPUT ${DAUKLE_WRAPPER_SOURCE}
+                   COMMAND ${CMAKE_COMMAND}
+                           -DPOSIX_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/wrapper/daukle
+                           -DPOWERSHELL_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/wrapper/daukle.ps1
+                           -DOUT=${DAUKLE_WRAPPER_SOURCE}
+                           -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_wrapper.cmake
+                   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/wrapper/daukle
+                           ${CMAKE_CURRENT_SOURCE_DIR}/wrapper/daukle.ps1
+                           ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_wrapper.cmake
+                   VERBATIM)
+list(APPEND DAUKLE_CORE_SOURCES ${DAUKLE_WRAPPER_SOURCE})
+
 add_library(daukle_core STATIC ${DAUKLE_CORE_SOURCES})
 target_compile_options(daukle_core PRIVATE ${DAUKLE_WARNING_FLAGS})
 target_include_directories(daukle_core PUBLIC src vendor/cJSON)
