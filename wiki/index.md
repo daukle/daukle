@@ -79,11 +79,9 @@ downloaded, and building from source needs a C compiler, CMake and libcurl's dev
 A POSIX shell on Windows (Git Bash, MSYS2, Cygwin) runs the Windows binary through `./daukle`,
 rather than being sent to `daukle.ps1`.
 
-**There is no Homebrew, winget, Scoop or apt package, and that is a decision rather than a gap.**
-Each ecosystem would be another place the version can go stale, and the wrapper already means a
-project never needs an installed daukle at all, so the only audience for a package is somebody
-evaluating daukle outside a project. One downloaded binary serves that for a fraction of the
-permanent cost.
+**There is no Homebrew, winget, AUR or npm package yet; they are planned**, for creating a project
+with a `daukle init` that works offline. A project itself never needs an installed daukle: the
+wrapper it commits fetches the pinned one. Until the packages exist, one downloaded binary serves.
 
 ## Commands
 
