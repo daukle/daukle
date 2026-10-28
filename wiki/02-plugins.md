@@ -224,6 +224,24 @@ simply leaves absent.
 **Declare the LOWEST api your plugin actually needs.** Declaring a higher one refuses daukles that
 would have run your plugin perfectly well.
 
+## Telling an empty list from an empty table
+
+Lua has one table type, so `jvmArgs = []` and an empty `[a.b]` header both arrive as `{}`. **Every
+table daukle hands you that was an ARRAY answers `getmetatable` with `"daukle.array"`**, empty or
+not, whether it came from `daukle.toml` or from a document `daukle.parse` or `daukle.json_parse`
+returned, so a plugin can ask:
+
+```lua
+local function is_array(value)
+  return type(value) == "table" and getmetatable(value) == "daukle.array"
+end
+```
+
+The mark arrived with `api = 5`; on an older daukle every table answers `nil`, which is why a plugin
+relying on it declares `api = 5`. A marked table refuses `setmetatable`, and copying it into a new
+table drops the mark. A table a `daukle.lua` builds is never marked, because Lua cannot say which
+`{}` was meant.
+
 ## What the sandbox gives a plugin
 
 `string`, `table`, `math`, and the handful of base functions. **Not** `io`, `os`, `require`,
