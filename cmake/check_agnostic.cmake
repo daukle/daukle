@@ -27,7 +27,8 @@ set(CORE_FILES
     migrate/result.c migrate/result.h migrate/result_check.c migrate/merge.c migrate/merge.h
     migrate/proof.c migrate/proof.h
     migrate/migrate.c migrate/migrate.h migrate/migrate_internal.h migrate/migrate_sessions.c
-    migrate/migrate_finish.c cli/cli_migrate.c)
+    migrate/migrate_finish.c cli/cli_migrate.c
+    cli/wrapper_pin.c cli/wrapper_pin.h cli/wrapper_scripts.h)
 
 # FR_CONFIG_ is exempt: the TOML/Lua config bootstrap floor is required, not a plugin
 set(FORBIDDEN "\"gradle\"" "\"path\"" "\"npm\"" "daukle\\.source/[a-z]"
