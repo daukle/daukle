@@ -24,19 +24,24 @@ check() {
 apt-get update -qq >/dev/null 2>&1
 apt-get install -y -qq curl >/dev/null 2>&1
 
-mkdir -p /proj && cp -r /w/. /proj/ && chmod +x /proj/daukle
+# Core commits only a template, so the pin is the latest release's, as `daukle init` would write it.
+mkdir -p /wrapper/.daukle && cp /w/daukle /w/daukle.ps1 /wrapper/ || exit 1
+curl -fsSL -o /wrapper/.daukle/wrapper.toml \
+    https://github.com/daukle/daukle/releases/latest/download/wrapper.toml || exit 1
+
+mkdir -p /proj && cp -r /wrapper/. /proj/ && chmod +x /proj/daukle
 cd /proj || exit 1
 
 # Read from the pin rather than written here. Every expectation below used to carry 0.1.0 and the
 # first bytes of a digest as literals, and when D-67 moved the pin to 0.2.0 eight of these fifteen
 # checks failed against a wrapper that was working perfectly. A test with a hand-maintained copy of
 # the thing it tests is the bug D-67 exists to delete, one layer out.
-want_version=$(sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p'     /w/.daukle/wrapper.toml | head -n 1)
+want_version=$(sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p'     /wrapper/.daukle/wrapper.toml | head -n 1)
 want_digest=$(awk '/^\[assets\."linux\/x86_64"\]/ { inside = 1; next } /^\[/ { inside = 0 }
-    inside' /w/.daukle/wrapper.toml |
+    inside' /wrapper/.daukle/wrapper.toml |
     sed -n 's/^[[:space:]]*sha256[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
 want_asset=$(awk '/^\[assets\."linux\/x86_64"\]/ { inside = 1; next } /^\[/ { inside = 0 }
-    inside' /w/.daukle/wrapper.toml |
+    inside' /wrapper/.daukle/wrapper.toml |
     sed -n 's/^[[:space:]]*asset[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
 if [ -z "$want_version" ] || [ -z "$want_digest" ] || [ -z "$want_asset" ]; then
     echo "FAIL could not read version, digest and asset out of the pin" >&2
@@ -51,7 +56,7 @@ check "cold run prints the pinned version" test "$out" = "daukle $want_version"
 
 echo
 echo "=== 2. a pin digest that does not match is refused, and nothing runs ==="
-mkdir -p /bad && cp -r /w/. /bad/ && chmod +x /bad/daukle
+mkdir -p /bad && cp -r /wrapper/. /bad/ && chmod +x /bad/daukle
 sed -i "s/^sha256 = \"$want_digest\"/sha256 = \"DEADBEEF\"/" /bad/.daukle/wrapper.toml
 out=$(cd /bad && DAUKLE_CACHE_DIR=/tmp/bad-cache ./daukle --version 2>&1 || true)
 echo "$out"
@@ -69,9 +74,9 @@ check "a corrupt cache entry is re-downloaded" test "$out" = "daukle $want_versi
 
 echo
 echo "=== 4. a host with no section is named, not 404'd ==="
-mkdir -p /nohost && cp -r /w/. /nohost/ && chmod +x /nohost/daukle
+mkdir -p /nohost && cp -r /wrapper/. /nohost/ && chmod +x /nohost/daukle
 awk '/^\[assets\."linux\/x86_64"\]/ { skip = 1; next } /^\[/ { skip = 0 } !skip' \
-    /w/.daukle/wrapper.toml > /nohost/.daukle/wrapper.toml
+    /wrapper/.daukle/wrapper.toml > /nohost/.daukle/wrapper.toml
 out=$(cd /nohost && ./daukle --version 2>&1 || true)
 echo "$out"
 check "the uncovered host is named" sh -c 'echo "$1" | grep -q "no published daukle for linux/x86_64"' _ "$out"
@@ -79,7 +84,7 @@ check "the cells that DO exist are listed" sh -c 'echo "$1" | grep -q "macos/aar
 
 echo
 echo "=== 5. a missing pin file says where it should be ==="
-mkdir -p /nopin && cp /w/daukle /nopin/ && chmod +x /nopin/daukle
+mkdir -p /nopin && cp /wrapper/daukle /nopin/ && chmod +x /nopin/daukle
 out=$(cd /nopin && ./daukle --version 2>&1 || true)
 echo "$out"
 check "a missing pin is reported by path" sh -c 'echo "$1" | grep -q "no pin file at"' _ "$out"
@@ -103,7 +108,7 @@ echo "=== 8. a CRLF pin file still works ==="
 # These three files are copied into someone else's repository and checked out under their git
 # settings, so the pin can arrive CRLF whatever this repository does. A CR on the section header
 # used to make the lookup miss and report the host it had just been given.
-mkdir -p /crlf && cp -r /w/. /crlf/ && chmod +x /crlf/daukle
+mkdir -p /crlf && cp -r /wrapper/. /crlf/ && chmod +x /crlf/daukle
 sed -i 's/$//' /crlf/.daukle/wrapper.toml
 out=$(cd /crlf && DAUKLE_CACHE_DIR=/tmp/crlf-cache ./daukle --version 2>/dev/null || true)
 echo "$out"
@@ -113,7 +118,7 @@ echo
 echo "=== 9. wrapper update replaces all three files from a release ==="
 # Against a DIFFERENT release from the one pinned, so "it updated" and "it did nothing" cannot
 # look the same. 0.2.0 is the first release that carries the wrapper as assets at all.
-mkdir -p /upd && cp -r /w/. /upd/ && chmod +x /upd/daukle
+mkdir -p /upd && cp -r /wrapper/. /upd/ && chmod +x /upd/daukle
 sed -i 's/^version = .*/version = "0.0.0-stale"/' /upd/.daukle/wrapper.toml
 out=$(cd /upd && ./daukle wrapper update 2>&1 || true)
 echo "$out"
@@ -130,21 +135,21 @@ check "the replaced wrapper still runs" sh -c 'echo "$1" | grep -q "^daukle [0-9
 
 echo
 echo "=== 10. wrapper update names a version that has no wrapper assets ==="
-mkdir -p /old && cp -r /w/. /old/ && chmod +x /old/daukle
+mkdir -p /old && cp -r /wrapper/. /old/ && chmod +x /old/daukle
 out=$(cd /old && ./daukle wrapper update 0.1.0 2>&1 || true)
 echo "$out"
 check "a release without the assets is a download failure" sh -c 'echo "$1" | grep -q "could not download"' _ "$out"
-check "the pin was left alone" sh -c 'cmp -s /old/.daukle/wrapper.toml /w/.daukle/wrapper.toml'
+check "the pin was left alone" sh -c 'cmp -s /old/.daukle/wrapper.toml /wrapper/.daukle/wrapper.toml'
 check "no staging file was left behind" sh -c '! ls /old/*.update.* >/dev/null 2>&1'
 
 echo
 echo "=== 11. the pinned catalogs reach the binary as DAUKLE_CATALOGS ==="
 # The binary is a stub whose digest is written into a copy of the pin, so the cache is warm and no
 # download happens: what is under test is the environment the wrapper hands over.
-want_catalogs=$(sed -n 's/^[[:space:]]*catalogs[[:space:]]*=[[:space:]]*\[\(.*\)\].*/\1/p' /w/.daukle/wrapper.toml |
+want_catalogs=$(sed -n 's/^[[:space:]]*catalogs[[:space:]]*=[[:space:]]*\[\(.*\)\].*/\1/p' /wrapper/.daukle/wrapper.toml |
     tr -d '"' | tr ',' ' ' | tr -s ' ' | sed 's/^ //; s/ $//')
 check "the pin carries a catalogs line" test -n "$want_catalogs"
-mkdir -p /cat /cat-cache/wrapper/9.9.9/linux/x86_64 && cp -r /w/. /cat/ && chmod +x /cat/daukle
+mkdir -p /cat /cat-cache/wrapper/9.9.9/linux/x86_64 && cp -r /wrapper/. /cat/ && chmod +x /cat/daukle
 printf '#!/bin/sh\nprintf "%%s" "${DAUKLE_CATALOGS-unset}"\n' > /cat-cache/wrapper/9.9.9/linux/x86_64/stub
 chmod +x /cat-cache/wrapper/9.9.9/linux/x86_64/stub
 stub_digest=$(sha256sum /cat-cache/wrapper/9.9.9/linux/x86_64/stub | cut -d' ' -f1)

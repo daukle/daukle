@@ -8,7 +8,7 @@
 # wrapper is the half of this repository a consumer copies into their own project.
 *.sh text eol=lf
 wrapper/daukle text eol=lf
-wrapper/.daukle/wrapper.toml text eol=lf
+wrapper/wrapper.template.toml text eol=lf
 # The PowerShell half too, and not because PowerShell minds: these three files are COPIED
 # into other repositories, and daukle/examples pins `* -text` so its copy keeps whatever
 # bytes were committed. Left unpinned here, autocrlf gave the two repositories different

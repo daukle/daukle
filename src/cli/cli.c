@@ -221,12 +221,19 @@ static const fr_cli_command_doc COMMAND_DOCS[] = {
       "publish the destinations the manifest declares",
       "Without a name this publishes every declared destination." },
     { FR_CLI_INIT, "init", "init [name]",
-      "write a starter daukle.toml in this directory",
+      "write a starter daukle.toml and the wrapper in this directory",
       "Refuses to touch an existing daukle.toml. The name defaults to this directory's, and the\n"
       "manifest it writes declares no plugins: what the project builds with is the next edit.\n"
       "\n"
-      "It does NOT install the wrapper, and cannot: the release URL that would need belongs to\n"
-      "the wrapper scripts, not to daukle. See wrapper/ABOUT.md." },
+      "It also writes the wrapper, daukle, daukle.ps1 and .daukle/wrapper.toml, pinning this\n"
+      "daukle, with no network: the scripts are inside the binary and the pin is the\n"
+      "wrapper.toml the release ships beside it. It reads DAUKLE_WRAPPER_PIN when that is set,\n"
+      "and otherwise looks beside the executable, then in ../share/daukle/ from it; it refuses a\n"
+      "pin naming another version. The three files are one unit: if any exists, none is written, and\n"
+      "\"./daukle wrapper update\" is what refreshes them.\n"
+      "\n"
+      "Exits 0 when it wrote anything, 2 when everything was already there, 3 when no pin for\n"
+      "this daukle was found (a daukle built from source has none), 1 on an error." },
     { FR_CLI_MIGRATE, "migrate", "migrate [--catalog <location>]... [--with <id>]... | migrate --done",
       "turn a project built by another tool into a daukle project",
       "Detects what builds the project from the catalogs it is given, asks each detected plugin\n"
