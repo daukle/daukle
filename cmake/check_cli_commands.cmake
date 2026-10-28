@@ -160,6 +160,12 @@ expect_text("${printed}" "wrote .daukle/wrapper.toml" "init in an empty director
 expect_same_bytes("${init_dir}/daukle" "${SOURCE_DIR}/wrapper/daukle" "the POSIX script init wrote")
 expect_same_bytes("${init_dir}/daukle.ps1" "${SOURCE_DIR}/wrapper/daukle.ps1" "the PowerShell script init wrote")
 expect_same_bytes("${init_dir}/.daukle/wrapper.toml" "${WORK_DIR}/own-pin.toml" "the pin init wrote")
+if(CMAKE_HOST_UNIX)
+    execute_process(COMMAND test -x "${init_dir}/daukle" RESULT_VARIABLE not_executable)
+    if(NOT not_executable EQUAL 0)
+        message(FATAL_ERROR "check_cli_commands: init wrote ${init_dir}/daukle without its mode")
+    endif()
+endif()
 
 set(init_dir "${WORK_DIR}/init-wrapper-present")
 file(MAKE_DIRECTORY "${init_dir}/.daukle")
