@@ -17,6 +17,10 @@ extern const fr_config_plugin FR_CONFIG_LUA;
    below, so a caller that needs it past then copies it. */
 const struct cJSON *fr_lua_env_reads(void);
 
+/* While on, a load ADDS its reads to the record instead of replacing it, so the
+   pin files loaded after an overlay do not erase what the overlay read. */
+void fr_lua_env_reads_accumulate(int on);
+
 /* Opens the one state this load phase shares, or confirms the open one belongs
    to registry and is already bounded to base_dir. Every plugin and the
    daukle.lua overlay run in it, so their capability strings share one lifetime

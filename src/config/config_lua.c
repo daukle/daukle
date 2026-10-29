@@ -176,6 +176,26 @@ static int publish_daukle_table(lua_State *state, const cJSON *document, fr_erro
 
 static cJSON **extract_config_out;
 static cJSON *env_reads_document;
+static int accumulate_env_reads;
+
+/* Takes ownership of earlier: its reads the newer record lacks are moved into it. */
+static void keep_earlier_env_reads(cJSON *earlier) {
+    if (earlier == NULL) return;
+    if (env_reads_document == NULL) {
+        env_reads_document = earlier;
+        return;
+    }
+    cJSON *read = earlier->child;
+    while (read != NULL) {
+        cJSON *next = read->next;
+        if (!cJSON_HasObjectItem(env_reads_document, read->string)) {
+            cJSON_AddItemToObject(env_reads_document, read->string,
+                                  cJSON_DetachItemViaPointer(earlier, read));
+        }
+        read = next;
+    }
+    cJSON_Delete(earlier);
+}
 
 static int protected_extract_config(lua_State *state) {
     lua_getglobal(state, "daukle");
@@ -188,18 +208,24 @@ static int protected_extract_config(lua_State *state) {
        raising here would report a diagnostic's failure as the config's, and
        would leak the document already converted into *extract_config_out. */
     lua_getfield(state, -2, "_env_reads");
-    cJSON_Delete(env_reads_document);
+    cJSON *earlier = accumulate_env_reads ? env_reads_document : NULL;
+    if (!accumulate_env_reads) cJSON_Delete(env_reads_document);
     env_reads_document = NULL;
     if (lua_type(state, -1) == LUA_TTABLE &&
         fr_lua_to_json(state, -1, &env_reads_document, &to_json_err) != FR_OK) {
         cJSON_Delete(env_reads_document);
         env_reads_document = NULL;
     }
+    keep_earlier_env_reads(earlier);
     return 0;
 }
 
 const cJSON *fr_lua_env_reads(void) {
     return env_reads_document;
+}
+
+void fr_lua_env_reads_accumulate(int on) {
+    accumulate_env_reads = on;
 }
 
 static int open_runtime_serves(const fr_registry *registry, const char *canonical_base,
