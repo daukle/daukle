@@ -524,7 +524,8 @@ TEST pin_files_load_after_the_overlay_in_sorted_order(void) {
     fr_error err;
     fr_manifest manifest;
     int status = load_fixture("test/fixtures/pins-order/daukle.toml", &manifest, &err);
-    if (status != FR_OK) FAILm(err.message);
+    if (status != FR_OK) fprintf(stderr, "%s\n", err.message);
+    ASSERT_EQ(FR_OK, status);
     ASSERT(fr_project_module(&manifest.self, "ordered") != NULL);
     ASSERT_STR_EQ("forebay/a-ran", manifest.self.project);
     fr_manifest_free(&manifest);
@@ -536,7 +537,8 @@ TEST only_files_an_overlay_format_reads_directly_under_a_directory_load(void) {
     fr_error err;
     fr_manifest manifest;
     int status = load_fixture("test/fixtures/pins-ignored/daukle.toml", &manifest, &err);
-    if (status != FR_OK) FAILm(err.message);
+    if (status != FR_OK) fprintf(stderr, "%s\n", err.message);
+    ASSERT_EQ(FR_OK, status);
     ASSERT_STR_EQ("forebay/pins", manifest.self.project);
     fr_manifest_free(&manifest);
     fr_lua_runtime_shutdown();
@@ -574,7 +576,21 @@ TEST an_include_of_a_pin_file_applies_it_once(void) {
     fr_error err;
     fr_manifest manifest;
     int status = load_fixture("test/fixtures/pins-included/daukle.toml", &manifest, &err);
-    if (status != FR_OK) FAILm(err.message);
+    if (status != FR_OK) fprintf(stderr, "%s\n", err.message);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(fr_project_module(&manifest.self, "m0") != NULL);
+    ASSERT(fr_project_module(&manifest.self, "m1") == NULL);
+    fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST an_include_of_a_pin_file_applies_it_where_it_sits(void) {
+    fr_error err;
+    fr_manifest manifest;
+    int status = load_fixture("test/fixtures/pins-included-then-used/daukle.toml", &manifest, &err);
+    if (status != FR_OK) fprintf(stderr, "%s\n", err.message);
+    ASSERT_EQ(FR_OK, status);
     ASSERT(fr_project_module(&manifest.self, "m0") != NULL);
     ASSERT(fr_project_module(&manifest.self, "m1") == NULL);
     fr_manifest_free(&manifest);
@@ -586,7 +602,8 @@ TEST an_include_of_a_deleted_pin_file_still_loads(void) {
     fr_error err;
     fr_manifest manifest;
     int status = load_fixture("test/fixtures/pins-included-gone/daukle.toml", &manifest, &err);
-    if (status != FR_OK) FAILm(err.message);
+    if (status != FR_OK) fprintf(stderr, "%s\n", err.message);
+    ASSERT_EQ(FR_OK, status);
     fr_manifest_free(&manifest);
     fr_lua_runtime_shutdown();
     PASS();
@@ -2832,6 +2849,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_failing_pin_file_names_its_file);
     RUN_TEST(an_include_of_a_pin_file_applies_it_once);
     RUN_TEST(an_include_of_a_deleted_pin_file_still_loads);
+    RUN_TEST(an_include_of_a_pin_file_applies_it_where_it_sits);
     RUN_TEST(two_plugin_loads_share_one_state);
     RUN_TEST(a_second_registry_is_refused_while_the_first_holds_plugins);
     RUN_TEST(a_second_base_directory_is_refused_naming_both);

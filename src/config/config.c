@@ -2,6 +2,7 @@
 
 #include "config/config_lua.h"
 #include "config/manifest.h"
+#include "lua/lua_sandbox.h"
 #include "lua/lua_verbs.h"
 #include "plugin/plugins.h"
 #include "project/derived.h"
@@ -193,12 +194,14 @@ static int apply_one_pin_file(const char *path, const char *directory, fr_regist
     return status;
 }
 
-static int apply_pin_directory(const char *pins_dir, const char *directory, fr_registry *registry,
-                               cJSON **current, fr_error *err) {
+static int apply_pin_directory(const char *pins_dir, const char *pins_dir_name,
+                               const char *directory, fr_registry *registry, cJSON **current,
+                               fr_error *err) {
     name_list files;
     if (sorted_names(pins_dir, 0, &files, err) != FR_OK) return FR_ERR;
     int status = FR_OK;
     for (size_t index = 0; index < files.count && status == FR_OK; index++) {
+        if (fr_lua_sandbox_pin_was_included(pins_dir_name, files.names[index])) continue;
         char *path = join(pins_dir, files.names[index]);
         if (path == NULL) {
             fr_error_set(err, "out of memory joining \"%s\"", files.names[index]);
@@ -233,11 +236,13 @@ static int apply_pin_files(const char *directory, fr_registry *registry, cJSON *
             status = FR_ERR;
             break;
         }
-        status = apply_pin_directory(pins_dir, directory, registry, &current, err);
+        status = apply_pin_directory(pins_dir, directories.names[index], directory, registry,
+                                     &current, err);
         free(pins_dir);
     }
     free_names(&directories);
     free(root);
+    fr_lua_sandbox_forget_included_pins();
     if (status != FR_OK) {
         cJSON_Delete(current);
         return FR_ERR;
@@ -248,6 +253,7 @@ static int apply_pin_files(const char *directory, fr_registry *registry, cJSON *
 
 int fr_config_load_file(const char *file_path, fr_registry *registry, fr_manifest *out, fr_error *err) {
     memset(out, 0, sizeof *out);
+    fr_lua_sandbox_forget_included_pins();
 
     const fr_config_plugin *plugin = fr_config_plugin_for(registry, file_path, err);
     if (plugin == NULL) return FR_ERR;

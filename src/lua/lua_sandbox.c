@@ -248,33 +248,73 @@ static int is_plain_segment(const char *segment, size_t length) {
     return !(length == 2 && segment[0] == '.' && segment[1] == '.');
 }
 
+/* The pin files an include already ran in this load, each as "<dir>/<file>",
+   so the config loader does not apply them a second time. */
+static char **included_pins;
+static size_t included_pin_count;
+
+void fr_lua_sandbox_forget_included_pins(void) {
+    for (size_t index = 0; index < included_pin_count; index++) free(included_pins[index]);
+    free(included_pins);
+    included_pins = NULL;
+    included_pin_count = 0;
+}
+
+int fr_lua_sandbox_pin_was_included(const char *directory_name, const char *file_name) {
+    size_t directory_length = strlen(directory_name);
+    for (size_t index = 0; index < included_pin_count; index++) {
+        const char *key = included_pins[index];
+        if (strncmp(key, directory_name, directory_length) == 0 && key[directory_length] == '/'
+            && strcmp(key + directory_length + 1, file_name) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void remember_included_pin(const char *key) {
+    char **grown = realloc(included_pins, (included_pin_count + 1) * sizeof *grown);
+    if (grown == NULL) return;
+    included_pins = grown;
+    char *copy = malloc(strlen(key) + 1);
+    if (copy == NULL) return;
+    strcpy(copy, key);
+    included_pins[included_pin_count++] = copy;
+}
+
 /* Whether relative_path names daukle/<dir>/<file>, which the config loader
-   applies by itself after every overlay (D-201), so an include of one, left
-   over from before that, must not apply its pins a second time. */
-static int names_a_pin_file(const char *relative_path) {
+   applies by itself after every overlay (D-201); if so, key receives
+   "<dir>/<file>". */
+static int pin_file_key(const char *relative_path, char *key, size_t key_size) {
     const char *root = fr_generated_root_name();
     size_t root_length = strlen(root);
     if (strncmp(relative_path, root, root_length) != 0 || !is_separator(relative_path[root_length])) {
         return 0;
     }
-    const char *segment = relative_path + root_length + 1;
-    for (int index = 0; index < 2; index++) {
-        size_t length = strcspn(segment, "/\\");
-        if (!is_plain_segment(segment, length)) return 0;
-        if (index == 0 && !is_separator(segment[length])) return 0;
-        if (index == 1 && segment[length] != '\0') return 0;
-        segment += length + 1;
+    const char *directory = relative_path + root_length + 1;
+    size_t directory_length = strcspn(directory, "/\\");
+    if (!is_plain_segment(directory, directory_length) || !is_separator(directory[directory_length])) {
+        return 0;
     }
-    return 1;
+    const char *file = directory + directory_length + 1;
+    size_t file_length = strcspn(file, "/\\");
+    if (!is_plain_segment(file, file_length) || file[file_length] != '\0') return 0;
+    int written = snprintf(key, key_size, "%.*s/%s", (int) directory_length, directory, file);
+    return written > 0 && (size_t) written < key_size;
 }
 
+/* An include of a pin file runs it where it sits, as it always did, so code
+   after the line still sees its pins; one whose file is gone does nothing,
+   because the resolve that would write it again must still be able to run. */
 static int sandbox_include(lua_State *state) {
     const char *relative_path = luaL_checkstring(state, 1);
-    if (names_a_pin_file(relative_path)) return 0;
+    char pin_key[512];
+    int is_pin = pin_file_key(relative_path, pin_key, sizeof pin_key);
 
     fr_error err;
     char *resolved = NULL;
     if (fr_lua_sandbox_resolve(state, relative_path, &resolved, &err) != FR_OK) {
+        if (is_pin) return 0;
         return luaL_error(state, "%s", err.message);
     }
 
@@ -282,8 +322,10 @@ static int sandbox_include(lua_State *state) {
     int status = fr_file_read_text(resolved, &text, &err);
     free(resolved);
     if (status != FR_OK) {
+        if (is_pin) return 0;
         return luaL_error(state, "%s", err.message);
     }
+    if (is_pin) remember_included_pin(pin_key);
 
     int load_status = fr_lua_load_named(state, text, strlen(text), relative_path);
     free(text);

@@ -86,7 +86,8 @@ split across files.
 **A resolver's generated pins do NOT need it.** Core loads every committed `daukle/<dir>/<file>.lua`
 by itself, after `daukle.toml` and `daukle.lua`, so `daukle.toml` keeps what you wrote, the pins
 live in a generated file marked do-not-edit, and nothing asks you to write a line for them. Page 4
-is that story. An include of such a path, left from before, does nothing.
+is that story. An include of such a path, left from before, still runs the file where it sits, once, and does
+nothing when the file is gone.
 
 **One sharp edge**: `daukle.include` raises if the file is not there, and it raises at config load,
 so EVERY command fails rather than just the build.
