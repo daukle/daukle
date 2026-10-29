@@ -570,6 +570,28 @@ TEST a_failing_pin_file_names_its_file(void) {
     PASS();
 }
 
+TEST an_include_of_a_pin_file_applies_it_once(void) {
+    fr_error err;
+    fr_manifest manifest;
+    int status = load_fixture("test/fixtures/pins-included/daukle.toml", &manifest, &err);
+    if (status != FR_OK) FAILm(err.message);
+    ASSERT(fr_project_module(&manifest.self, "m0") != NULL);
+    ASSERT(fr_project_module(&manifest.self, "m1") == NULL);
+    fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST an_include_of_a_deleted_pin_file_still_loads(void) {
+    fr_error err;
+    fr_manifest manifest;
+    int status = load_fixture("test/fixtures/pins-included-gone/daukle.toml", &manifest, &err);
+    if (status != FR_OK) FAILm(err.message);
+    fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 TEST two_plugin_loads_share_one_state(void) {
     fr_error err;
     fr_registry *registry = create_tracked_registry();
@@ -2808,6 +2830,8 @@ int main(int argc, char **argv) {
     RUN_TEST(only_files_an_overlay_format_reads_directly_under_a_directory_load);
     RUN_TEST(pin_files_keep_the_environment_reads_the_overlay_made);
     RUN_TEST(a_failing_pin_file_names_its_file);
+    RUN_TEST(an_include_of_a_pin_file_applies_it_once);
+    RUN_TEST(an_include_of_a_deleted_pin_file_still_loads);
     RUN_TEST(two_plugin_loads_share_one_state);
     RUN_TEST(a_second_registry_is_refused_while_the_first_holds_plugins);
     RUN_TEST(a_second_base_directory_is_refused_naming_both);

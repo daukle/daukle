@@ -1,6 +1,7 @@
 #include "lua/lua_sandbox.h"
 
 #include "lua/luax.h"
+#include "project/derived.h"
 #include "project/region.h"
 #include "util/error.h"
 
@@ -236,8 +237,40 @@ int fr_lua_sandbox_resolve_dir_in(const char *base_dir, const char *relative, ch
     return status;
 }
 
+static int is_separator(char character) {
+    return character == '/' || character == '\\';
+}
+
+/* Whether one path segment of length length is a plain name: not empty, "." or "..". */
+static int is_plain_segment(const char *segment, size_t length) {
+    if (length == 0) return 0;
+    if (length == 1 && segment[0] == '.') return 0;
+    return !(length == 2 && segment[0] == '.' && segment[1] == '.');
+}
+
+/* Whether relative_path names daukle/<dir>/<file>, which the config loader
+   applies by itself after every overlay (D-201), so an include of one, left
+   over from before that, must not apply its pins a second time. */
+static int names_a_pin_file(const char *relative_path) {
+    const char *root = fr_generated_root_name();
+    size_t root_length = strlen(root);
+    if (strncmp(relative_path, root, root_length) != 0 || !is_separator(relative_path[root_length])) {
+        return 0;
+    }
+    const char *segment = relative_path + root_length + 1;
+    for (int index = 0; index < 2; index++) {
+        size_t length = strcspn(segment, "/\\");
+        if (!is_plain_segment(segment, length)) return 0;
+        if (index == 0 && !is_separator(segment[length])) return 0;
+        if (index == 1 && segment[length] != '\0') return 0;
+        segment += length + 1;
+    }
+    return 1;
+}
+
 static int sandbox_include(lua_State *state) {
     const char *relative_path = luaL_checkstring(state, 1);
+    if (names_a_pin_file(relative_path)) return 0;
 
     fr_error err;
     char *resolved = NULL;
