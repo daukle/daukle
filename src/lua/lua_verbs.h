@@ -114,4 +114,9 @@ void fr_lua_verbs_set_verbose(int enabled);
    only when the command line asked for it. D-77. */
 void fr_lua_verbs_set_resolving(int enabled);
 
+/* Also published to every generate and task callback as context.resolving, so
+   a plugin can relax a check that would block the resolve which repairs it.
+   D-202. */
+int fr_lua_verbs_is_resolving(void);
+
 #endif

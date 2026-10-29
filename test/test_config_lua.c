@@ -765,6 +765,44 @@ TEST a_toolchain_generate_bridges_project_config_root_and_host(void) {
                  strstr(text, "\nos macos\n") != NULL ||
                  strstr(text, "\nos linux\n") != NULL;
     ASSERT(has_os);
+    ASSERT(strstr(text, "\nresolving false\n") != NULL);
+    PASS();
+}
+
+/* D-202: a plugin relaxes a check only inside a --resolve run, so the flag has
+   to reach generate as a boolean, not only the verbs that already read it. */
+TEST a_toolchain_generate_is_told_it_runs_inside_a_resolve(void) {
+    fr_registry *registry = NULL;
+    fr_manifest manifest = {0};
+    fr_error err;
+    int built = build_tracked_registry(&registry, &err) == FR_OK;
+    int loaded = built && fr_config_load_file("test/fixtures/toolchain-plugin/daukle.toml",
+                                              registry, &manifest, &err) == FR_OK;
+    const fr_toolchain_plugin *plugin =
+        loaded ? fr_registry_toolchain(registry, "daukle.toolchain/stub") : NULL;
+
+    fr_generated_file *files = NULL;
+    size_t file_count = 0;
+    int status = FR_ERR;
+    fr_lua_verbs_set_resolving(1);
+    if (plugin != NULL && manifest.toolchain_count == 1) {
+        fr_error gen_err;
+        status = plugin->generate(plugin->state, &manifest.toolchains[0], manifest.self.project,
+                                  "9.9.9", "derived/stub", NULL, 0, NULL, 0, &files, &file_count, &gen_err);
+    }
+    fr_lua_verbs_set_resolving(0);
+
+    char text[256] = "";
+    if (status == FR_OK && file_count == 1) snprintf(text, sizeof text, "%s", files[0].text);
+
+    fr_derived_free_files(files, file_count);
+    if (loaded) fr_manifest_free(&manifest);
+    if (built) destroy_tracked_registry(registry);
+    fr_lua_runtime_shutdown();
+
+    ASSERT(plugin != NULL);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(strstr(text, "\nresolving true\n") != NULL);
     PASS();
 }
 
@@ -2857,6 +2895,7 @@ int main(int argc, char **argv) {
     RUN_TEST(a_plugin_declares_a_toolchain_and_it_reaches_the_registry);
     RUN_TEST(a_toolchain_needs_a_generate_function);
     RUN_TEST(a_toolchain_generate_bridges_project_config_root_and_host);
+    RUN_TEST(a_toolchain_generate_is_told_it_runs_inside_a_resolve);
     RUN_TEST(a_toolchain_config_excludes_the_reserved_dependencies_key);
     RUN_TEST(the_generate_context_carries_the_toolchain_version);
     RUN_TEST(the_generate_context_still_hides_dependencies_from_config);

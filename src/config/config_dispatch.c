@@ -60,6 +60,12 @@ static void push_modules(lua_State *state, const fr_module *modules, size_t coun
     lua_setfield(state, -2, "modules");
 }
 
+/* Both callbacks, for the reason push_modules is shared. D-202. */
+static void push_resolving(lua_State *state) {
+    lua_pushboolean(state, fr_lua_verbs_is_resolving());
+    lua_setfield(state, -2, "resolving");
+}
+
 static int member_is_core_key(const char *key) {
     return strcmp(key, "toolchain") == 0 || strcmp(key, "dir") == 0;
 }
@@ -123,6 +129,7 @@ static int protected_toolchain_generate(lua_State *state) {
     }
     lua_setfield(state, -2, "dependencies");
     push_modules(state, context->modules, context->module_count);
+    push_resolving(state);
 
     /* lua_call, not lua_pcall: see protected_language_apply above. */
     lua_call(state, 1, 1);
@@ -315,6 +322,7 @@ static int protected_task_run(lua_State *state) {
     lua_setfield(state, -2, "dependencies");
     lua_setfield(state, -2, "toolchain");
     push_modules(state, context->modules, context->module_count);
+    push_resolving(state);
 
     if (context->publish != NULL) {
         lua_newtable(state);
