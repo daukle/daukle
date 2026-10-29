@@ -80,20 +80,17 @@ environment.
 
 ## `daukle.include`, and why it matters more than it looks
 
-`daukle.include("some/file.lua")` runs another Lua file in the same sandbox. That is how
-**generated** configuration reaches a manifest without being pasted into it:
+`daukle.include("some/file.lua")` runs another Lua file in the same sandbox, for Lua of your own
+split across files.
 
-```lua
--- daukle.lua, the one line a human writes
-daukle.include("daukle/maven/classpath.lua")
-```
+**A resolver's generated pins do NOT need it.** Core loads every committed `daukle/<dir>/<file>.lua`
+by itself, after `daukle.toml` and `daukle.lua`, so `daukle.toml` keeps what you wrote, the pins
+live in a generated file marked do-not-edit, and nothing asks you to write a line for them. Page 4
+is that story. An include of such a path, left from before, still runs the file where it sits, once,
+and does nothing when the file is gone.
 
-`daukle.toml` keeps what you wrote. The twenty resolved dependency pins live in a generated file
-marked do-not-edit, and nothing ever asks you to touch it. Page 4 is that story.
-
-**One sharp edge**: `daukle.include` raises if the file is not there, and it raises at config
-load, so EVERY command fails rather than just the build. That is why what it includes is
-committed.
+**One sharp edge**: `daukle.include` raises if the file is not there, and it raises at config load,
+so EVERY command fails rather than just the build.
 
 ## What this page does not cover
 

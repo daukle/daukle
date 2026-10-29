@@ -51,9 +51,8 @@ org has yet.
 and enumerate its modules, which is the obvious next thing a reader will try. It computes from
 literals, `daukle.host` and `daukle.env`, and that is the whole input surface.
 
-**`daukle.include`.** The other half of the layer, which pulls in a second Lua file, is how a
-resolver's generated pins reach a manifest without being pasted into it. `daukle/maven` uses it
-and nothing here does.
+**`daukle.include`.** The other half of the layer, which pulls in a second Lua file of your own.
+Nothing here needs one, and a resolver's generated pins never do: core loads those by itself.
 
 ## What it demonstrates
 

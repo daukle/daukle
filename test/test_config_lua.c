@@ -492,6 +492,123 @@ TEST a_second_load_replaces_the_recorded_environment_reads(void) {
     PASS();
 }
 
+static int load_fixture(const char *path, fr_manifest *manifest, fr_error *err) {
+    fr_registry *registry = NULL;
+    if (build_tracked_registry(&registry, err) != FR_OK) return FR_ERR;
+    int status = fr_config_load_file(path, registry, manifest, err);
+    destroy_tracked_registry(registry);
+    return status;
+}
+
+TEST a_pin_file_beside_a_toml_manifest_loads_without_an_include(void) {
+    fr_error err;
+    fr_manifest manifest;
+    ASSERT_EQ_FMT(FR_OK, load_fixture("test/fixtures/pins-toml/daukle.toml", &manifest, &err), "%d");
+    ASSERT(fr_project_module(&manifest.self, "pinned") != NULL);
+    fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST a_lua_only_manifest_loads_its_pin_files(void) {
+    fr_error err;
+    fr_manifest manifest;
+    ASSERT_EQ(FR_OK, load_fixture("test/fixtures/pins-lua-only/daukle.lua", &manifest, &err));
+    ASSERT(fr_project_module(&manifest.self, "pinned") != NULL);
+    fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST pin_files_load_after_the_overlay_in_sorted_order(void) {
+    fr_error err;
+    fr_manifest manifest;
+    int status = load_fixture("test/fixtures/pins-order/daukle.toml", &manifest, &err);
+    if (status != FR_OK) fprintf(stderr, "%s\n", err.message);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(fr_project_module(&manifest.self, "ordered") != NULL);
+    ASSERT_STR_EQ("forebay/a-ran", manifest.self.project);
+    fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST only_files_an_overlay_format_reads_directly_under_a_directory_load(void) {
+    fr_error err;
+    fr_manifest manifest;
+    int status = load_fixture("test/fixtures/pins-ignored/daukle.toml", &manifest, &err);
+    if (status != FR_OK) fprintf(stderr, "%s\n", err.message);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT_STR_EQ("forebay/pins", manifest.self.project);
+    fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST pin_files_keep_the_environment_reads_the_overlay_made(void) {
+    fr_error err;
+    fr_manifest manifest;
+    fr_test_set_env("DAUKLE_TEST_CHANNEL", "nightly");
+    fr_test_set_env("DAUKLE_TEST_PIN", "pinned");
+    ASSERT_EQ(FR_OK, load_fixture("test/fixtures/pins-env/daukle.toml", &manifest, &err));
+    const cJSON *reads = fr_lua_env_reads();
+    ASSERT(reads != NULL);
+    ASSERT(cJSON_GetObjectItemCaseSensitive(reads, "DAUKLE_TEST_CHANNEL") != NULL);
+    ASSERT(cJSON_GetObjectItemCaseSensitive(reads, "DAUKLE_TEST_PIN") != NULL);
+    fr_test_set_env("DAUKLE_TEST_CHANNEL", NULL);
+    fr_test_set_env("DAUKLE_TEST_PIN", NULL);
+    fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST a_failing_pin_file_names_its_file(void) {
+    fr_error err;
+    fr_manifest manifest;
+    ASSERT_EQ(FR_ERR, load_fixture("test/fixtures/pins-broken/daukle.toml", &manifest, &err));
+    ASSERT(strstr(err.message, "broken.lua") != NULL);
+    ASSERT(strstr(err.message, "pin failed") != NULL);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST an_include_of_a_pin_file_applies_it_once(void) {
+    fr_error err;
+    fr_manifest manifest;
+    int status = load_fixture("test/fixtures/pins-included/daukle.toml", &manifest, &err);
+    if (status != FR_OK) fprintf(stderr, "%s\n", err.message);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(fr_project_module(&manifest.self, "m0") != NULL);
+    ASSERT(fr_project_module(&manifest.self, "m1") == NULL);
+    fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST an_include_of_a_pin_file_applies_it_where_it_sits(void) {
+    fr_error err;
+    fr_manifest manifest;
+    int status = load_fixture("test/fixtures/pins-included-then-used/daukle.toml", &manifest, &err);
+    if (status != FR_OK) fprintf(stderr, "%s\n", err.message);
+    ASSERT_EQ(FR_OK, status);
+    ASSERT(fr_project_module(&manifest.self, "m0") != NULL);
+    ASSERT(fr_project_module(&manifest.self, "m1") == NULL);
+    fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
+TEST an_include_of_a_deleted_pin_file_still_loads(void) {
+    fr_error err;
+    fr_manifest manifest;
+    int status = load_fixture("test/fixtures/pins-included-gone/daukle.toml", &manifest, &err);
+    if (status != FR_OK) fprintf(stderr, "%s\n", err.message);
+    ASSERT_EQ(FR_OK, status);
+    fr_manifest_free(&manifest);
+    fr_lua_runtime_shutdown();
+    PASS();
+}
+
 TEST two_plugin_loads_share_one_state(void) {
     fr_error err;
     fr_registry *registry = create_tracked_registry();
@@ -2724,6 +2841,15 @@ int main(int argc, char **argv) {
     RUN_TEST(records_every_environment_variable_a_script_read);
     RUN_TEST(an_unconvertible_env_read_record_does_not_fail_the_load);
     RUN_TEST(a_second_load_replaces_the_recorded_environment_reads);
+    RUN_TEST(a_pin_file_beside_a_toml_manifest_loads_without_an_include);
+    RUN_TEST(a_lua_only_manifest_loads_its_pin_files);
+    RUN_TEST(pin_files_load_after_the_overlay_in_sorted_order);
+    RUN_TEST(only_files_an_overlay_format_reads_directly_under_a_directory_load);
+    RUN_TEST(pin_files_keep_the_environment_reads_the_overlay_made);
+    RUN_TEST(a_failing_pin_file_names_its_file);
+    RUN_TEST(an_include_of_a_pin_file_applies_it_once);
+    RUN_TEST(an_include_of_a_deleted_pin_file_still_loads);
+    RUN_TEST(an_include_of_a_pin_file_applies_it_where_it_sits);
     RUN_TEST(two_plugin_loads_share_one_state);
     RUN_TEST(a_second_registry_is_refused_while_the_first_holds_plugins);
     RUN_TEST(a_second_base_directory_is_refused_naming_both);

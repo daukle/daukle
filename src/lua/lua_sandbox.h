@@ -81,4 +81,10 @@ int fr_lua_sandbox_is_within(const char *canonical_base, const char *canonical_t
    none at all, where a relative include path legitimately does. */
 int fr_lua_sandbox_climbs_out(const char *relative_path);
 
+/* Whether a daukle.include in the current load already ran daukle/<directory_name>/<file_name>. */
+int fr_lua_sandbox_pin_was_included(const char *directory_name, const char *file_name);
+
+/* Clears that record; called around each config load. */
+void fr_lua_sandbox_forget_included_pins(void);
+
 #endif

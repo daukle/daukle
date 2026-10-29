@@ -69,12 +69,9 @@ for yet, is **refused without it**, and the message says so. Every other acquisi
 pinned before it happens; this is the one that computes the pin, so it is the one that has to be
 asked for explicitly. An ordinary `daukle sync` can never reach it.
 
-What comes out is a generated Lua file of twenty pinned entries, and you include it:
-
-```lua
--- daukle.lua
-daukle.include("daukle/maven/classpath.lua")
-```
+What comes out is a generated Lua file of twenty pinned entries, `daukle/maven/classpath.lua`,
+and **you write nothing to use it**: daukle loads every such file by itself, after `daukle.toml`
+and `daukle.lua`. Delete it and the next `--resolve` writes it again.
 
 **Your `daukle.toml` never grows the twenty blocks.** Generated data lives in a generated file;
 the file you wrote keeps only what you wrote.

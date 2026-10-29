@@ -44,6 +44,9 @@ int fr_derived_dir_relative(const char *toolchain, char **out_dir, fr_error *err
    file the user is not meant to edit does not sit where the user works. */
 int fr_generated_dir_relative(const char *toolchain, char **out_dir, fr_error *err);
 
+/* The committed directory's own name, relative to the project root, with no toolchain below it. */
+const char *fr_generated_root_name(void);
+
 /* Creates derived_root, if needed, and writes "*\n" to
    <derived_root>/.gitignore when that file is absent, never overwriting one
    that exists: a user who edited it had a reason. Not called by

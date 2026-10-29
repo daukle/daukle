@@ -1,0 +1,6 @@
+daukle.config = {
+  schema = 1,
+  project = "forebay/pins",
+  version = "1.0.0",
+  modules = {},
+}

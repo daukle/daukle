@@ -86,6 +86,10 @@ int fr_derived_dir_relative(const char *toolchain, char **out_dir, fr_error *err
     return FR_OK;
 }
 
+const char *fr_generated_root_name(void) {
+    return FR_GENERATED_ROOT_NAME;
+}
+
 int fr_generated_dir_relative(const char *toolchain, char **out_dir, fr_error *err) {
     *out_dir = NULL;
     if (validate_toolchain_name(toolchain, err) != FR_OK) return FR_ERR;

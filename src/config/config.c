@@ -1,10 +1,14 @@
 #include "config/config.h"
 
+#include "config/config_lua.h"
 #include "config/manifest.h"
+#include "lua/lua_sandbox.h"
 #include "lua/lua_verbs.h"
 #include "plugin/plugins.h"
+#include "project/derived.h"
 #include "project/region.h"
 #include "util/error.h"
+#include "util/tree.h"
 
 #include "cJSON.h"
 
@@ -127,8 +131,129 @@ static int apply_overlays(const char *directory, fr_registry *registry,
     return FR_OK;
 }
 
+typedef struct {
+    char **names;
+    size_t count;
+    int want_directories;
+    int out_of_memory;
+} name_list;
+
+static void collect_name(const char *name, int is_directory, int is_link, void *context) {
+    name_list *list = context;
+    if (is_link || is_directory != list->want_directories || list->out_of_memory) return;
+    char **grown = realloc(list->names, (list->count + 1) * sizeof *grown);
+    char *copy = grown == NULL ? NULL : malloc(strlen(name) + 1);
+    if (grown != NULL) list->names = grown;
+    if (copy == NULL) {
+        list->out_of_memory = 1;
+        return;
+    }
+    strcpy(copy, name);
+    list->names[list->count++] = copy;
+}
+
+static int compare_names(const void *left, const void *right) {
+    return strcmp(*(char *const *) left, *(char *const *) right);
+}
+
+static void free_names(name_list *list) {
+    for (size_t index = 0; index < list->count; index++) free(list->names[index]);
+    free(list->names);
+}
+
+/* @implNote an unreadable directory lists as empty, the same as a missing one. */
+static int sorted_names(const char *directory, int want_directories, name_list *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+    out->want_directories = want_directories;
+    fr_list_directory(directory, collect_name, out);
+    if (out->out_of_memory) {
+        free_names(out);
+        memset(out, 0, sizeof *out);
+        fr_error_set(err, "out of memory listing \"%s\"", directory);
+        return FR_ERR;
+    }
+    if (out->count > 1) qsort(out->names, out->count, sizeof *out->names, compare_names);
+    return FR_OK;
+}
+
+static int apply_one_pin_file(const char *path, const char *directory, fr_registry *registry,
+                              cJSON **current, fr_error *err) {
+    fr_error not_a_format;
+    const fr_config_plugin *plugin = fr_config_plugin_for(registry, path, &not_a_format);
+    if (plugin == NULL || !plugin->overlay) return FR_OK;
+
+    char *text = NULL;
+    if (fr_file_read_text(path, &text, err) != FR_OK) return FR_ERR;
+    cJSON *next = NULL;
+    fr_lua_env_reads_accumulate(1);
+    int status = plugin->load(plugin->state, text, path, directory, registry, *current, &next, err);
+    fr_lua_env_reads_accumulate(0);
+    free(text);
+    cJSON_Delete(*current);
+    *current = status == FR_OK ? next : NULL;
+    return status;
+}
+
+static int apply_pin_directory(const char *pins_dir, const char *pins_dir_name,
+                               const char *directory, fr_registry *registry, cJSON **current,
+                               fr_error *err) {
+    name_list files;
+    if (sorted_names(pins_dir, 0, &files, err) != FR_OK) return FR_ERR;
+    int status = FR_OK;
+    for (size_t index = 0; index < files.count && status == FR_OK; index++) {
+        if (fr_lua_sandbox_pin_was_included(pins_dir_name, files.names[index])) continue;
+        char *path = join(pins_dir, files.names[index]);
+        if (path == NULL) {
+            fr_error_set(err, "out of memory joining \"%s\"", files.names[index]);
+            status = FR_ERR;
+            break;
+        }
+        status = apply_one_pin_file(path, directory, registry, current, err);
+        free(path);
+    }
+    free_names(&files);
+    return status;
+}
+
+/* Every file an overlay format reads directly inside daukle/<dir>/, applied
+   last and in sorted order, so a resolver's committed output needs no include
+   line and a deleted one is simply absent. D-201. */
+static int apply_pin_files(const char *directory, fr_registry *registry, cJSON *document,
+                           cJSON **out, fr_error *err) {
+    cJSON *current = document;
+    char *root = join(directory, fr_generated_root_name());
+    if (root == NULL) {
+        fr_error_set(err, "out of memory joining the committed directory");
+        cJSON_Delete(current);
+        return FR_ERR;
+    }
+    name_list directories;
+    int status = sorted_names(root, 1, &directories, err);
+    for (size_t index = 0; index < directories.count && status == FR_OK; index++) {
+        char *pins_dir = join(root, directories.names[index]);
+        if (pins_dir == NULL) {
+            fr_error_set(err, "out of memory joining \"%s\"", directories.names[index]);
+            status = FR_ERR;
+            break;
+        }
+        status = apply_pin_directory(pins_dir, directories.names[index], directory, registry,
+                                     &current, err);
+        free(pins_dir);
+    }
+    free_names(&directories);
+    free(root);
+    fr_lua_sandbox_forget_included_pins();
+    if (status != FR_OK) {
+        cJSON_Delete(current);
+        return FR_ERR;
+    }
+    *out = current;
+    return FR_OK;
+}
+
 int fr_config_load_file(const char *file_path, fr_registry *registry, fr_manifest *out, fr_error *err) {
     memset(out, 0, sizeof *out);
+    fr_lua_sandbox_forget_included_pins();
 
     const fr_config_plugin *plugin = fr_config_plugin_for(registry, file_path, err);
     if (plugin == NULL) return FR_ERR;
@@ -163,14 +288,17 @@ int fr_config_load_file(const char *file_path, fr_registry *registry, fr_manifes
         return FR_ERR;
     }
 
-    cJSON *final = NULL;
+    cJSON *overlaid = NULL;
     if (plugin->overlay) {
-        final = document;
-    } else if (apply_overlays(directory, registry, document, &final, err) != FR_OK) {
+        overlaid = document;
+    } else if (apply_overlays(directory, registry, document, &overlaid, err) != FR_OK) {
         free(directory);
         return FR_ERR;
     }
+    cJSON *final = NULL;
+    int pinned = apply_pin_files(directory, registry, overlaid, &final, err);
     free(directory);
+    if (pinned != FR_OK) return FR_ERR;
     return fr_manifest_from_document(final, file_path, out, err);
 }
 
