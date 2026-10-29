@@ -1,3 +1,4 @@
+#include "lua/lua_verbs.h"
 #include "lua/lua_verbs_internal.h"
 
 #include "cache/cache.h"

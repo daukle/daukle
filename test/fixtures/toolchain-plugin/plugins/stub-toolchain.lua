@@ -8,7 +8,8 @@ daukle.toolchain{
                           .. "\nversion " .. toolchain.version
                           .. "\ntarget " .. tostring(toolchain.config.target)
                           .. "\nroot " .. toolchain.root
-                          .. "\nos " .. toolchain.host.os .. "\n",
+                          .. "\nos " .. toolchain.host.os
+                          .. "\nresolving " .. tostring(toolchain.resolving) .. "\n",
     }
   end,
 }
