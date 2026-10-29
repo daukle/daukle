@@ -429,7 +429,11 @@ named by it finds nothing to read.
 is where a generated header, a generated `build.gradle` or a tool's scratch output belongs.
 
 **`daukle/<toolchain>/` is committed**: it is for what a resolve produced and a clone must carry.
-Page 4 is the one place it appears.
+Page 4 is the one place it appears. **Core loads it by itself**: every file directly inside a
+`daukle/<dir>/` that an overlay format reads (a `.lua` file) runs after `daukle.toml` and
+`daukle.lua`, directories and then files in sorted order, so a project writes no include line for
+one. A generated pin file should do nothing when the toolchain it edits is not declared, so a
+project that drops that toolchain keeps working. Since `api = 6`.
 
 **Nothing a plugin generates goes at the project root.** The rule is simple: if the user is not
 supposed to edit it, it does not sit where the user works.
