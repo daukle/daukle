@@ -1,1 +1,1 @@
-daukle.plugin{ api = 6, uses = {} }
+daukle.plugin{ api = 7, uses = {} }
