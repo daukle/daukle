@@ -26,7 +26,6 @@ typedef struct {
 } fr_lua_root;
 
 int fr_lua_verbs_is_verbose(void);
-int fr_lua_verbs_is_resolving(void);
 
 int fr_lua_verb_env(lua_State *state);
 

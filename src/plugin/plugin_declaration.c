@@ -32,8 +32,9 @@
    nothing. D-116. Api 3 is a toolchain's `dir` and `toolchain` keys and the
    migrator and translator kinds. Api 4 is a migrator's `files` result. Api 5 is
    the "daukle.array" mark on a table pushed from an array. Api 6 is core loading
-   a committed daukle/<dir>/<file> pin file with no include line (D-201). */
-#define FR_PLUGIN_API_PROVIDED 6
+   a committed daukle/<dir>/<file> pin file with no include line (D-201). Api 7 is
+   context.resolving in generate and task callbacks (D-202). */
+#define FR_PLUGIN_API_PROVIDED 7
 
 static fr_plugin_declaration *declaration_in_progress;
 
