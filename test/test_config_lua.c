@@ -7,6 +7,7 @@
 #include "plugin/plugin_deps.h"
 #include "plugin/plugin_modules.h"
 #include "lua/lua_verbs.h"
+#include "lua/luax.h"
 #include "plugin/plugins.h"
 #include "plugin/registry.h"
 #include "plugin/resolvers.h"
@@ -343,6 +344,32 @@ TEST a_low_instruction_limit_stops_a_script_that_would_otherwise_finish(void) {
     destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     fr_lua_set_limits(0, 0);
+    PASS();
+}
+
+/* A callback inside the task-dispatch window may start processes that run for
+   any length of time, so the instruction budget does not bound it; the budget
+   is re-armed fresh when the window closes (D-204). */
+TEST the_task_dispatch_window_lifts_the_instruction_budget(void) {
+    fr_error err;
+    fr_registry *registry = NULL;
+    fr_manifest manifest;
+
+    fr_lua_set_limits(0, 0);
+    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-limit-instruction/daukle.toml",
+                                         registry, &manifest, &err));
+    fr_lua_set_instruction_limit(fr_lua_runtime_state(), 1000);
+    fr_lua_enter_task_dispatch();
+    int inside = fr_lua_run(fr_lua_runtime_state(), "local total = 0 for i = 1, 200000 do total = total + i end", "task.lua", &err);
+    fr_lua_leave_task_dispatch();
+    int after = fr_lua_run(fr_lua_runtime_state(), "local total = 0 for i = 1, 200000 do total = total + i end", "daukle.lua", &err);
+    fr_manifest_free(&manifest);
+    destroy_tracked_registry(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT_EQ(FR_OK, inside);
+    ASSERT_EQ(FR_ERR, after);
+    ASSERT(strstr(err.message, "ran for too long") != NULL);
     PASS();
 }
 
@@ -2873,6 +2900,7 @@ int main(int argc, char **argv) {
     RUN_TEST(reading_a_variable_core_does_not_use_needs_no_declaration);
     RUN_TEST(a_source_plugin_that_raises_an_error_produces_a_clean_failure);
     RUN_TEST(a_low_instruction_limit_stops_a_script_that_would_otherwise_finish);
+    RUN_TEST(the_task_dispatch_window_lifts_the_instruction_budget);
     RUN_TEST(a_low_memory_limit_fails_a_script_that_would_otherwise_finish);
     RUN_TEST(a_script_raising_a_table_produces_a_clean_failure);
     RUN_TEST(refuses_a_second_load_that_redeclares_a_plugin_capability);

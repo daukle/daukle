@@ -14,6 +14,7 @@
 typedef struct {
     size_t limit;
     size_t used;
+    long instruction_limit;
 } fr_lua_budget;
 
 static size_t subtract_capped(size_t used, size_t amount) {
@@ -77,12 +78,30 @@ static void instruction_budget_spent(lua_State *state, lua_Debug *activation) {
     luaL_error(state, "this configuration ran for too long and was stopped");
 }
 
+static fr_lua_budget *budget_of(lua_State *state) {
+    void *budget = NULL;
+    return lua_getallocf(state, &budget) == capped_alloc ? budget : NULL;
+}
+
 /* lua_sethook counts in an int, so a long limit is clamped rather than wrapped:
    a truncated count could land on zero, which disarms the hook entirely. */
 void fr_lua_set_instruction_limit(lua_State *state, long limit) {
     long clamped = limit < 1 ? 1 : limit;
     if (clamped > INT_MAX) clamped = INT_MAX;
+    fr_lua_budget *budget = budget_of(state);
+    if (budget != NULL) budget->instruction_limit = clamped;
     lua_sethook(state, instruction_budget_spent, LUA_MASKCOUNT, (int) clamped);
+}
+
+void fr_lua_suspend_instruction_limit(lua_State *state) {
+    lua_sethook(state, NULL, 0, 0);
+}
+
+void fr_lua_resume_instruction_limit(lua_State *state) {
+    fr_lua_budget *budget = budget_of(state);
+    if (budget != NULL && budget->instruction_limit > 0) {
+        fr_lua_set_instruction_limit(state, budget->instruction_limit);
+    }
 }
 
 lua_State *fr_lua_open(size_t memory_limit, fr_error *err) {
