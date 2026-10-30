@@ -192,11 +192,15 @@ int fr_lua_generation_is_running(void) {
 static int task_dispatch_depth;
 
 void fr_lua_enter_task_dispatch(void) {
-    task_dispatch_depth++;
+    if (task_dispatch_depth++ == 0 && fr_lua_runtime_state() != NULL) {
+        fr_lua_suspend_instruction_limit(fr_lua_runtime_state());
+    }
 }
 
 void fr_lua_leave_task_dispatch(void) {
-    task_dispatch_depth--;
+    if (--task_dispatch_depth == 0 && fr_lua_runtime_state() != NULL) {
+        fr_lua_resume_instruction_limit(fr_lua_runtime_state());
+    }
 }
 
 int fr_lua_task_dispatch_is_running(void) {

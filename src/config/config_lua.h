@@ -73,7 +73,8 @@ int fr_lua_plugin_exec_is_refused(void);
    migrator's run or build, which open the same window. A
    floor rather than a list of refused windows, so code running where nobody
    named a window, as a finalizer once did, is refused by default. D-135.
-   enter and leave are public so a verb's unit test can open the window. */
+   enter and leave are public so a verb's unit test can open the window. The
+   window also lifts the instruction budget, re-armed fresh when it closes. */
 int fr_lua_task_dispatch_is_running(void);
 void fr_lua_enter_task_dispatch(void);
 void fr_lua_leave_task_dispatch(void);
