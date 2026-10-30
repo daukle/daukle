@@ -48,6 +48,12 @@ int fr_lua_load_named(lua_State *state, const char *text, size_t length, const c
    count is spent, which bounds run time independently of the memory cap. */
 void fr_lua_set_instruction_limit(lua_State *state, long limit);
 
+/* Lifts the counter, and re-arms it with a fresh count at the limit last set.
+   The budget guards evaluation that must finish on its own; a callback allowed
+   to start a process is bounded by that process, not by a count (D-204). */
+void fr_lua_suspend_instruction_limit(lua_State *state);
+void fr_lua_resume_instruction_limit(lua_State *state);
+
 /* fr_error's message is capped at 512 bytes, too small for a traceback, so a
    caller that wants the untruncated text from the last fr_lua_run failure asks
    here instead; returns NULL when the last run did not fail or left no

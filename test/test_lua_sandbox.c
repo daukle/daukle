@@ -81,6 +81,19 @@ TEST stops_a_script_that_never_finishes(void) {
     PASS();
 }
 
+TEST a_suspended_budget_lets_a_long_run_finish_and_resuming_restores_it(void) {
+    fr_error err;
+    lua_State *state = sandboxed(&err);
+    fr_lua_set_instruction_limit(state, 100000);
+    fr_lua_suspend_instruction_limit(state);
+    ASSERT_EQ(FR_OK, fr_lua_run(state, "local total = 0 for i = 1, 200000 do total = total + i end", "daukle.lua", &err));
+    fr_lua_resume_instruction_limit(state);
+    ASSERT_EQ(FR_ERR, fr_lua_run(state, "local total = 0 for i = 1, 200000 do total = total + i end", "daukle.lua", &err));
+    ASSERT(strstr(err.message, "too long") != NULL);
+    fr_lua_close(state);
+    PASS();
+}
+
 TEST removing_pcall_makes_the_instruction_budget_terminal(void) {
     fr_error err;
     lua_State *state = sandboxed(&err);
@@ -254,6 +267,7 @@ int main(int argc, char **argv) {
     RUN_TEST(names_a_removed_library_in_the_error);
     RUN_TEST(keeps_the_libraries_a_config_needs);
     RUN_TEST(stops_a_script_that_never_finishes);
+    RUN_TEST(a_suspended_budget_lets_a_long_run_finish_and_resuming_restores_it);
     RUN_TEST(removing_pcall_makes_the_instruction_budget_terminal);
     RUN_TEST(removes_raw_table_access);
     RUN_TEST(names_coroutine_and_utf8_in_the_error);
