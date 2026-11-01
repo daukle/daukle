@@ -24,7 +24,7 @@ static void (*log_sink)(const char *message) = NULL;
 static long instruction_limit_override = 0;
 static size_t memory_limit_override = 0;
 
-#define FR_LUA_DEFAULT_MEMORY_LIMIT (64u * 1024u * 1024u)
+#define FR_LUA_DEFAULT_MEMORY_LIMIT (1024u * 1024u * 1024u)
 
 const char *fr_lua_host_os(void) {
 #if defined(_WIN32)

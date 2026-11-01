@@ -39,6 +39,19 @@ TEST stops_a_script_that_allocates_without_end(void) {
         "local t = {} local i = 1 while true do t[i] = string.rep('x', 1024) i = i + 1 end",
         "daukle.lua", &err));
     ASSERT(strstr(err.message, "not enough memory") != NULL);
+    ASSERT_EQ(1u * 1024u * 1024u, fr_lua_memory_limit_reached());
+    fr_lua_close(state);
+    PASS();
+}
+
+TEST a_state_under_its_cap_reports_no_limit_reached(void) {
+    fr_error err;
+    lua_State *spent = fr_lua_open(1u * 1024u * 1024u, &err);
+    fr_lua_run(spent, "local t = {} while true do t[#t + 1] = string.rep('x', 1024) end", "=spent", &err);
+    fr_lua_close(spent);
+    lua_State *state = fr_lua_open(64u * 1024u * 1024u, &err);
+    ASSERT_EQ(FR_OK, fr_lua_run(state, "local x = string.rep('x', 1024)", "=test", &err));
+    ASSERT_EQ(0u, fr_lua_memory_limit_reached());
     fr_lua_close(state);
     PASS();
 }
@@ -315,6 +328,7 @@ int main(int argc, char **argv) {
     RUN_TEST(reports_a_syntax_error_with_its_chunk_name);
     RUN_TEST(reports_a_runtime_error_with_its_line);
     RUN_TEST(stops_a_script_that_allocates_without_end);
+    RUN_TEST(a_state_under_its_cap_reports_no_limit_reached);
     RUN_TEST(fails_gracefully_when_the_cap_is_too_tight_for_the_standard_libraries);
     RUN_TEST(pushes_a_json_document_as_a_lua_table);
     RUN_TEST(reads_a_lua_table_back_as_json);
