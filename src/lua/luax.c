@@ -17,6 +17,12 @@ typedef struct {
     long instruction_limit;
 } fr_lua_budget;
 
+static size_t memory_limit_reached = 0;
+
+size_t fr_lua_memory_limit_reached(void) {
+    return memory_limit_reached;
+}
+
 static size_t subtract_capped(size_t used, size_t amount) {
     return amount > used ? 0 : used - amount;
 }
@@ -30,7 +36,10 @@ static void *capped_alloc(void *ud, void *pointer, size_t old_size, size_t new_s
         budget->used = subtract_capped(budget->used, previous);
         return NULL;
     }
-    if (new_size > previous && budget->used + (new_size - previous) > budget->limit) return NULL;
+    if (new_size > previous && budget->used + (new_size - previous) > budget->limit) {
+        memory_limit_reached = budget->limit;
+        return NULL;
+    }
     void *moved = realloc(pointer, new_size);
     if (moved == NULL) return NULL;
     if (new_size >= previous) {
@@ -111,6 +120,7 @@ lua_State *fr_lua_open(size_t memory_limit, fr_error *err) {
         return NULL;
     }
     budget->limit = memory_limit;
+    memory_limit_reached = 0;
     lua_State *state = lua_newstate(capped_alloc, budget);
     if (state == NULL) {
         free(budget);

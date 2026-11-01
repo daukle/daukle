@@ -60,6 +60,11 @@ void fr_lua_resume_instruction_limit(lua_State *state);
    traceback. */
 const char *fr_lua_last_traceback(void);
 
+/* The cap an allocation was last refused at since the latest fr_lua_open, or
+   0, so a caller can tell a script that outgrew its budget from one that
+   failed for its own reasons: Lua's message is "not enough memory" in both. */
+size_t fr_lua_memory_limit_reached(void);
+
 /* Reads table[index]'s field `key` without honoring a metatable, leaving the
    value on the stack exactly as lua_getfield would. setmetatable is a
    reachable base global in this sandbox, so a plugin's declaration table

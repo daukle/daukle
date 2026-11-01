@@ -374,7 +374,7 @@ TEST the_task_dispatch_window_lifts_the_instruction_budget(void) {
 }
 
 /* Same proof for the memory limit: the script's allocations fit under the
-   default 64 MiB budget and do not fit under a 2 MB one, and the two failures
+   default 1 GiB budget and do not fit under a 2 MB one, and the two failures
    are distinguishable by message ("ran for too long" vs "not enough memory"),
    so a caller cannot mistake one budget for the other. */
 TEST a_low_memory_limit_fails_a_script_that_would_otherwise_finish(void) {

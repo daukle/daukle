@@ -247,4 +247,11 @@ foreach(name ${WRAPPER_FILES})
     expect_absent("${init_dir}/${name}" "init with no pin")
 endforeach()
 
-message(STATUS "check_cli_commands: tasks, config print, plugin update, add, migrate and init all ran")
+set(memory_dir "${WORK_DIR}/memory")
+file(COPY "${SOURCE_DIR}/test/fixtures/lua-limit-memory/" DESTINATION "${memory_dir}")
+run_daukle("${memory_dir}" 1 printed config print --lua-memory-limit 2000000)
+expect_text("${printed}" "not enough memory" "a run past its Lua memory limit")
+expect_text("${printed}" "the Lua memory limit of 2000000 bytes was reached; raise it with --lua-memory-limit"
+            "a run past its Lua memory limit")
+
+message(STATUS "check_cli_commands: tasks, config print, plugin update, add, migrate, init and the memory limit all ran")

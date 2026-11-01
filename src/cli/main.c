@@ -28,6 +28,11 @@ static void print_notice(const char *message) {
 
 void fr_cli_report_error(const fr_error *err, int verbose) {
     fprintf(stderr, "daukle: %s\n", err->message);
+    size_t memory_limit = fr_lua_memory_limit_reached();
+    if (memory_limit != 0) {
+        fprintf(stderr, "daukle: the Lua memory limit of %zu bytes was reached; raise it with"
+                        " --lua-memory-limit <bytes>\n", memory_limit);
+    }
     if (verbose) {
         const char *traceback = fr_lua_last_traceback();
         if (traceback != NULL) fprintf(stderr, "%s\n", traceback);
