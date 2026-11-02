@@ -5,6 +5,8 @@
 #include "util/error.h"
 #include "util/sha256.h"
 
+#include "cJSON.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -228,4 +230,31 @@ int fr_proof_compare_archives(const char *old_path, const char *new_path, int *o
     }
     fr_proof_differences_free(&list);
     return FR_OK;
+}
+
+static cJSON *difference_json(const fr_proof_difference *difference,
+                              const fr_proof_differences *list) {
+    cJSON *entry = cJSON_CreateObject();
+    if (entry == NULL) return NULL;
+    if (difference->member != NULL) cJSON_AddStringToObject(entry, "member", difference->member);
+    cJSON_AddStringToObject(entry, "kind", fr_proof_difference_kind_name(difference->kind));
+    if (difference->member == NULL) {
+        cJSON_AddStringToObject(entry, "oldSha256", list->old_digest);
+        cJSON_AddStringToObject(entry, "newSha256", list->new_digest);
+    }
+    return entry;
+}
+
+cJSON *fr_proof_differences_json(const fr_proof_differences *list) {
+    cJSON *array = cJSON_CreateArray();
+    if (array == NULL) return NULL;
+    for (size_t index = 0; index < list->count; index++) {
+        cJSON *entry = difference_json(&list->items[index], list);
+        if (entry == NULL) {
+            cJSON_Delete(array);
+            return NULL;
+        }
+        cJSON_AddItemToArray(array, entry);
+    }
+    return array;
 }

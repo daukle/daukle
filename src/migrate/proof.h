@@ -5,6 +5,8 @@
 
 #include <stddef.h>
 
+struct cJSON;
+
 typedef enum { FR_PROOF_BYTES, FR_PROOF_ARCHIVE } fr_proof_kind;
 
 /* FR_OK with *out_same set, or FR_ERR when a side cannot be read. difference is
@@ -50,7 +52,8 @@ typedef struct {
 #define FR_PROOF_MAX_DIFFERENCES 10000u
 
 /* Every difference fr_proof_compare would stop at the first of, in member
-   order. out starts zeroed; free it with fr_proof_differences_free. */
+   order, with root NULL taking both paths as given. Free out with
+   fr_proof_differences_free. */
 int fr_proof_list_differences(const char *root, const char *old_path, const char *new_path,
                               fr_proof_kind kind, fr_proof_differences *out, fr_error *err);
 
@@ -58,5 +61,9 @@ void fr_proof_differences_free(fr_proof_differences *list);
 
 /* "only-old", "only-new", "bytes", "symlink-old" or "symlink-new". */
 const char *fr_proof_difference_kind_name(fr_proof_difference_kind kind);
+
+/* A list of { member?, kind, oldSha256?, newSha256? }, the digests only for a
+   bytes comparison. NULL when out of memory. */
+struct cJSON *fr_proof_differences_json(const fr_proof_differences *list);
 
 #endif

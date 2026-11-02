@@ -44,6 +44,14 @@ const char *fr_cli_migrate_option_misused(const fr_cli_options *options) {
     if (options->catalog_count > 0) return "--catalog";
     if (options->with_count > 0) return "--with";
     if (options->migrate_done) return "--done";
+    if (options->report_path != NULL) return "--report";
+    return NULL;
+}
+
+const char *fr_cli_compare_option_misused(const fr_cli_options *options) {
+    if (options->command == FR_CLI_COMPARE || options->command == FR_CLI_USAGE) return NULL;
+    if (options->compare_as != NULL) return "--as";
+    if (options->compare_json) return "--json";
     return NULL;
 }
 
@@ -72,6 +80,11 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
     out->catalog_count = 0;
     out->with_count = 0;
     out->migrate_done = 0;
+    out->report_path = NULL;
+    out->compare_old = NULL;
+    out->compare_new = NULL;
+    out->compare_as = NULL;
+    out->compare_json = 0;
 
     const char *words[FR_CLI_MAX_WORDS];
     size_t word_count = 0;
@@ -106,6 +119,12 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
             }
         } else if (strcmp(argument, "--done") == 0) {
             out->migrate_done = 1;
+        } else if (strcmp(argument, "--report") == 0 && has_value_argument(index, argc, argv)) {
+            out->report_path = argv[++index];
+        } else if (strcmp(argument, "--as") == 0 && has_value_argument(index, argc, argv)) {
+            out->compare_as = argv[++index];
+        } else if (strcmp(argument, "--json") == 0) {
+            out->compare_json = 1;
         } else if (strcmp(argument, "--lua-instruction-limit") == 0 && has_value_argument(index, argc, argv)) {
             unsigned long value = 0;
             if (!parse_positive_number(argv[++index], &value) || value > (unsigned long) LONG_MAX) return;
@@ -169,6 +188,11 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
     } else if (strcmp(command, "migrate") == 0) {
         if (word_count > 1) return;
         out->command = FR_CLI_MIGRATE;
+    } else if (strcmp(command, "compare") == 0) {
+        if (word_count != 3) return;
+        out->command = FR_CLI_COMPARE;
+        out->compare_old = words[1];
+        out->compare_new = words[2];
     } else if (strcmp(command, "help") == 0) {
         if (word_count > 2) return;
         out->command = FR_CLI_HELP;
@@ -234,7 +258,7 @@ static const fr_cli_command_doc COMMAND_DOCS[] = {
       "\n"
       "Exits 0 when it wrote anything, 2 when everything was already there, 3 when no pin for\n"
       "this daukle was found (a daukle built from source has none), 1 on an error." },
-    { FR_CLI_MIGRATE, "migrate", "migrate [--catalog <location>]... [--with <id>]... | migrate --done",
+    { FR_CLI_MIGRATE, "migrate", "migrate [--catalog <location>]... [--with <id>]... [--report <file>] | migrate --done",
       "turn a project built by another tool into a daukle project",
       "Detects what builds the project from the catalogs it is given, asks each detected plugin\n"
       "for the project's model and each replacing plugin for its settings, and writes nothing\n"
@@ -245,7 +269,17 @@ static const fr_cli_command_doc COMMAND_DOCS[] = {
       "Catalogs come from DAUKLE_CATALOGS and each --catalog. The wrapper sets DAUKLE_CATALOGS\n"
       "from its wrapper.toml when it is unset. --with names a catalog id to use at the root.\n"
       "\n"
+      "--report <file> writes the outcome, every blocker and every comparison as JSON, whatever\n"
+      "the outcome.\n"
+      "\n"
       "Exits 0 when migrated, 3 when blocked, 4 when the proof failed, 1 on an error." },
+    { FR_CLI_COMPARE, "compare", "compare <old> <new> [--as bytes|archive] [--json]",
+      "list every difference between two build outputs",
+      "Compares the way a migration's proof does. --as bytes, the default, compares the two files;\n"
+      "--as archive compares an archive's file members by name and bytes, ignoring their order,\n"
+      "directory members and timestamps. Prints one line per difference, or JSON with --json.\n"
+      "\n"
+      "Exits 0 when the two are the same, 3 when they differ, 1 when either cannot be read." },
     { FR_CLI_TASK, NULL, "<task>",
       "run a task by the name `tasks` lists",
       "A task takes no manifest path, because two bare words cannot be told apart from a task\n"

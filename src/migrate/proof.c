@@ -16,10 +16,11 @@
 #define PATH_SIZE 1024
 
 static int join_path(const char *root, const char *relative, char *out, fr_error *err) {
-    int written = snprintf(out, PATH_SIZE, "%s/%s", root, relative);
+    int written = root == NULL ? snprintf(out, PATH_SIZE, "%s", relative)
+                               : snprintf(out, PATH_SIZE, "%s/%s", root, relative);
     if (written < 0 || written >= PATH_SIZE) {
         fr_error_set(err, "comparing build outputs: the path \"%s\" below \"%s\" is too long",
-                     relative, root);
+                     relative, root == NULL ? "." : root);
         return FR_ERR;
     }
     return FR_OK;
