@@ -25,7 +25,7 @@ set(CORE_FILES
     migrate/detect.c migrate/detect.h migrate/detect_claims.c migrate/detect_internal.h migrate/detect_walk.c
     config/toml_write.c config/toml_write.h
     migrate/result.c migrate/result.h migrate/result_check.c migrate/merge.c migrate/merge.h
-    migrate/proof.c migrate/proof.h
+    migrate/proof.c migrate/proof.h migrate/proof_archive.c migrate/proof_internal.h
     migrate/migrate.c migrate/migrate.h migrate/migrate_internal.h migrate/migrate_sessions.c
     migrate/migrate_finish.c cli/cli_migrate.c
     cli/wrapper_pin.c cli/wrapper_pin.h cli/wrapper_scripts.h cli/cli_init.c)
