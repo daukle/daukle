@@ -245,6 +245,40 @@ int fr_proof_compare(const char *root, const char *old_path, const char *new_pat
     return compare_bytes(old_full, new_full, out_same, difference, difference_size, err);
 }
 
+static int list_bytes_difference(const char *old_path, const char *new_path,
+                                 fr_proof_differences *out, fr_error *err) {
+    char *old_bytes = NULL;
+    char *new_bytes = NULL;
+    size_t old_length = 0;
+    size_t new_length = 0;
+    if (fr_file_read_bytes(old_path, &old_bytes, &old_length, err) != FR_OK) return FR_ERR;
+    if (fr_file_read_bytes(new_path, &new_bytes, &new_length, err) != FR_OK) {
+        free(old_bytes);
+        return FR_ERR;
+    }
+    fr_sha256_hex(old_bytes, old_length, out->old_digest);
+    fr_sha256_hex(new_bytes, new_length, out->new_digest);
+    free(old_bytes);
+    free(new_bytes);
+    if (fr_sha256_hex_equal(out->old_digest, out->new_digest)) return FR_OK;
+    return fr_proof_differences_add(out, NULL, FR_PROOF_DIFFERENT_BYTES, err);
+}
+
+int fr_proof_list_differences(const char *root, const char *old_path, const char *new_path,
+                              fr_proof_kind kind, fr_proof_differences *out, fr_error *err) {
+    memset(out, 0, sizeof *out);
+    char old_full[PATH_SIZE];
+    char new_full[PATH_SIZE];
+    if (join_path(root, old_path, old_full, err) != FR_OK
+        || join_path(root, new_path, new_full, err) != FR_OK) {
+        return FR_ERR;
+    }
+    if (kind == FR_PROOF_ARCHIVE) {
+        return fr_proof_list_archive_differences(old_full, new_full, out, err);
+    }
+    return list_bytes_difference(old_full, new_full, out, err);
+}
+
 int fr_proof_kind_parse(const char *text, fr_proof_kind *out) {
     if (strcmp(text, "bytes") == 0) {
         *out = FR_PROOF_BYTES;
