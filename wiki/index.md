@@ -102,6 +102,7 @@ wrapper it commits fetches the pinned one. Until the packages exist, one downloa
 | `plugin update` | refetch plugins, ignoring the cache |
 | `migrate` | turn a project built by another tool into a daukle project |
 | `migrate --done` | delete the old tool's files a finished migration kept |
+| `compare <old> <new>` | list every difference between two build outputs |
 
 `--resolve` allows a task to fetch an unpinned url and report its digest. `--no-cache` refetches.
 
@@ -134,6 +135,7 @@ compares the artifacts each migrator named, and only then moves the old tool's f
 - **The wrapper** sets `DAUKLE_CATALOGS` from the `catalogs` list in `.daukle/wrapper.toml` when the
   variable is unset or empty. A `DAUKLE_CATALOGS` you set yourself replaces that default, and a pin
   with no `catalogs` line leaves the variable alone.
+- **`--report <file>`** writes the run as JSON, whatever the outcome; see below.
 - **`migrate --done`** takes no `--catalog` or `--with`, and fails when there is nothing to finish.
 - **`daukle clean` refuses** while `build/daukle/migrate/old` exists, because that directory holds
   the only copy of what the migration replaced.
@@ -147,6 +149,41 @@ across every plugin of every catalog loaded, so one entry can keep installed dep
 all the rules. A malformed entry is dropped with a warning, and an id listed twice keeps the
 earlier catalog's entry. A plugin with no `asset` that migrate would need is a blocker, since there
 is nothing to pin.
+
+### The report
+
+`--report <file>` writes one JSON object, the path relative to the working directory:
+
+| key | holds |
+| --- | --- |
+| `report` | `1`, the version of this shape |
+| `outcome` | `migrated`, `blocked`, `unproved`, `undetected` (no catalog plugin recognised the project, exit 1) or `error` (any other exit 1) |
+| `error` | the message, for `undetected` and `error` only |
+| `detected` | each detection as `{ plugin, dir }`, `dir` empty at the root |
+| `blockers` | each as `{ source, construct, where, why, surface }`, `surface` null where no surface row names it |
+| `proof` | `{ failure?, compared }`: `failure` when a proof task failed, and each comparison as `{ instance, old, new, as, same, differences, truncated }`, or with `error` when a side could not be read |
+
+A difference is `{ member, kind }` for an archive and `{ kind, oldSha256, newSha256 }` for two
+files, with `kind` one of `only-old`, `only-new`, `bytes`, `symlink-old` and `symlink-new`. A
+list stops at 10000 differences and sets `truncated`. The report's path is written first, so one
+that cannot be written stops migrate with exit 1 before anything else happens.
+
+## Comparing two build outputs
+
+`daukle compare <old> <new> [--as bytes|archive] [--json]` compares the way a migration's proof
+does, needs no project, and lists every difference rather than the first. `--as bytes`, the
+default, compares the two files; `--as archive` compares a zip, jar or tarball by its file
+members' names and bytes, ignoring their order, directory members and timestamps. Both sides must
+be files; a directory is refused. It prints
+one line per difference, or with `--json` one object of `same`, `as`, `differences` and
+`truncated`, the differences shaped as in the report above.
+
+| exit | meaning |
+| --- | --- |
+| 0 | the two are the same |
+| 3 | they differ |
+| 2 | a usage error, such as an `--as` other than `bytes` or `archive` |
+| 1 | either side cannot be read |
 
 The plugin side is on [[daukle/02-plugins]].
 

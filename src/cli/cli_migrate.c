@@ -52,7 +52,8 @@ int fr_cli_migrate(const fr_cli_options *options) {
     }
 
     fr_migrate_options migrate_options = { locations, location_count, options->with,
-                                           options->with_count, options->use_cache };
+                                           options->with_count, options->use_cache,
+                                           options->report_path };
     fr_migrate_outcome outcome = FR_MIGRATE_BLOCKED;
     int status = fr_migrate_run(&migrate_options, &outcome, &err);
     free((void *) locations);

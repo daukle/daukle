@@ -3,6 +3,7 @@
 #include "cache/cache.h"
 #include "config/toml_write.h"
 #include "migrate/proof.h"
+#include "migrate/report.h"
 #include "plugin/plugins.h"
 #include "project/derived.h"
 #include "project/region.h"
@@ -132,7 +133,7 @@ static void compare_entry(const cJSON *entry, fr_strbuf *differences, size_t *co
     }
 }
 
-static int compare_artifacts(const fr_migrate_state *state, int *out_same, fr_error *err) {
+static int compare_artifacts(fr_migrate_state *state, int *out_same, fr_error *err) {
     fr_strbuf differences;
     fr_strbuf_init(&differences);
     size_t count = 0;
@@ -141,6 +142,12 @@ static int compare_artifacts(const fr_migrate_state *state, int *out_same, fr_er
         const cJSON *entry = NULL;
         cJSON_ArrayForEach(entry, cJSON_GetObjectItemCaseSensitive(proof, "compare")) {
             compare_entry(entry, &differences, &count);
+            if (state->options->report_path != NULL
+                && fr_migrate_report_comparison(state, state->kept[index].instance, entry, err)
+                       != FR_OK) {
+                fr_strbuf_free(&differences);
+                return FR_ERR;
+            }
         }
     }
     char *text = fr_strbuf_release(&differences);
@@ -336,6 +343,7 @@ int fr_migrate_finish(fr_migrate_state *state, fr_migrate_outcome *out_outcome, 
     char failure[FR_MIGRATE_FAILURE_SIZE];
     if (!run_proofs(state, failure, sizeof failure)) {
         report_unproved(state, failure);
+        state->proof_failure = fr_dup_string(failure);
         return FR_OK;
     }
     int same = 0;

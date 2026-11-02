@@ -9,6 +9,8 @@
 #include "util/error.h"
 #include "util/sha256.h"
 
+#include "cJSON.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +34,7 @@ typedef struct {
     char original_dir[1024];
     char catalog_url[256];
     char stub_digest[65];
+    char report_path[640];
     fr_test_server *server;
     char *printed;
     int status;
@@ -153,7 +156,9 @@ static void run_case_with(migrate_case *test_case, const char *const *catalogs,
     int captured = fr_test_capture_stderr_begin(test_case->stderr_path) == 0;
     test_case->err.message[0] = '\0';
     if (fr_test_set_working_directory(test_case->project)) {
-        fr_migrate_options options = { catalogs, catalog_count, NULL, 0, 1 };
+        fr_migrate_options options = { catalogs, catalog_count, NULL, 0, 1,
+                                       test_case->report_path[0] != '\0' ? test_case->report_path
+                                                                         : NULL };
         test_case->status = fr_migrate_run(&options, &test_case->outcome, &test_case->err);
         fr_test_set_working_directory(test_case->original_dir);
     } else {
@@ -519,6 +524,140 @@ TEST a_failed_proof_keeps_the_manifest_and_moves_nothing(void) {
     PASS();
 }
 
+typedef struct {
+    int status;
+    fr_migrate_outcome outcome;
+    cJSON *report;
+    int printed_unproved;
+} reported_run;
+
+/* The report goes to the scratch directory, outside the project, so the run
+   itself never sees it. */
+static reported_run run_reported(const char *label, const char *greeting, const char *fixture,
+                                 const char *rule_file) {
+    reported_run result = { 0 };
+    migrate_case test_case;
+    open_case(&test_case, label, greeting);
+    snprintf(test_case.report_path, sizeof test_case.report_path, "%s/report.json",
+             test_case.scratch);
+    serve_stub_catalog(&test_case, fixture, rule_file);
+    run_case(&test_case);
+    result.status = test_case.status;
+    result.outcome = test_case.outcome;
+    result.printed_unproved = printed_holds(&test_case, "daukle migrate: the new build differs");
+    char *text = NULL;
+    fr_error err;
+    if (fr_file_read_text(test_case.report_path, &text, &err) == FR_OK) {
+        result.report = cJSON_Parse(text);
+        free(text);
+    }
+    close_case(&test_case);
+    return result;
+}
+
+static const char *report_string(const cJSON *object, const char *name) {
+    const cJSON *field = cJSON_GetObjectItemCaseSensitive(object, name);
+    return cJSON_IsString(field) ? field->valuestring : "";
+}
+
+static const cJSON *first_comparison(const cJSON *report) {
+    const cJSON *proof = cJSON_GetObjectItemCaseSensitive(report, "proof");
+    return cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(proof, "compared"), 0);
+}
+
+TEST a_report_records_a_migration(void) {
+    reported_run run = run_reported("report-clean", "hello", FIXTURES "/plugin.lua", "faketool.conf");
+    ASSERT_EQ(FR_OK, run.status);
+    ASSERT(run.report != NULL);
+    ASSERT_STR_EQ("migrated", report_string(run.report, "outcome"));
+    const cJSON *detected = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(run.report, "detected"), 0);
+    ASSERT_STR_EQ("stub", report_string(detected, "plugin"));
+    const cJSON *comparison = first_comparison(run.report);
+    ASSERT_STR_EQ("stub", report_string(comparison, "instance"));
+    ASSERT(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(comparison, "same")));
+    cJSON_Delete(run.report);
+    PASS();
+}
+
+TEST a_report_records_every_blocker(void) {
+    reported_run run = run_reported("report-blocked", "hello", FIXTURES "/plugin-blocker.lua",
+                                    "faketool.conf");
+    ASSERT_EQ(FR_MIGRATE_BLOCKED, run.outcome);
+    ASSERT(run.report != NULL);
+    ASSERT_STR_EQ("blocked", report_string(run.report, "outcome"));
+    const cJSON *blocker = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(run.report, "blockers"), 0);
+    ASSERT_STR_EQ("faketool.magic", report_string(blocker, "construct"));
+    ASSERT_STR_EQ("faketool's magic has no daukle form", report_string(blocker, "why"));
+    ASSERT(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(blocker, "surface")));
+    cJSON_Delete(run.report);
+    PASS();
+}
+
+TEST a_report_records_what_the_proof_found_different(void) {
+    reported_run run = run_reported("report-unproved", "goodbye", FIXTURES "/plugin.lua",
+                                    "faketool.conf");
+    ASSERT_EQ(FR_MIGRATE_UNPROVED, run.outcome);
+    ASSERT(run.printed_unproved);
+    ASSERT(run.report != NULL);
+    ASSERT_STR_EQ("unproved", report_string(run.report, "outcome"));
+    const cJSON *comparison = first_comparison(run.report);
+    ASSERT(cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(comparison, "same")));
+    const cJSON *difference =
+        cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(comparison, "differences"), 0);
+    ASSERT_STR_EQ("bytes", report_string(difference, "kind"));
+    ASSERT_EQ(64u, strlen(report_string(difference, "oldSha256")));
+    cJSON_Delete(run.report);
+    PASS();
+}
+
+TEST a_report_records_a_failed_proof_task(void) {
+    reported_run run = run_reported("report-task", "hello", FIXTURES "/plugin-failing-task.lua",
+                                    "faketool.conf");
+    ASSERT_EQ(FR_MIGRATE_UNPROVED, run.outcome);
+    ASSERT(run.report != NULL);
+    ASSERT_STR_EQ("unproved", report_string(run.report, "outcome"));
+    const cJSON *proof = cJSON_GetObjectItemCaseSensitive(run.report, "proof");
+    ASSERT(strstr(report_string(proof, "failure"), "the stub build broke") != NULL);
+    cJSON_Delete(run.report);
+    PASS();
+}
+
+TEST a_report_tells_nothing_detected_from_an_error(void) {
+    reported_run run = run_reported("report-undetected", "hello", FIXTURES "/plugin.lua",
+                                    "absent.conf");
+    ASSERT_EQ(FR_ERR, run.status);
+    ASSERT(run.report != NULL);
+    ASSERT_STR_EQ("undetected", report_string(run.report, "outcome"));
+    ASSERT(strstr(report_string(run.report, "error"), "no catalog plugin recognised") != NULL);
+    cJSON_Delete(run.report);
+
+    run = run_reported("report-error", "hello", FIXTURES "/plugin-broken.lua", "faketool.conf");
+    ASSERT_EQ(FR_ERR, run.status);
+    ASSERT(run.report != NULL);
+    ASSERT_STR_EQ("error", report_string(run.report, "outcome"));
+    ASSERT(strstr(report_string(run.report, "error"), "the stub plugin is broken") != NULL);
+    cJSON_Delete(run.report);
+    PASS();
+}
+
+TEST an_unwritable_report_stops_before_anything_is_migrated(void) {
+    migrate_case test_case;
+    open_case(&test_case, "report-unwritable", "hello");
+    snprintf(test_case.report_path, sizeof test_case.report_path, "%s/absent/report.json",
+             test_case.scratch);
+    serve_stub_catalog(&test_case, FIXTURES "/plugin.lua", "faketool.conf");
+    run_case(&test_case);
+    int status = test_case.status;
+    int wrote = project_file_exists(&test_case, "daukle.toml");
+    int untouched = old_files_still_in_place(&test_case);
+    close_case(&test_case);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT_FALSE(wrote);
+    ASSERT(untouched);
+    PASS();
+}
+
 TEST migrate_files_written_before_the_proof(void) {
     migrate_case test_case;
     open_case(&test_case, "files", "hello");
@@ -835,5 +974,11 @@ int main(int argc, char **argv) {
     RUN_TEST(clean_refuses_while_a_migration_is_unfinished);
     RUN_TEST(done_with_nothing_to_finish_says_so);
     RUN_TEST(a_chunk_that_gates_on_the_manifest_name_loads_during_migrate);
+    RUN_TEST(a_report_records_a_migration);
+    RUN_TEST(a_report_records_every_blocker);
+    RUN_TEST(a_report_records_what_the_proof_found_different);
+    RUN_TEST(a_report_records_a_failed_proof_task);
+    RUN_TEST(a_report_tells_nothing_detected_from_an_error);
+    RUN_TEST(an_unwritable_report_stops_before_anything_is_migrated);
     GREATEST_MAIN_END();
 }

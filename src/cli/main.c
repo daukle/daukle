@@ -156,6 +156,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "daukle: %s is an option of \"migrate\" alone\n", misused);
         return 2;
     }
+    misused = fr_cli_compare_option_misused(&options);
+    if (misused != NULL) {
+        fprintf(stderr, "daukle: %s is an option of \"compare\" alone\n", misused);
+        return 2;
+    }
 
     switch (options.command) {
         case FR_CLI_VERSION:
@@ -183,6 +188,8 @@ int main(int argc, char **argv) {
             return fr_cli_init(options.init_name, options.verbose);
         case FR_CLI_MIGRATE:
             return fr_cli_migrate(&options);
+        case FR_CLI_COMPARE:
+            return fr_cli_compare(&options);
         case FR_CLI_HELP:
             if (options.help_topic != NULL) {
                 fr_cli_print_help(stdout, options.help_topic);
