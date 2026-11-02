@@ -49,6 +49,11 @@ typedef struct {
     size_t foreign_count;
     fr_blockers blockers;
     struct cJSON *manifest;
+    /* For the report only: nothing matched, the failed proof task's sentence,
+       and each comparison with every difference. */
+    int undetected;
+    char *proof_failure;
+    struct cJSON *compared;
 } fr_migrate_state;
 
 int fr_migrate_core_blocker(fr_migrate_state *state, const char *construct, const char *where,

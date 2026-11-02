@@ -3,6 +3,7 @@
 #include "cache/cache.h"
 #include "config/config_lua.h"
 #include "migrate/merge.h"
+#include "migrate/report.h"
 #include "plugin/plugins.h"
 #include "plugin/registry.h"
 #include "plugin/resolvers.h"
@@ -107,6 +108,7 @@ static int detect_plugins(fr_migrate_state *state, fr_error *err) {
         return FR_ERR;
     }
     if (state->detections.count == 0) {
+        state->undetected = 1;
         fr_error_set(err, "no catalog plugin recognised this project; pass --with <id> to name one");
         return FR_ERR;
     }
@@ -298,6 +300,8 @@ static void free_state(fr_migrate_state *state) {
     free(state->foreign);
     fr_blockers_free(&state->blockers);
     cJSON_Delete(state->manifest);
+    free(state->proof_failure);
+    cJSON_Delete(state->compared);
 }
 
 static int run_pipeline(fr_migrate_state *state, fr_migrate_outcome *out_outcome, fr_error *err) {
@@ -324,6 +328,14 @@ int fr_migrate_run(const fr_migrate_options *options, fr_migrate_outcome *out_ou
     fr_cache_set_enabled(options->use_cache);
     *out_outcome = FR_MIGRATE_BLOCKED;
     int status = run_pipeline(&state, out_outcome, err);
+    if (options->report_path != NULL) {
+        fr_error report_err;
+        if (fr_migrate_report_write(options->report_path, &state, status, *out_outcome, err,
+                                    &report_err) != FR_OK && status == FR_OK) {
+            *err = report_err;
+            status = FR_ERR;
+        }
+    }
     free_state(&state);
     return status;
 }
