@@ -33,8 +33,10 @@ static void add_differences(cJSON *record, const cJSON *entry) {
         cJSON_AddStringToObject(record, "error", compare_err.message);
         return;
     }
+    cJSON *differences = fr_proof_differences_json(&list);
+    if (differences == NULL) cJSON_AddStringToObject(record, "error", "out of memory listing the differences");
     cJSON_AddBoolToObject(record, "same", list.count == 0);
-    cJSON_AddItemToObject(record, "differences", fr_proof_differences_json(&list));
+    cJSON_AddItemToObject(record, "differences", differences);
     cJSON_AddBoolToObject(record, "truncated", list.truncated);
     fr_proof_differences_free(&list);
 }

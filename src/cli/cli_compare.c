@@ -1,5 +1,6 @@
 #include "cli/cli_internal.h"
 
+#include "cache/cache.h"
 #include "migrate/proof.h"
 #include "util/error.h"
 
@@ -45,12 +46,25 @@ static int print_json(const fr_proof_differences *list, const char *as) {
     return FR_OK;
 }
 
+/* @implNote fopen succeeds on a directory on Linux, and on tmpfs the read then sees an
+   empty file, so two directories would compare the same. */
+static const char *first_non_file(const fr_cli_options *options) {
+    if (!fr_cache_file_exists(options->compare_old)) return options->compare_old;
+    if (!fr_cache_file_exists(options->compare_new)) return options->compare_new;
+    return NULL;
+}
+
 int fr_cli_compare(const fr_cli_options *options) {
     const char *as = options->compare_as != NULL ? options->compare_as : "bytes";
     fr_proof_kind kind;
     if (fr_proof_kind_parse(as, &kind) != FR_OK) {
         fprintf(stderr, "daukle: --as takes \"bytes\" or \"archive\", not \"%s\"\n", as);
         return 2;
+    }
+    const char *not_a_file = first_non_file(options);
+    if (not_a_file != NULL) {
+        fprintf(stderr, "daukle: \"%s\" is not a file that can be compared\n", not_a_file);
+        return 1;
     }
     fr_proof_differences list;
     fr_error err;

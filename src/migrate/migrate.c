@@ -4,6 +4,7 @@
 #include "config/config_lua.h"
 #include "migrate/merge.h"
 #include "migrate/report.h"
+#include "project/region.h"
 #include "plugin/plugins.h"
 #include "plugin/registry.h"
 #include "plugin/resolvers.h"
@@ -327,13 +328,22 @@ int fr_migrate_run(const fr_migrate_options *options, fr_migrate_outcome *out_ou
     state.options = options;
     fr_cache_set_enabled(options->use_cache);
     *out_outcome = FR_MIGRATE_BLOCKED;
+    if (options->report_path != NULL && fr_file_write_text(options->report_path, "", err) != FR_OK) {
+        free_state(&state);
+        return FR_ERR;
+    }
     int status = run_pipeline(&state, out_outcome, err);
     if (options->report_path != NULL) {
         fr_error report_err;
         if (fr_migrate_report_write(options->report_path, &state, status, *out_outcome, err,
-                                    &report_err) != FR_OK && status == FR_OK) {
-            *err = report_err;
-            status = FR_ERR;
+                                    &report_err) != FR_OK) {
+            if (status == FR_OK) {
+                *err = report_err;
+                status = FR_ERR;
+            } else {
+                fprintf(stderr, "daukle migrate: the report was not written: %s\n",
+                        report_err.message);
+            }
         }
     }
     free_state(&state);

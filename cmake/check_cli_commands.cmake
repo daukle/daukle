@@ -153,6 +153,8 @@ expect_text("${printed}" "\"member\":\"c.txt\"" "daukle compare --json of two ar
 expect_text("${printed}" "\"kind\":\"only-new\"" "daukle compare --json of two archives")
 run_daukle("${compare_dir}" 0 printed compare "${compare_dir}/one.zip" "${compare_dir}/two.zip" --as archive)
 run_daukle("${compare_dir}" 1 printed compare one/a.txt absent.txt)
+run_daukle("${compare_dir}" 1 printed compare one two)
+expect_text("${printed}" "is not a file" "daukle compare of two directories")
 run_daukle("${compare_dir}" 2 printed compare one/a.txt two/a.txt --as tree)
 expect_text("${printed}" "\"tree\"" "daukle compare with an unknown --as")
 run_daukle("${project_dir}" 2 printed tasks --json)

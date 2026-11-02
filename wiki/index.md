@@ -165,15 +165,16 @@ is nothing to pin.
 
 A difference is `{ member, kind }` for an archive and `{ kind, oldSha256, newSha256 }` for two
 files, with `kind` one of `only-old`, `only-new`, `bytes`, `symlink-old` and `symlink-new`. A
-list stops at 10000 differences and sets `truncated`. A report that cannot be written turns the
-run's exit into 1.
+list stops at 10000 differences and sets `truncated`. The report's path is written first, so one
+that cannot be written stops migrate with exit 1 before anything else happens.
 
 ## Comparing two build outputs
 
 `daukle compare <old> <new> [--as bytes|archive] [--json]` compares the way a migration's proof
 does, needs no project, and lists every difference rather than the first. `--as bytes`, the
 default, compares the two files; `--as archive` compares a zip, jar or tarball by its file
-members' names and bytes, ignoring their order, directory members and timestamps. It prints
+members' names and bytes, ignoring their order, directory members and timestamps. Both sides must
+be files; a directory is refused. It prints
 one line per difference, or with `--json` one object of `same`, `as`, `differences` and
 `truncated`, the differences shaped as in the report above.
 

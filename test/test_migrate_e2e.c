@@ -640,6 +640,24 @@ TEST a_report_tells_nothing_detected_from_an_error(void) {
     PASS();
 }
 
+TEST an_unwritable_report_stops_before_anything_is_migrated(void) {
+    migrate_case test_case;
+    open_case(&test_case, "report-unwritable", "hello");
+    snprintf(test_case.report_path, sizeof test_case.report_path, "%s/absent/report.json",
+             test_case.scratch);
+    serve_stub_catalog(&test_case, FIXTURES "/plugin.lua", "faketool.conf");
+    run_case(&test_case);
+    int status = test_case.status;
+    int wrote = project_file_exists(&test_case, "daukle.toml");
+    int untouched = old_files_still_in_place(&test_case);
+    close_case(&test_case);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERT_FALSE(wrote);
+    ASSERT(untouched);
+    PASS();
+}
+
 TEST migrate_files_written_before_the_proof(void) {
     migrate_case test_case;
     open_case(&test_case, "files", "hello");
@@ -961,5 +979,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_report_records_what_the_proof_found_different);
     RUN_TEST(a_report_records_a_failed_proof_task);
     RUN_TEST(a_report_tells_nothing_detected_from_an_error);
+    RUN_TEST(an_unwritable_report_stops_before_anything_is_migrated);
     GREATEST_MAIN_END();
 }
