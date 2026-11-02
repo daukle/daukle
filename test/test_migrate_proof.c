@@ -262,6 +262,77 @@ TEST archive_timestamps_are_ignored(void) {
     PASS();
 }
 
+static int list_differences(fr_proof_kind kind, const char *old_name, const char *new_name,
+                            fr_proof_differences *out) {
+    fr_error err;
+    return fr_proof_list_differences(root, old_name, new_name, kind, out, &err);
+}
+
+TEST every_archive_difference_is_listed_in_member_order(void) {
+    const char *old_names[] = { "a.class", "b.class", "c.class" };
+    const char *old_contents[] = { "1", "2", "3" };
+    const char *new_names[] = { "d.class", "c.class", "a.class" };
+    const char *new_contents[] = { "4", "3", "changed" };
+    ASSERT(write_zip("old.zip", old_names, old_contents, 3));
+    ASSERT(write_zip("new.zip", new_names, new_contents, 3));
+
+    fr_proof_differences list = { 0 };
+    ASSERT_EQ(FR_OK, list_differences(FR_PROOF_ARCHIVE, "old.zip", "new.zip", &list));
+    ASSERT_EQ(3u, list.count);
+    ASSERT_STR_EQ("a.class", list.items[0].member);
+    ASSERT_EQ(FR_PROOF_DIFFERENT_BYTES, list.items[0].kind);
+    ASSERT_STR_EQ("b.class", list.items[1].member);
+    ASSERT_EQ(FR_PROOF_ONLY_OLD, list.items[1].kind);
+    ASSERT_STR_EQ("d.class", list.items[2].member);
+    ASSERT_EQ(FR_PROOF_ONLY_NEW, list.items[2].kind);
+    ASSERT(!list.truncated);
+    fr_proof_differences_free(&list);
+    PASS();
+}
+
+TEST equal_archives_list_no_difference(void) {
+    const char *names[] = { "a.class", "b.class" };
+    const char *contents[] = { "1", "2" };
+    const char *reversed_names[] = { "b.class", "a.class" };
+    const char *reversed_contents[] = { "2", "1" };
+    ASSERT(write_zip("old.zip", names, contents, 2));
+    ASSERT(write_zip("new.zip", reversed_names, reversed_contents, 2));
+    fr_proof_differences list = { 0 };
+    ASSERT_EQ(FR_OK, list_differences(FR_PROOF_ARCHIVE, "old.zip", "new.zip", &list));
+    ASSERT_EQ(0u, list.count);
+    fr_proof_differences_free(&list);
+    PASS();
+}
+
+TEST different_bytes_list_one_difference_with_both_digests(void) {
+    ASSERT(write_file("old.bin", "x", 1));
+    ASSERT(write_file("new.bin", "y", 1));
+    char old_digest[65];
+    fr_sha256_hex("x", 1, old_digest);
+    fr_proof_differences list = { 0 };
+    ASSERT_EQ(FR_OK, list_differences(FR_PROOF_BYTES, "old.bin", "new.bin", &list));
+    ASSERT_EQ(1u, list.count);
+    ASSERT_EQ(NULL, list.items[0].member);
+    ASSERT_EQ(FR_PROOF_DIFFERENT_BYTES, list.items[0].kind);
+    ASSERT_STR_EQ(old_digest, list.old_digest);
+    fr_proof_differences_free(&list);
+
+    ASSERT(write_file("new.bin", "x", 1));
+    ASSERT_EQ(FR_OK, list_differences(FR_PROOF_BYTES, "old.bin", "new.bin", &list));
+    ASSERT_EQ(0u, list.count);
+    fr_proof_differences_free(&list);
+    PASS();
+}
+
+TEST the_difference_kinds_have_one_spelling_each(void) {
+    ASSERT_STR_EQ("only-old", fr_proof_difference_kind_name(FR_PROOF_ONLY_OLD));
+    ASSERT_STR_EQ("only-new", fr_proof_difference_kind_name(FR_PROOF_ONLY_NEW));
+    ASSERT_STR_EQ("bytes", fr_proof_difference_kind_name(FR_PROOF_DIFFERENT_BYTES));
+    ASSERT_STR_EQ("symlink-old", fr_proof_difference_kind_name(FR_PROOF_SYMLINK_OLD));
+    ASSERT_STR_EQ("symlink-new", fr_proof_difference_kind_name(FR_PROOF_SYMLINK_NEW));
+    PASS();
+}
+
 TEST the_kind_vocabulary_is_parsed_in_one_place(void) {
     fr_proof_kind kind;
     ASSERT_EQ(FR_OK, fr_proof_kind_parse("bytes", &kind));
@@ -289,6 +360,10 @@ SUITE(migrate_proof) {
     RUN_TEST(a_missing_side_is_an_error);
     RUN_TEST(archive_timestamps_are_ignored);
     RUN_TEST(the_kind_vocabulary_is_parsed_in_one_place);
+    RUN_TEST(every_archive_difference_is_listed_in_member_order);
+    RUN_TEST(equal_archives_list_no_difference);
+    RUN_TEST(different_bytes_list_one_difference_with_both_digests);
+    RUN_TEST(the_difference_kinds_have_one_spelling_each);
 }
 
 int main(int argc, char **argv) {

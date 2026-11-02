@@ -14,6 +14,8 @@ typedef struct {
     const char *const *with;
     size_t with_count;
     int use_cache;
+    /* Where the run is written as JSON, or NULL for no report. */
+    const char *report_path;
 } fr_migrate_options;
 
 typedef enum {

@@ -15,7 +15,7 @@
    nothing to say why. */
 static const char *RESERVED_COMMANDS[] = {
     "sync", "check", "add", "config", "plugin", "clean", "tasks", "publish", "help", "init",
-    "migrate"
+    "migrate", "compare"
 };
 
 int fr_tasks_name_is_reserved(const char *name) {

@@ -613,6 +613,57 @@ TEST a_migrate_option_on_another_command_is_named(void) {
     const char *migrate[] = { "daukle", "migrate", "--catalog", "x", "--with", "stub" };
     fr_cli_options migrate_options = parse(6, migrate);
     ASSERT(fr_cli_migrate_option_misused(&migrate_options) == NULL);
+
+    const char *report[] = { "daukle", "sync", "--report", "r.json" };
+    fr_cli_options report_options = parse(4, report);
+    ASSERT_STR_EQ("--report", fr_cli_migrate_option_misused(&report_options));
+    PASS();
+}
+
+TEST migrate_report_is_parsed(void) {
+    const char *argv[] = { "daukle", "migrate", "--report", "out/r.json" };
+    fr_cli_options options = parse(4, argv);
+    ASSERT_EQ(FR_CLI_MIGRATE, options.command);
+    ASSERT_STR_EQ("out/r.json", options.report_path);
+    ASSERT(fr_cli_migrate_option_misused(&options) == NULL);
+    PASS();
+}
+
+TEST compare_takes_two_outputs_and_its_options(void) {
+    const char *argv[] = { "daukle", "compare", "--as", "archive", "a.jar", "b.jar", "--json" };
+    fr_cli_options options = parse(7, argv);
+    ASSERT_EQ(FR_CLI_COMPARE, options.command);
+    ASSERT_STR_EQ("a.jar", options.compare_old);
+    ASSERT_STR_EQ("b.jar", options.compare_new);
+    ASSERT_STR_EQ("archive", options.compare_as);
+    ASSERT_EQ(1, options.compare_json);
+    ASSERT(fr_cli_compare_option_misused(&options) == NULL);
+
+    const char *defaults[] = { "daukle", "compare", "a", "b" };
+    fr_cli_options default_options = parse(4, defaults);
+    ASSERT_EQ(FR_CLI_COMPARE, default_options.command);
+    ASSERT_EQ(NULL, default_options.compare_as);
+    ASSERT_EQ(0, default_options.compare_json);
+    PASS();
+}
+
+TEST compare_needs_exactly_two_outputs(void) {
+    const char *one[] = { "daukle", "compare", "a" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(3, one).command);
+    const char *three[] = { "daukle", "compare", "a", "b", "c" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(5, three).command);
+    const char *dangling[] = { "daukle", "compare", "a", "b", "--as" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(5, dangling).command);
+    PASS();
+}
+
+TEST a_compare_option_on_another_command_is_named(void) {
+    const char *as[] = { "daukle", "tasks", "--as", "bytes" };
+    fr_cli_options as_options = parse(4, as);
+    ASSERT_STR_EQ("--as", fr_cli_compare_option_misused(&as_options));
+    const char *json[] = { "daukle", "migrate", "--json" };
+    fr_cli_options json_options = parse(3, json);
+    ASSERT_STR_EQ("--json", fr_cli_compare_option_misused(&json_options));
     PASS();
 }
 
@@ -676,5 +727,9 @@ int main(int argc, char **argv) {
     RUN_TEST(a_seventeenth_catalog_is_usage);
     RUN_TEST(migrate_takes_no_second_word);
     RUN_TEST(a_migrate_option_on_another_command_is_named);
+    RUN_TEST(migrate_report_is_parsed);
+    RUN_TEST(compare_takes_two_outputs_and_its_options);
+    RUN_TEST(compare_needs_exactly_two_outputs);
+    RUN_TEST(a_compare_option_on_another_command_is_named);
     GREATEST_MAIN_END();
 }

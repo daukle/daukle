@@ -21,6 +21,7 @@ typedef enum {
     FR_CLI_INIT,
     FR_CLI_HELP,
     FR_CLI_MIGRATE,
+    FR_CLI_COMPARE,
     FR_CLI_USAGE
 } fr_cli_command;
 
@@ -69,6 +70,13 @@ typedef struct {
     const char *with[16];
     size_t with_count;
     int migrate_done;
+    /* --report, for migrate alone: where the run is written as JSON. */
+    const char *report_path;
+    /* compare's two outputs, and its --as and --json, for compare alone. */
+    const char *compare_old;
+    const char *compare_new;
+    const char *compare_as;
+    int compare_json;
 } fr_cli_options;
 
 void fr_cli_parse(int argc, char **argv, fr_cli_options *out);
@@ -78,6 +86,9 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out);
    error, so the usage text is printed rather than a misleading refusal. Here rather than in main.c so test_cli can pin
    it; main.c refuses the run by that name. */
 const char *fr_cli_migrate_option_misused(const fr_cli_options *options);
+
+/* The same for compare's --as and --json. */
+const char *fr_cli_compare_option_misused(const fr_cli_options *options);
 
 /* One row of the help, and the only place a command is described. The short
    usage and `daukle help <command>` are both rendered from this table, so help
