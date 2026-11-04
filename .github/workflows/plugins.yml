@@ -27,5 +27,7 @@ jobs:
         ["daukle/java", "daukle/cmake", "daukle/npm", "daukle/c", "daukle/gradle",
          "daukle/path", "daukle/github", "daukle/node", "daukle/maven",
          "daukle/lifecycle", "daukle/guide"]
+      # daukle/gradle's Windows leg alone takes 45 to 50 minutes, which the default 45 cancels.
+      timeout_minutes: 90
     secrets:
       envPAT: ${{ secrets.PAT }}
