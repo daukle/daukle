@@ -216,6 +216,19 @@ static cJSON *foreign_object(const fr_migrate_kept *kept, const cJSON *foreign) 
     return object;
 }
 
+static int refuse_a_detected_toolchain(const fr_migrate_state *state, const cJSON *translation,
+                                       const char *source, fr_error *err) {
+    const char **detected = malloc((state->kept_count + 1) * sizeof *detected);
+    if (detected == NULL) return out_of_memory(err, "listing the detected instances");
+    for (size_t index = 0; index < state->kept_count; index++) {
+        detected[index] = state->kept[index].instance;
+    }
+    int status = fr_migrate_refuse_detected_toolchain(translation, source, detected,
+                                                      state->kept_count, err);
+    free(detected);
+    return status;
+}
+
 static int translate(fr_migrate_state *state, const fr_registry *registry,
                      fr_migrate_foreign *record, fr_error *err) {
     const fr_migrate_kept *kept = &state->kept[record->kept_index];
@@ -239,7 +252,10 @@ static int translate(fr_migrate_state *state, const fr_registry *registry,
     if (status != FR_OK) return FR_ERR;
     char source[FR_MIGRATE_TEXT_SIZE];
     snprintf(source, sizeof source, "translator %s/%s", kept->tool, id);
-    return fr_migrate_check_translation(record->translation, source, &state->blockers, err);
+    if (fr_migrate_check_translation(record->translation, source, &state->blockers, err) != FR_OK) {
+        return FR_ERR;
+    }
+    return refuse_a_detected_toolchain(state, record->translation, source, err);
 }
 
 static int build_old(const fr_registry *registry, const fr_migrate_kept *kept, fr_error *err) {

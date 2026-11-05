@@ -46,6 +46,12 @@ int fr_migrate_check_run_result(const struct cJSON *result, const char *label,
 int fr_migrate_check_translation(const struct cJSON *result, const char *source,
                                  fr_blockers *blockers, fr_error *err);
 
+/* Refuses a translation naming the toolchain of an instance a detection
+   created, since core writes those keys itself. */
+int fr_migrate_refuse_detected_toolchain(const struct cJSON *result, const char *source,
+                                         const char *const *detected, size_t detected_count,
+                                         fr_error *err);
+
 /* Prints every blocker, grouped by source, to out. */
 void fr_blockers_print(const fr_blockers *blockers, FILE *out);
 

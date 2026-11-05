@@ -329,6 +329,24 @@ TEST a_compare_entry_naming_one_file_twice_is_an_error(void) {
     PASS();
 }
 
+/* daukle/npm creates one npm instance per node instance, which only works if
+   the translation may say which toolchain the instance is; on an instance a
+   detection created that key stays core's. */
+TEST a_translation_names_the_toolchain_of_an_instance_it_creates_only(void) {
+    cJSON *translation = parse("{\"manifest\":{\"toolchains\":{\"npm-web\":{\"toolchain\":\"npm\"}}}}");
+    ASSERT(translation != NULL);
+    const char *created[] = { "node-web" };
+    const char *detected[] = { "npm-web" };
+    static fr_error err;
+    ASSERT_EQ(FR_OK, fr_migrate_refuse_detected_toolchain(translation, "translator npm/npm", created,
+                                                          1, &err));
+    ASSERT_EQ(FR_ERR, fr_migrate_refuse_detected_toolchain(translation, "translator npm/npm", detected,
+                                                           1, &err));
+    ASSERTm(err.message, strstr(err.message, "toolchains.npm-web.toolchain") != NULL);
+    cJSON_Delete(translation);
+    PASS();
+}
+
 TEST a_fragment_setting_an_instance_key_core_owns_is_an_error(void) {
     const char *keys[] = { "toolchain", "dir" };
     for (size_t index = 0; index < sizeof keys / sizeof *keys; index++) {
@@ -344,9 +362,10 @@ TEST a_fragment_setting_an_instance_key_core_owns_is_an_error(void) {
 
         cJSON *translation = parse(json);
         ASSERT(translation != NULL);
-        ASSERT_EQ(FR_ERR, fr_migrate_check_translation(translation, "translator gradle/dep",
-                                                       &blockers, &err));
-        ASSERTm(err.message, strstr(err.message, "translator gradle/dep") != NULL);
+        int is_dir = strcmp(keys[index], "dir") == 0;
+        ASSERT_EQ(is_dir ? FR_ERR : FR_OK,
+                  fr_migrate_check_translation(translation, "translator gradle/dep", &blockers, &err));
+        if (is_dir) ASSERTm(err.message, strstr(err.message, "translator gradle/dep") != NULL);
         cJSON_Delete(translation);
         fr_blockers_free(&blockers);
     }
@@ -443,6 +462,7 @@ SUITE(migrate_merge) {
     RUN_TEST(malformed_list_entries_are_errors_naming_the_field);
     RUN_TEST(a_compare_entry_naming_one_file_twice_is_an_error);
     RUN_TEST(a_fragment_setting_an_instance_key_core_owns_is_an_error);
+    RUN_TEST(a_translation_names_the_toolchain_of_an_instance_it_creates_only);
     RUN_TEST(a_translation_records_blockers_and_refuses_core_keys);
     RUN_TEST(the_report_groups_blockers_by_source);
 }
