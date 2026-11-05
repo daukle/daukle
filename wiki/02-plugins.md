@@ -417,7 +417,7 @@ daukle.translator{
 }
 ```
 
-`translate` receives `{ tool, kind, id, instance, config? }` and returns `{ manifest, blockers }`,
+`translate` receives `{ tool, kind, id, instance, resolving, config? }` and returns `{ manifest, blockers }`,
 checked as above, and since api 8 optionally `files`, each confined to `daukle/<plugin id>/`, the
 directory of the plugin the translator belongs to, and written before the proof as a migrator's
 are. **A translator is process free**: `exec` and `provision` are refused by name, exactly as in a

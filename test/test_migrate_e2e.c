@@ -416,7 +416,7 @@ TEST a_translator_writes_files_in_its_own_directory(void) {
     serve_releaser_catalog(&test_case, FIXTURES "/plugin-foreign.lua", FIXTURES "/releaser-files.lua");
     run_case(&test_case);
     char *pins = project_text(&test_case, "daukle/releaser/pins.txt");
-    int written = pins != NULL && strcmp(pins, "pinned") == 0;
+    int written = pins != NULL && strcmp(pins, "pinned, resolving false") == 0;
     free(pins);
     int status = test_case.status;
     fr_migrate_outcome outcome = test_case.outcome;

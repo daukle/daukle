@@ -7,7 +7,7 @@ daukle.translator{
     return {
       manifest = { publish = { release = { from = foreign.instance } } },
       blockers = {},
-      files = { { path = "daukle/releaser/pins.txt", text = "pinned" } },
+      files = { { path = "daukle/releaser/pins.txt", text = "pinned, resolving " .. tostring(foreign.resolving) } },
     }
   end,
 }
