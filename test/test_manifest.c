@@ -50,7 +50,7 @@ TEST finds_a_module_and_its_requires(void) {
     PASS();
 }
 
-TEST leaves_an_absent_language_block_null(void) {
+TEST leaves_an_absent_plugin_block_null(void) {
     fr_manifest manifest; fr_error err;
     read_fixture("test/fixtures/producer/daukle.toml", &manifest, &err);
     const fr_module *loader = fr_project_module(&manifest.self, "loader");
@@ -68,30 +68,41 @@ TEST returns_null_for_an_unknown_module(void) {
     PASS();
 }
 
-TEST reads_a_consumer(void) {
+TEST reads_the_dependencies_of_a_toolchain(void) {
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer/daukle.toml", &manifest, &err));
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/deps/daukle.toml", &manifest, &err));
     ASSERT_EQ(1, (int) manifest.source_count);
     ASSERT_STR_EQ("forebay/basekit", manifest.sources[0].project);
     ASSERT_STR_EQ("path", manifest.sources[0].kind);
     const cJSON *path_field = cJSON_GetObjectItemCaseSensitive(manifest.sources[0].block, "path");
     ASSERT(cJSON_IsString(path_field));
     ASSERT_STR_EQ("./producer", path_field->valuestring);
-    ASSERT_EQ(1, (int) manifest.consumer_count);
-    ASSERT_STR_EQ("stub", manifest.consumers[0].id);
-    ASSERT_STR_EQ("gradle", manifest.consumers[0].language);
-    ASSERT_STR_EQ("githubImplementation", manifest.consumers[0].configuration);
-    ASSERT_EQ(1, (int) manifest.consumers[0].dependency_count);
-    ASSERT_EQ(FR_RANGE_CARET, manifest.consumers[0].dependencies[0].range.kind);
-    ASSERT_STR_EQ("ir", manifest.consumers[0].dependencies[0].modules[0]);
+    ASSERT_EQ(1, (int) manifest.toolchain_count);
+    ASSERT_STR_EQ("gradle", manifest.toolchains[0].name);
+    ASSERT_EQ(1, (int) manifest.toolchains[0].dependency_count);
+    ASSERT_STR_EQ("forebay/basekit", manifest.toolchains[0].dependencies[0].project);
+    ASSERT_EQ(FR_RANGE_CARET, manifest.toolchains[0].dependencies[0].range.kind);
+    ASSERT_STR_EQ("ir", manifest.toolchains[0].dependencies[0].modules[0]);
     fr_manifest_free(&manifest);
+    PASS();
+}
+
+TEST refuses_a_manifest_carrying_consumers_naming_toolchain_dependencies(void) {
+    cJSON *root = cJSON_Parse(
+        "{\"schema\":1,\"project\":\"forebay/x\",\"version\":\"1.0.0\","
+        "\"modules\":{},\"consumers\":[{\"id\":\"stub\",\"language\":\"gradle\"}]}");
+    ASSERT(root != NULL);
+    fr_manifest manifest; fr_error err;
+    ASSERT_EQ(FR_ERR, fr_manifest_from_document(root, "daukle.toml", &manifest, &err));
+    ASSERTm(err.message, strstr(err.message, "[[consumers]] was removed with adopted mode") != NULL);
+    ASSERTm(err.message, strstr(err.message, "[toolchains.<name>.dependencies]") != NULL);
     PASS();
 }
 
 TEST keeps_a_source_block_of_any_kind(void) {
     fr_manifest manifest;
     fr_error err;
-    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer/daukle-unknown-source.toml", &manifest, &err));
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/deps/daukle-unknown-source.toml", &manifest, &err));
 
     const fr_source *source = fr_manifest_source(&manifest, "forebay/basekit");
     ASSERT(source != NULL);
@@ -106,18 +117,6 @@ TEST keeps_a_source_block_of_any_kind(void) {
     PASS();
 }
 
-/* A language block is looked up by name in the module entry, which also holds
-   the keys the core reads. A consumer naming its language after one of those
-   would otherwise resolve to the core's own value. */
-TEST rejects_a_consumer_language_that_names_a_reserved_module_key(void) {
-    fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_ERR, read_fixture("test/fixtures/consumer-reserved-language/daukle.toml",
-                                   &manifest, &err));
-    ASSERT(strstr(err.message, "reserved") != NULL);
-    ASSERT(strstr(err.message, "requires") != NULL);
-    PASS();
-}
-
 TEST rejects_an_unknown_schema(void) {
     fr_manifest manifest; fr_error err;
     ASSERT_EQ(FR_ERR, read_fixture("test/fixtures/bad-schema/daukle.toml", &manifest, &err));
@@ -128,7 +127,7 @@ TEST rejects_an_unknown_schema(void) {
 TEST validates_a_document_built_in_memory(void) {
     cJSON *root = cJSON_Parse(
         "{\"schema\":1,\"project\":\"forebay/x\",\"version\":\"1.0.0\","
-        "\"modules\":{},\"sources\":{},\"consumers\":[]}");
+        "\"modules\":{},\"sources\":{}}");
     ASSERT(root != NULL);
     fr_manifest manifest; fr_error err;
     ASSERT_EQ(FR_OK, fr_manifest_from_document(root, "<memory>", &manifest, &err));
@@ -353,7 +352,7 @@ TEST a_misspelled_section_names_the_one_that_was_meant(void) {
 TEST every_name_the_vocabulary_defines_is_still_accepted(void) {
     const char *text =
         "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
-        "\"sources\":{},\"consumers\":[],\"toolchains\":{\"java\":\"21\"},"
+        "\"sources\":{},\"toolchains\":{\"java\":\"21\"},"
         "\"plugins\":{},\"resolvers\":{},\"publish\":{},\"tasks\":{}}";
     fr_manifest manifest; fr_error err;
     cJSON *root = cJSON_Parse(text);
@@ -507,11 +506,11 @@ int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(reads_a_producer);
     RUN_TEST(finds_a_module_and_its_requires);
-    RUN_TEST(leaves_an_absent_language_block_null);
+    RUN_TEST(leaves_an_absent_plugin_block_null);
     RUN_TEST(returns_null_for_an_unknown_module);
-    RUN_TEST(reads_a_consumer);
+    RUN_TEST(reads_the_dependencies_of_a_toolchain);
+    RUN_TEST(refuses_a_manifest_carrying_consumers_naming_toolchain_dependencies);
     RUN_TEST(keeps_a_source_block_of_any_kind);
-    RUN_TEST(rejects_a_consumer_language_that_names_a_reserved_module_key);
     RUN_TEST(rejects_an_unknown_schema);
     RUN_TEST(validates_a_document_built_in_memory);
     RUN_TEST(reports_the_origin_of_a_bad_document);

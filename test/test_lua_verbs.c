@@ -93,7 +93,7 @@ TEST registration_functions_are_always_present(void) {
     int env = lua_gettop(state);
 
     ASSERT_EQ(FR_OK, fr_lua_run_in_env(state,
-        "ok = type(daukle.source) == 'function' and type(daukle.language) == 'function'",
+        "ok = type(daukle.source) == 'function' and type(daukle.toolchain) == 'function'",
         "=t", env, &err));
     lua_getfield(state, env, "ok");
     ASSERT(lua_toboolean(state, -1));

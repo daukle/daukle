@@ -1,3 +1,3 @@
 daukle.plugin{ api = 1, uses = {} }
 
-daukle.require("lib/language")
+daukle.require("lib/source")

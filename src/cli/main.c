@@ -172,8 +172,6 @@ int main(int argc, char **argv) {
             return run_with_resolved_manifest(options.manifest_path, 0, options.use_cache, options.verbose);
         case FR_CLI_CONFIG_PRINT:
             return fr_cli_print_config(options.manifest_path, options.use_cache, options.verbose);
-        case FR_CLI_ADD:
-            return fr_cli_add_dependency(&options);
         case FR_CLI_PLUGIN_UPDATE:
             return fr_cli_plugin_update(options.plugin_label, options.verbose);
         case FR_CLI_CLEAN:

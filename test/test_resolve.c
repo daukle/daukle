@@ -74,7 +74,7 @@ static int recording_load(void *state, const char *project, const cJSON *block,
 
 TEST hands_the_source_plugin_its_own_state(void) {
     fr_manifest manifest; fr_error err;
-    read_fixture("test/fixtures/consumer/daukle.toml", &manifest, &err);
+    read_fixture("test/fixtures/deps/daukle.toml", &manifest, &err);
     fr_registry *registry = fr_registry_create();
     int own_state = 0;
     fr_source_plugin recorder = { "daukle.source/path", recording_load, &own_state };
@@ -82,7 +82,7 @@ TEST hands_the_source_plugin_its_own_state(void) {
     state_seen_by_the_source = NULL;
 
     fr_resolved *items = NULL; size_t count = 0;
-    ASSERT_EQ(FR_ERR, fr_resolve_consumer(&manifest.consumers[0], &manifest, "test/fixtures/consumer",
+    ASSERT_EQ(FR_ERR, fr_resolve_toolchain(&manifest.toolchains[0], &manifest, "test/fixtures/deps",
                                           registry, &items, &count, &err));
     ASSERT(state_seen_by_the_source == &own_state);
 
@@ -93,13 +93,13 @@ TEST hands_the_source_plugin_its_own_state(void) {
 
 TEST pulls_in_transitive_requires(void) {
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer/daukle.toml", &manifest, &err));
-    fr_registry *registry = with_path_source("test/fixtures/consumer");
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/deps/daukle.toml", &manifest, &err));
+    fr_registry *registry = with_path_source("test/fixtures/deps");
     ASSERT(registry != NULL);
 
     fr_resolved *items = NULL; size_t count = 0;
-    ASSERT_EQ(FR_OK, fr_resolve_consumer(&manifest.consumers[0], &manifest,
-                                         "test/fixtures/consumer", registry, &items, &count, &err));
+    ASSERT_EQ(FR_OK, fr_resolve_toolchain(&manifest.toolchains[0], &manifest,
+                                         "test/fixtures/deps", registry, &items, &count, &err));
     ASSERT_EQ(2, (int) count);
     ASSERT_STR_EQ("contracts", items[0].module);
     ASSERT_STR_EQ("ir", items[1].module);
@@ -112,17 +112,17 @@ TEST pulls_in_transitive_requires(void) {
     PASS();
 }
 
-TEST reports_a_module_that_has_no_block_for_the_language(void) {
+TEST reports_a_module_that_has_no_block_for_the_toolchain(void) {
     fr_manifest manifest;
     fr_error err;
-    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer/daukle-no-language-block.toml", &manifest, &err));
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/deps/daukle-no-plugin-block.toml", &manifest, &err));
 
-    fr_registry *registry = with_path_source("test/fixtures/consumer");
+    fr_registry *registry = with_path_source("test/fixtures/deps");
     ASSERT(registry != NULL);
 
     fr_resolved *resolved = NULL;
     size_t count = 0;
-    ASSERT_EQ(FR_ERR, fr_resolve_consumer(&manifest.consumers[0], &manifest, "test/fixtures/consumer",
+    ASSERT_EQ(FR_ERR, fr_resolve_toolchain(&manifest.toolchains[0], &manifest, "test/fixtures/deps",
                                           registry, &resolved, &count, &err));
     ASSERT(strstr(err.message, "\"ir\"") != NULL);
     ASSERT(strstr(err.message, "\"npm\"") != NULL);
@@ -144,7 +144,7 @@ static int resolve_fails_naming(const char *fixture_dir, const char *plugin_file
     if (registry == NULL) { fr_manifest_free(&manifest); return 0; }
 
     fr_resolved *items = NULL; size_t count = 0;
-    int refused = fr_resolve_consumer(&manifest.consumers[0], &manifest, fixture_dir, registry,
+    int refused = fr_resolve_toolchain(&manifest.toolchains[0], &manifest, fixture_dir, registry,
                                       &items, &count, &err) == FR_ERR
                   && strstr(err.message, expected) != NULL;
 
@@ -174,13 +174,13 @@ TEST a_source_may_not_set_a_finalizer(void) {
 
 TEST deduplicates_a_module_reached_twice(void) {
     fr_manifest manifest; fr_error err;
-    read_fixture("test/fixtures/consumer-dup/daukle.toml", &manifest, &err);
-    fr_registry *registry = with_path_source("test/fixtures/consumer-dup");
+    read_fixture("test/fixtures/deps-dup/daukle.toml", &manifest, &err);
+    fr_registry *registry = with_path_source("test/fixtures/deps-dup");
     ASSERT(registry != NULL);
 
     fr_resolved *items = NULL; size_t count = 0;
-    ASSERT_EQ(FR_OK, fr_resolve_consumer(&manifest.consumers[0], &manifest,
-                                         "test/fixtures/consumer-dup", registry, &items, &count, &err));
+    ASSERT_EQ(FR_OK, fr_resolve_toolchain(&manifest.toolchains[0], &manifest,
+                                         "test/fixtures/deps-dup", registry, &items, &count, &err));
     ASSERT_EQ(2, (int) count);
 
     fr_resolved_free(items, count);
@@ -191,13 +191,13 @@ TEST deduplicates_a_module_reached_twice(void) {
 
 TEST rejects_a_version_outside_the_range(void) {
     fr_manifest manifest; fr_error err;
-    read_fixture("test/fixtures/consumer-badrange/daukle.toml", &manifest, &err);
-    fr_registry *registry = with_path_source("test/fixtures/consumer-badrange");
+    read_fixture("test/fixtures/deps-badrange/daukle.toml", &manifest, &err);
+    fr_registry *registry = with_path_source("test/fixtures/deps-badrange");
     ASSERT(registry != NULL);
 
     fr_resolved *items = NULL; size_t count = 0;
-    ASSERT_EQ(FR_ERR, fr_resolve_consumer(&manifest.consumers[0], &manifest,
-                                          "test/fixtures/consumer-badrange", registry, &items, &count, &err));
+    ASSERT_EQ(FR_ERR, fr_resolve_toolchain(&manifest.toolchains[0], &manifest,
+                                          "test/fixtures/deps-badrange", registry, &items, &count, &err));
     ASSERT(strstr(err.message, "forebay/basekit") != NULL);
     ASSERT(strstr(err.message, "5.0.0") != NULL);
 
@@ -206,15 +206,15 @@ TEST rejects_a_version_outside_the_range(void) {
     PASS();
 }
 
-TEST reports_a_module_absent_from_the_language(void) {
+TEST reports_a_module_absent_from_the_toolchain(void) {
     fr_manifest manifest; fr_error err;
-    read_fixture("test/fixtures/consumer-noloader/daukle.toml", &manifest, &err);
-    fr_registry *registry = with_path_source("test/fixtures/consumer-noloader");
+    read_fixture("test/fixtures/deps-noloader/daukle.toml", &manifest, &err);
+    fr_registry *registry = with_path_source("test/fixtures/deps-noloader");
     ASSERT(registry != NULL);
 
     fr_resolved *items = NULL; size_t count = 0;
-    ASSERT_EQ(FR_ERR, fr_resolve_consumer(&manifest.consumers[0], &manifest,
-                                          "test/fixtures/consumer-noloader", registry, &items, &count, &err));
+    ASSERT_EQ(FR_ERR, fr_resolve_toolchain(&manifest.toolchains[0], &manifest,
+                                          "test/fixtures/deps-noloader", registry, &items, &count, &err));
     ASSERT(strstr(err.message, "loader") != NULL);
     ASSERT(strstr(err.message, "gradle") != NULL);
 
@@ -225,13 +225,13 @@ TEST reports_a_module_absent_from_the_language(void) {
 
 TEST reports_an_unknown_module_by_name(void) {
     fr_manifest manifest; fr_error err;
-    read_fixture("test/fixtures/consumer-unknown/daukle.toml", &manifest, &err);
-    fr_registry *registry = with_path_source("test/fixtures/consumer-unknown");
+    read_fixture("test/fixtures/deps-unknown/daukle.toml", &manifest, &err);
+    fr_registry *registry = with_path_source("test/fixtures/deps-unknown");
     ASSERT(registry != NULL);
 
     fr_resolved *items = NULL; size_t count = 0;
-    ASSERT_EQ(FR_ERR, fr_resolve_consumer(&manifest.consumers[0], &manifest,
-                                          "test/fixtures/consumer-unknown", registry, &items, &count, &err));
+    ASSERT_EQ(FR_ERR, fr_resolve_toolchain(&manifest.toolchains[0], &manifest,
+                                          "test/fixtures/deps-unknown", registry, &items, &count, &err));
     ASSERT(strstr(err.message, "nope") != NULL);
 
     without_path_source(registry);
@@ -241,13 +241,13 @@ TEST reports_an_unknown_module_by_name(void) {
 
 TEST rejects_a_project_that_does_not_match_its_source(void) {
     fr_manifest manifest; fr_error err;
-    read_fixture("test/fixtures/consumer-mismatch/daukle.toml", &manifest, &err);
-    fr_registry *registry = with_path_source("test/fixtures/consumer-mismatch");
+    read_fixture("test/fixtures/deps-mismatch/daukle.toml", &manifest, &err);
+    fr_registry *registry = with_path_source("test/fixtures/deps-mismatch");
     ASSERT(registry != NULL);
 
     fr_resolved *items = NULL; size_t count = 0;
-    ASSERT_EQ(FR_ERR, fr_resolve_consumer(&manifest.consumers[0], &manifest,
-                                          "test/fixtures/consumer-mismatch", registry, &items, &count, &err));
+    ASSERT_EQ(FR_ERR, fr_resolve_toolchain(&manifest.toolchains[0], &manifest,
+                                          "test/fixtures/deps-mismatch", registry, &items, &count, &err));
     ASSERT(strstr(err.message, "forebay/basekit") != NULL);
     ASSERT(strstr(err.message, "forebay/not-basekit") != NULL);
 
@@ -256,15 +256,15 @@ TEST rejects_a_project_that_does_not_match_its_source(void) {
     PASS();
 }
 
-TEST resolves_no_modules_for_any_language_without_looking_up_a_block(void) {
+TEST resolves_no_modules_for_any_toolchain_without_looking_up_a_block(void) {
     fr_manifest manifest; fr_error err;
-    read_fixture("test/fixtures/consumer-badlanguage/daukle.toml", &manifest, &err);
-    fr_registry *registry = with_path_source("test/fixtures/consumer-badlanguage");
+    read_fixture("test/fixtures/deps-other-plugin/daukle.toml", &manifest, &err);
+    fr_registry *registry = with_path_source("test/fixtures/deps-other-plugin");
     ASSERT(registry != NULL);
 
     fr_resolved *items = NULL; size_t count = 0;
-    ASSERT_EQ(FR_OK, fr_resolve_consumer(&manifest.consumers[0], &manifest,
-                                         "test/fixtures/consumer-badlanguage", registry, &items, &count, &err));
+    ASSERT_EQ(FR_OK, fr_resolve_toolchain(&manifest.toolchains[0], &manifest,
+                                         "test/fixtures/deps-other-plugin", registry, &items, &count, &err));
     ASSERT_EQ(0, (int) count);
 
     fr_resolved_free(items, count);
@@ -278,13 +278,13 @@ TEST resolves_no_modules_for_any_language_without_looking_up_a_block(void) {
    repair it against. */
 TEST accepts_an_empty_requires_from_a_source_plugin(void) {
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer-empty-requires/daukle.toml", &manifest, &err));
-    fr_registry *registry = with_path_source("test/fixtures/consumer-empty-requires");
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/deps-empty-requires/daukle.toml", &manifest, &err));
+    fr_registry *registry = with_path_source("test/fixtures/deps-empty-requires");
     ASSERT(registry != NULL);
 
     fr_resolved *items = NULL; size_t count = 0;
-    int status = fr_resolve_consumer(&manifest.consumers[0], &manifest,
-                                     "test/fixtures/consumer-empty-requires", registry,
+    int status = fr_resolve_toolchain(&manifest.toolchains[0], &manifest,
+                                     "test/fixtures/deps-empty-requires", registry,
                                      &items, &count, &err);
     char module[64] = "";
     if (status == FR_OK && count > 0) snprintf(module, sizeof module, "%s", items[0].module);
@@ -302,21 +302,21 @@ TEST accepts_an_empty_requires_from_a_source_plugin(void) {
     PASS();
 }
 
-TEST an_instance_reads_the_language_block_of_its_plugin(void) {
+TEST an_instance_reads_the_block_of_its_plugin(void) {
     fr_manifest manifest; fr_error err;
-    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/consumer/daukle.toml", &manifest, &err));
-    fr_registry *registry = with_path_source("test/fixtures/consumer");
+    ASSERT_EQ(FR_OK, read_fixture("test/fixtures/deps/daukle.toml", &manifest, &err));
+    fr_registry *registry = with_path_source("test/fixtures/deps");
     ASSERT(registry != NULL);
 
     fr_toolchain instance;
     memset(&instance, 0, sizeof instance);
     instance.name = "app";
     instance.plugin = "gradle";
-    instance.dependencies = manifest.consumers[0].dependencies;
-    instance.dependency_count = manifest.consumers[0].dependency_count;
+    instance.dependencies = manifest.toolchains[0].dependencies;
+    instance.dependency_count = manifest.toolchains[0].dependency_count;
 
     fr_resolved *items = NULL; size_t count = 0;
-    int status = fr_resolve_toolchain(&instance, &manifest, "test/fixtures/consumer", registry,
+    int status = fr_resolve_toolchain(&instance, &manifest, "test/fixtures/deps", registry,
                                       &items, &count, &err);
     char message[256];
     snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
@@ -338,18 +338,18 @@ GREATEST_MAIN_DEFS();
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(hands_the_source_plugin_its_own_state);
-    RUN_TEST(pulls_in_transitive_requires);    RUN_TEST(an_instance_reads_the_language_block_of_its_plugin);
+    RUN_TEST(pulls_in_transitive_requires);    RUN_TEST(an_instance_reads_the_block_of_its_plugin);
 
     RUN_TEST(accepts_an_empty_requires_from_a_source_plugin);
-    RUN_TEST(reports_a_module_that_has_no_block_for_the_language);
+    RUN_TEST(reports_a_module_that_has_no_block_for_the_toolchain);
     RUN_TEST(deduplicates_a_module_reached_twice);
     RUN_TEST(a_source_load_may_not_exec);
     RUN_TEST(a_source_load_may_not_provision);
     RUN_TEST(a_source_may_not_set_a_finalizer);
     RUN_TEST(rejects_a_version_outside_the_range);
-    RUN_TEST(reports_a_module_absent_from_the_language);
+    RUN_TEST(reports_a_module_absent_from_the_toolchain);
     RUN_TEST(reports_an_unknown_module_by_name);
     RUN_TEST(rejects_a_project_that_does_not_match_its_source);
-    RUN_TEST(resolves_no_modules_for_any_language_without_looking_up_a_block);
+    RUN_TEST(resolves_no_modules_for_any_toolchain_without_looking_up_a_block);
     GREATEST_MAIN_END();
 }

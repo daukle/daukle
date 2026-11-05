@@ -405,14 +405,15 @@ TEST one_url_pinned_to_two_digests_is_refused_naming_both(void) {
 
 static const char WOULD_REGISTER_CHUNK[] =
     "daukle.plugin{ api = 1, uses = {} }\n"
-    "daukle.language{ name = 'never-run',\n"
-    "                 apply = function(consumer, resolved, text) return text end }\n";
+    "daukle.source{ name = 'never-run',\n"
+    "               load = function(project) return { schema = 1, project = project,\n"
+    "                                                 version = '1.0.0', modules = {} } end }\n";
 static char WOULD_REGISTER_DIGEST[65];
 
 /* The invariant the whole design rests on, and the one a grep cannot prove: a
    dependency is acquired and read, never loaded. Its chunk registers a
-   language after the declaration, so a loader hiding anywhere in acquisition
-   shows up as that language reaching the registry. */
+   source after the declaration, so a loader hiding anywhere in acquisition
+   shows up as that source reaching the registry. */
 TEST a_dependencys_entry_chunk_is_never_run(void) {
     static char message[512];
     char source[512];
@@ -429,7 +430,7 @@ TEST a_dependencys_entry_chunk_is_never_run(void) {
     int registered = 1;
     if (built == FR_OK) {
         status = acquire_into(source, registry, &deps, message, sizeof message);
-        registered = fr_registry_language(registry, "daukle.language/never-run") != NULL;
+        registered = fr_registry_source(registry, "daukle.source/never-run") != NULL;
     }
     fr_plugin_deps_close(deps);
     fr_registry_destroy(registry);

@@ -7,12 +7,11 @@ version = "1.0.0"
 [sources."forebay/basekit"]
 kind = "generated"
 
-[[consumers]]
-id = "text"
-language = "plaintext"
-file = "deps.txt"
-configuration = "deps"
+[plugins]
+plaintext = "./plugins/plaintext.lua"
 
-  [consumers.dependencies."forebay/basekit"]
+[toolchains.plaintext]
+
+  [toolchains.plaintext.dependencies."forebay/basekit"]
   version = "^5.0.0"
   modules = ["ir"]

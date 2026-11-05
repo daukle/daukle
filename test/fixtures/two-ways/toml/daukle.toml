@@ -12,12 +12,8 @@ path = "./producer-languages"
 path = "./plugins/path.lua"
 npm = "./plugins/npm.lua"
 
-[[consumers]]
-id = "stub"
-language = "npm"
-file = "package.json"
-configuration = "dependencies"
+[toolchains.npm]
 
-  [consumers.dependencies."forebay/basekit"]
+  [toolchains.npm.dependencies."forebay/basekit"]
   version = "^5.0.0"
   modules = ["ir"]

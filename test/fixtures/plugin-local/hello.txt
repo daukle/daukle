@@ -1,2 +1,0 @@
-forebay/basekit/contracts
-forebay/basekit/ir

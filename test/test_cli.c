@@ -65,34 +65,18 @@ TEST reports_the_version_flag(void) {
     PASS();
 }
 
-TEST parses_an_add_command(void) {
-    const char *argv[] = { "daukle", "add", "forebay/basekit@^5.0.0", "--to", "stub", "--modules", "ir,core" };
-    fr_cli_options options = parse(7, argv);
-    ASSERT_EQ(FR_CLI_ADD, options.command);
-    ASSERT_STR_EQ("forebay/basekit@^5.0.0", options.add_spec);
-    ASSERT_STR_EQ("stub", options.add_consumer);
-    ASSERT_STR_EQ("ir,core", options.add_modules);
-    PASS();
-}
-
-TEST rejects_an_add_without_a_range(void) {
-    const char *argv[] = { "daukle", "add", "forebay/basekit", "--to", "stub" };
-    ASSERT_EQ(FR_CLI_USAGE, parse(5, argv).command);
-    PASS();
-}
-
-TEST rejects_an_add_without_a_consumer(void) {
-    const char *argv[] = { "daukle", "add", "forebay/basekit@^5.0.0" };
-    ASSERT_EQ(FR_CLI_USAGE, parse(3, argv).command);
-    PASS();
-}
-
 /* A flag-shaped next token must be read as a missing value, not consumed as
-   one: otherwise "--to --modules" would silently set the consumer to the
-   literal string "--modules" and produce a confusing downstream failure
-   instead of a usage error at the point the mistake was actually made. */
+   one: otherwise "--report --json" would silently set the report path to the
+   literal string "--json" and produce a confusing downstream failure instead
+   of a usage error at the point the mistake was actually made. */
 TEST rejects_a_flag_shaped_token_as_another_flags_value(void) {
-    const char *argv[] = { "daukle", "add", "forebay/basekit@^5.0.0", "--to", "--modules" };
+    const char *argv[] = { "daukle", "migrate", "--report", "--json" };
+    ASSERT_EQ(FR_CLI_USAGE, parse(4, argv).command);
+    PASS();
+}
+
+TEST add_is_no_longer_a_command(void) {
+    const char *argv[] = { "daukle", "add", "foo@1", "--to", "x" };
     ASSERT_EQ(FR_CLI_USAGE, parse(5, argv).command);
     PASS();
 }
@@ -494,11 +478,6 @@ TEST every_built_in_command_word_is_also_a_reserved_task_name(void) {
     ASSERT_EQ(FR_CLI_CHECK, check_options.command);
     ASSERT(fr_tasks_name_is_reserved("check"));
 
-    const char *add_argv[] = { "daukle", "add", "me/app@1.0.0", "--to", "consumer" };
-    fr_cli_options add_options = parse(5, add_argv);
-    ASSERT_EQ(FR_CLI_ADD, add_options.command);
-    ASSERT(fr_tasks_name_is_reserved("add"));
-
     const char *config_argv[] = { "daukle", "config", "print" };
     fr_cli_options config_options = parse(3, config_argv);
     ASSERT_EQ(FR_CLI_CONFIG_PRINT, config_options.command);
@@ -678,10 +657,8 @@ int main(int argc, char **argv) {
     RUN_TEST(rejects_a_second_manifest_path);
     RUN_TEST(no_command_at_all_is_usage);
     RUN_TEST(reports_the_version_flag);
-    RUN_TEST(parses_an_add_command);
-    RUN_TEST(rejects_an_add_without_a_range);
-    RUN_TEST(rejects_an_add_without_a_consumer);
     RUN_TEST(rejects_a_flag_shaped_token_as_another_flags_value);
+    RUN_TEST(add_is_no_longer_a_command);
     RUN_TEST(parses_config_print);
     RUN_TEST(parses_config_print_with_a_manifest_path);
     RUN_TEST(rejects_config_with_an_unknown_subcommand);

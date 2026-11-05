@@ -34,19 +34,22 @@ deliberate resolve, and page 4 covers it.
 
 ```toml
 [plugins]
-# only the dependency writer, and only its grant
-cmake = { resolver = "github", coordinate = "daukle/cmake@^1", modules = ["deps"] }
+# only the lint module, and only its grant
+tools = { resolver = "github", coordinate = "example/tools@^1", modules = ["lint"] }
 ```
 
 ```toml
 [plugins]
-# the toolchain AND the dependency writer
-cmake = { resolver = "github", coordinate = "daukle/cmake@^1", modules = ["main", "deps"] }
+# the plugin's main chunk AND the lint module
+tools = { resolver = "github", coordinate = "example/tools@^1", modules = ["main", "lint"] }
 ```
 
+No plugin in this organization ships a module today; the shape is core's, and the names above
+are illustrative.
+
 **Each module declares its own `daukle.plugin{}`, so each carries its own `uses` and `env`**, and
-depending on one never grants what another needs: the line above that names only `deps` gets
-`region` and not the toolchain's `exec`. `"main"` is the plugin's `plugin.lua`; any other name is
+depending on one never grants what another needs: the line above that names only `lint` gets
+the module's grant and not the main chunk's `exec`. `"main"` is the plugin's `plugin.lua`; any other name is
 `modules/<name>.lua` inside the plugin's published archive. **With no `modules` key, only
 `plugin.lua` loads**, exactly as before. The artifact is fetched and checked once, however many of
 its modules the line names, and `config print` shows a row per module as `<label>/<module>`, which
@@ -130,13 +133,12 @@ cannot start a process, and the refusal comes from daukle rather than from the p
 intentions. When you review a dependency's plugin, `uses` is the line to read first.
 
 **`exec` and `provision` are also withheld by WHEN, whatever `uses` says.** One `plugin.lua` may
-declare a source or a language beside a toolchain or a publisher, so a GitHub plugin can both
-fetch a manifest and publish a release. But a source's `load` and a language's `apply` run on every
-command, often for a dependency you did not write, so neither may start a process or provision a
-tool: the call is refused naming the phase, `daukle.exec is not available while a source loads`.
+declare a source beside a toolchain or a publisher, so a GitHub plugin can both fetch a manifest
+and publish a release. But a source's `load` runs on every command, often for a dependency you did
+not write, so it may not start a process or provision a tool: the call is refused naming the phase, `daukle.exec is not available while a source loads`.
 Call them from a task or a publish callback. A chunk's top level and a toolchain's `generate` are
 refused the same way. **A resolver may not declare either at all**, because it is acquired before
-any pin exists. A chunk that declares a source or a language beside `exec` or `provision` needs
+any pin exists. A chunk that declares a source beside `exec` or `provision` needs
 `api = 2`, which `daukle 0.8.0` is the first to provide.
 
 **And anywhere else, too: since `daukle 0.8.1` the two verbs run ONLY inside a task's `run` or a

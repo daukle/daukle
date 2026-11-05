@@ -48,28 +48,6 @@ expect_text("${printed}" "uses write" "daukle config print")
 run_daukle("${project_dir}" 0 printed plugin update)
 expect_text("${printed}" "daukle: no plugin here has a cache to clear" "daukle plugin update")
 
-set(consumer_dir "${WORK_DIR}/consumer")
-file(WRITE "${consumer_dir}/daukle.toml"
-     "schema = 1\n"
-     "project = \"forebay/x\"\n"
-     "version = \"1.0.0\"\n"
-     "\n"
-     "# the comment that must survive\n"
-     "[[consumers]]\n"
-     "id = \"stub\"\n"
-     "language = \"npm\"\n")
-
-run_daukle("${consumer_dir}" 0 printed add "forebay/other@^1.0.0" --to stub --modules "core,api")
-expect_text("${printed}" "daukle: added forebay/other@^1.0.0 to stub" "daukle add")
-file(READ "${consumer_dir}/daukle.toml" edited)
-expect_text("${edited}" "[consumers.dependencies.\"forebay/other\"]" "the manifest daukle add wrote")
-expect_text("${edited}" "\"^1.0.0\"" "the manifest daukle add wrote")
-expect_text("${edited}" "modules = [\"core\", \"api\"]" "the manifest daukle add wrote")
-expect_text("${edited}" "# the comment that must survive" "the manifest daukle add wrote")
-
-run_daukle("${consumer_dir}" 1 printed add "forebay/other@^1.0.0" --to absent)
-expect_text("${printed}" "absent" "daukle add to a missing consumer")
-
 # A published plugin is a tar, and a [plugins] path may name one, so this is
 # the whole module path end to end: a real archive, one config print row per
 # module, and plugin update taking the label that row shows (D-139).
@@ -287,4 +265,4 @@ expect_text("${printed}" "not enough memory" "a run past its Lua memory limit")
 expect_text("${printed}" "the Lua memory limit of 2000000 bytes was reached; raise it with --lua-memory-limit"
             "a run past its Lua memory limit")
 
-message(STATUS "check_cli_commands: tasks, config print, plugin update, add, migrate, init and the memory limit all ran")
+message(STATUS "check_cli_commands: tasks, config print, plugin update, migrate, init and the memory limit all ran")

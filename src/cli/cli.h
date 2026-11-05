@@ -10,7 +10,6 @@
 typedef enum {
     FR_CLI_SYNC,
     FR_CLI_CHECK,
-    FR_CLI_ADD,
     FR_CLI_CONFIG_PRINT,
     FR_CLI_PLUGIN_UPDATE,
     FR_CLI_CLEAN,
@@ -36,11 +35,6 @@ typedef struct {
     int resolving;
     long instruction_limit;
     size_t memory_limit;
-    /* Raw "project@range" text; fr_cli_parse only checks for the '@' and leaves
-       splitting to the caller, since splitting in place would write into argv. */
-    const char *add_spec;
-    const char *add_consumer;
-    const char *add_modules;
     /* NULL means every plugin, the same as omitting the word entirely. */
     const char *plugin_label;
     /* Set only when "plugin" was followed by a word other than "update", so the

@@ -2,9 +2,9 @@ daukle.plugin{ api = 1, uses = {} }
 
 local greeting = daukle.require("lib/greeting")
 
-daukle.language{
+daukle.source{
   name = greeting.name,
-  apply = function(consumer, resolved, text)
-    return greeting.render(resolved)
+  load = function(project, block, base_dir)
+    return { schema = 1, project = project, version = "1.0.0", modules = {} }
   end,
 }

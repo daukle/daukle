@@ -12,8 +12,8 @@ set(CORE_FILES
     provision/provision.c provision/provision.h exec/toolreport.c exec/toolreport.h
     util/tree.c util/tree.h plugin/plugin_report.c plugin/plugins_internal.h plugin/plugins_load.c
     lua/lua_modules.c lua/lua_modules.h config/config_lua_internal.h config/config_dispatch.c
-    config/config_dispatch_resolve.c config/config_dispatch_language.c
-    cli/cli_internal.h cli/cli_add.c cli/cli_config.c cli/cli_plugins.c cli/cli_tasks.c
+    config/config_dispatch_resolve.c
+    cli/cli_internal.h cli/cli_config.c cli/cli_plugins.c cli/cli_tasks.c
     config/manifest_internal.h config/manifest_project.c config/manifest_sections.c config/manifest_tasks.c
     archive/unpack_internal.h archive/unpack_paths.c archive/unpack_links.c
     plugin/plugin_deps_internal.h plugin/plugin_deps_acquire.c project/tasks_plan.c project/tasks_run.c
@@ -131,7 +131,7 @@ file(GLOB_RECURSE FIXTURE_LUA "${SOURCE_DIR}/test/fixtures/*.lua")
 # trusted, same as the source glob above, and a staged plugin held identical to
 # no copy at all is reported rather than skipped.
 list(LENGTH STAGED_PLUGINS STAGED_PLUGINS_COUNT)
-if(STAGED_PLUGINS_COUNT LESS 5)
+if(STAGED_PLUGINS_COUNT LESS 3)
     message(FATAL_ERROR "staged-plugin-copies: found ${STAGED_PLUGINS_COUNT} plugins under "
                         "plugins/, which is too few to be the staged set; the glob has gone stale")
 endif()

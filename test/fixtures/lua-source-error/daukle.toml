@@ -7,12 +7,11 @@ version = "1.0.0"
 [sources."forebay/basekit"]
 kind = "erroring"
 
-[[consumers]]
-id = "stub"
-language = "npm"
-file = "package.json"
-configuration = "dependencies"
+[plugins]
+stub = "./plugins/stub.lua"
 
-  [consumers.dependencies."forebay/basekit"]
+[toolchains.stub]
+
+  [toolchains.stub.dependencies."forebay/basekit"]
   version = "^5.0.0"
   modules = ["ir"]

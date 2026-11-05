@@ -1,0 +1,19 @@
+schema = 1
+project = "forebay/stub-translator"
+version = "1.2.0"
+
+[modules]
+
+[sources."forebay/basekit"]
+kind = "path"
+path = "./producer"
+
+[plugins]
+path = "./plugins/path.lua"
+gradle = "./plugins/gradle.lua"
+
+[toolchains.gradle]
+
+  [toolchains.gradle.dependencies."forebay/basekit"]
+  version = "^6.0.0"
+  modules = ["ir"]

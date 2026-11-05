@@ -132,7 +132,7 @@ static int protected_resolver_call(lua_State *state) {
         return luaL_error(state, "%s", push_err.message);
     }
 
-    /* lua_call, not lua_pcall: see protected_language_apply above. */
+    /* lua_call, not lua_pcall: this already runs inside the caller's protected frame. */
     lua_call(state, 2, 1);
 
     if (!lua_istable(state, -1)) {

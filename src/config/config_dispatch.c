@@ -131,7 +131,7 @@ static int protected_toolchain_generate(lua_State *state) {
     push_modules(state, context->modules, context->module_count);
     push_resolving(state);
 
-    /* lua_call, not lua_pcall: see protected_language_apply above. */
+    /* lua_call, not lua_pcall: this already runs inside the caller's protected frame. */
     lua_call(state, 1, 1);
 
     if (!lua_istable(state, -1)) {
@@ -350,7 +350,7 @@ static int protected_task_run(lua_State *state) {
         lua_setfield(state, -2, "publish");
     }
 
-    /* lua_call, not lua_pcall: see protected_language_apply above. */
+    /* lua_call, not lua_pcall: this already runs inside the caller's protected frame. */
     lua_call(state, 1, 0);
     return 0;
 }

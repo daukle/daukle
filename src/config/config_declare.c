@@ -13,7 +13,7 @@
 
 /* @implNote a released slot keeps whatever the declaration that used its index
    left in it, so every site that takes one zeroes it first: otherwise a
-   language reusing a task's index inherits that task's part_of and depends_on,
+   source reusing a task's index inherits that task's part_of and depends_on,
    and fr_lua_runtime_shutdown frees them a second time. */
 static fr_lua_plugin_slot plugin_slots[FR_LUA_MAX_PLUGINS];
 static size_t plugin_slot_count;
@@ -109,22 +109,8 @@ void fr_lua_set_acquiring_resolver(int acquiring) {
 }
 
 static int lua_declare_language(lua_State *state) {
-    if (chunk_declared_resolver) {
-        return luaL_error(state, "a resolver chunk declares only a resolver");
-    }
-    chunk_declared_other = 1;
-    luaL_checktype(state, 1, LUA_TTABLE);
-    fr_lua_plugin_slot *slot = NULL;
-    if (fr_lua_declare_take_slot(state, "daukle.language/", "apply", &slot) != 0 || slot == NULL) {
-        return luaL_error(state, "a language plugin could not be declared");
-    }
-
-    fr_language_plugin plugin = { slot->capability, fr_lua_dispatch_language_apply, slot };
-    fr_error err;
-    if (fr_registry_add_language(registering_into, &plugin, &err) != FR_OK) {
-        return luaL_error(state, "%s", err.message);
-    }
-    return 0;
+    return luaL_error(state, "daukle.language was removed with adopted mode in daukle 0.19.0;"
+                      " a plugin generates every file it needs from the manifest instead");
 }
 
 static int lua_declare_source(lua_State *state) {

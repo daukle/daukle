@@ -2,9 +2,9 @@ daukle.plugin{ api = 1, uses = { "env" } }
 
 local home = daukle.env("PATH")
 
-daukle.language{
+daukle.source{
   name = "brewfile",
-  apply = function(consumer, resolved, text)
-    return tostring(home ~= nil) .. "\n"
+  load = function(project, block, base_dir)
+    return { schema = 1, project = project, version = tostring(home ~= nil), modules = {} }
   end,
 }

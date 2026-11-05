@@ -223,7 +223,7 @@ int fr_lua_run_in_env_bytes(lua_State *state, const char *text, size_t length,
     return FR_OK;
 }
 
-/* A manifest reaches depth 7 (root, consumers, an entry, dependencies, a
+/* A manifest reaches depth 7 (root, toolchains, an entry, dependencies, a
    project, modules, an entry), so 64 leaves ample room while keeping both
    conversions clear of the C stack and of a table that refers to itself. */
 #define FR_LUA_MAX_DEPTH 64
