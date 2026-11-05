@@ -17,12 +17,8 @@ daukle.config = {
   modules = {},
   plugins = { greet = "./plugins/greet.lua" },
   sources = { ["forebay/basekit"] = { kind = "invented" } },
-  consumers = {
-    {
-      id = "text",
-      language = "greet",
-      file = "greet.txt",
-      configuration = "deps",
+  toolchains = {
+    greet = {
       dependencies = { ["forebay/basekit"] = { version = "^5.0.0", modules = { "ir" } } },
     },
   },

@@ -12,12 +12,8 @@ path = "./producer"
 hello = "./plugins/hello.lua"
 path = "./plugins/path.lua"
 
-[[consumers]]
-id = "text"
-language = "hello"
-file = "hello.txt"
-configuration = "deps"
+[toolchains.hello]
 
-  [consumers.dependencies."forebay/basekit"]
+  [toolchains.hello.dependencies."forebay/basekit"]
   version = "^5.0.0"
   modules = ["ir"]

@@ -307,15 +307,6 @@ TEST a_toolchain_no_plugin_provides_is_refused_naming_it(void) {
     PASS();
 }
 
-TEST one_name_in_both_modes_is_refused_naming_both(void) {
-    char message[512];
-    int refused = generate_fails_with("test/fixtures/both-modes/daukle.toml",
-                                      message, sizeof message);
-    ASSERT(refused);
-    ASSERT(strstr(message, "is declared as a toolchain and as a consumer's language") != NULL);
-    PASS();
-}
-
 TEST generation_may_not_exec(void) {
     char message[512];
     int refused = generate_fails_with("test/fixtures/generate-execs/daukle.toml",
@@ -461,7 +452,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_generated_file_naming_the_project_root_with_forward_slashes_is_refused);
 #endif
     RUN_TEST(a_toolchain_no_plugin_provides_is_refused_naming_it);
-    RUN_TEST(one_name_in_both_modes_is_refused_naming_both);
     RUN_TEST(generation_may_not_exec);
     RUN_TEST(generation_may_not_resolve_a_tool);
     RUN_TEST(an_empty_generate_table_creates_no_directory);

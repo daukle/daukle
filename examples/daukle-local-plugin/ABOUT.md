@@ -44,9 +44,7 @@ in this organization larger than this one is built that way.
 which is how every other example here names its plugins. Nothing in `banner.lua` would change.
 
 **Anything that runs a program.** This toolchain declares no task and `daukle tasks` reports that
-the project has none, because a task needs `exec` or `provision` in the chunk's `uses`. A chunk
-holding either of those may not also declare a language, which is why `daukle/node` and
-`daukle/npm` are two repositories rather than one.
+the project has none, because a task needs `exec` or `provision` in the chunk's `uses`.
 
 **A toolchain that provisions its own tool.** Downloading a compiler, verifying it against a pinned
 digest and running it is the larger half of what a real toolchain does, and none of it appears here.

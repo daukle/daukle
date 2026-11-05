@@ -7,10 +7,8 @@
 #include "config/manifest.h"
 #include "plugin/plugins.h"
 #include "plugin/registry.h"
-#include "plugin/resolve.h"
 #include "plugin/resolvers.h"
 #include "project/generate.h"
-#include "project/region.h"
 #include "util/error.h"
 
 #include <stdio.h>
@@ -30,20 +28,6 @@ static char *manifest_directory(const char *manifest_path) {
         dir[length] = '\0';
     }
     return dir;
-}
-
-static char *join_path(const char *dir, const char *file) {
-    const char *base = (dir == NULL || dir[0] == '\0') ? "." : dir;
-    size_t length = strlen(base) + 1 + strlen(file) + 1;
-    char *joined = malloc(length);
-    if (joined != NULL) snprintf(joined, length, "%s/%s", base, file);
-    return joined;
-}
-
-static void wrap_error_with_path(fr_error *err, const char *path) {
-    char original[sizeof err->message];
-    memcpy(original, err->message, sizeof original);
-    fr_error_set(err, "%s: %s", path, original);
 }
 
 int fr_sync_report_add(fr_sync_report *report, char *path, fr_error *err) {
@@ -82,72 +66,6 @@ int fr_build_registry(fr_registry **out, fr_error *err) {
     return FR_OK;
 }
 
-static int sync_consumer(const fr_consumer *consumer, const fr_manifest *manifest,
-                         const char *manifest_path, const char *manifest_dir,
-                         const fr_registry *registry, int write,
-                         fr_sync_report *report, fr_error *err) {
-    char *target_path = join_path(manifest_dir, consumer->file);
-    if (target_path == NULL) {
-        fr_error_set(err, "out of memory building the target path for consumer \"%s\"", consumer->id);
-        return FR_ERR;
-    }
-
-    fr_resolved *resolved = NULL;
-    size_t count = 0;
-    if (fr_resolve_consumer(consumer, manifest, manifest_dir, registry, &resolved, &count, err) != FR_OK) {
-        wrap_error_with_path(err, manifest_path);
-        free(target_path);
-        return FR_ERR;
-    }
-
-    char capability[256];
-    snprintf(capability, sizeof capability, "daukle.language/%s", consumer->language);
-    const fr_language_plugin *language = fr_registry_language(registry, capability);
-    if (language == NULL) {
-        fr_error_set(err, "consumer \"%s\": no plugin provides language \"%s\"; add it to [plugins] in daukle.toml",
-                    consumer->id, consumer->language);
-        fr_resolved_free(resolved, count);
-        free(target_path);
-        return FR_ERR;
-    }
-
-    char *original_text = NULL;
-    if (fr_file_read_text(target_path, &original_text, err) != FR_OK) {
-        wrap_error_with_path(err, target_path);
-        fr_resolved_free(resolved, count);
-        free(target_path);
-        return FR_ERR;
-    }
-
-    char *replaced = NULL;
-    int applied = language->apply(language->state, consumer, resolved, count,
-                                  original_text, &replaced, err);
-    fr_resolved_free(resolved, count);
-    if (applied != FR_OK) {
-        wrap_error_with_path(err, target_path);
-        free(original_text);
-        free(target_path);
-        return FR_ERR;
-    }
-
-    int result = FR_OK;
-    if (strcmp(original_text, replaced) != 0) {
-        if (write) result = fr_file_write_text(target_path, replaced, err);
-        if (result != FR_OK) {
-            wrap_error_with_path(err, target_path);
-        } else if (fr_sync_report_add(report, target_path, err) != FR_OK) {
-            result = FR_ERR;
-        } else {
-            target_path = NULL;
-        }
-    }
-
-    free(original_text);
-    free(replaced);
-    free(target_path);
-    return result;
-}
-
 int fr_session_open(const char *manifest_path, int use_cache, fr_session *out, fr_error *err) {
     memset(out, 0, sizeof *out);
     fr_cache_set_enabled(use_cache);
@@ -184,18 +102,8 @@ void fr_session_close(fr_session *session) {
 
 int fr_sync_session(const fr_session *session, int write, fr_sync_report *report, fr_error *err) {
     memset(report, 0, sizeof *report);
-    if (fr_generate(&session->manifest, session->manifest_path, session->manifest_dir,
-                    session->registry, write, report, err) != FR_OK) {
-        return FR_ERR;
-    }
-    for (size_t index = 0; index < session->manifest.consumer_count; index++) {
-        if (sync_consumer(&session->manifest.consumers[index], &session->manifest,
-                          session->manifest_path, session->manifest_dir,
-                          session->registry, write, report, err) != FR_OK) {
-            return FR_ERR;
-        }
-    }
-    return FR_OK;
+    return fr_generate(&session->manifest, session->manifest_path, session->manifest_dir,
+                       session->registry, write, report, err);
 }
 
 int fr_sync(const char *manifest_path, int write, int use_cache, fr_sync_report *report, fr_error *err) {

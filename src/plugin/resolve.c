@@ -104,7 +104,7 @@ static int builder_push(fr_resolved_builder *builder, const fr_project *project,
 
 static int resolve_dependency(const fr_dependency *dependency, const fr_manifest *manifest,
                               const char *manifest_dir, const fr_registry *registry,
-                              const char *language, fr_resolved_builder *builder, fr_error *err) {
+                              const char *block_key, fr_resolved_builder *builder, fr_error *err) {
     const fr_source *entry = fr_manifest_source(manifest, dependency->project);
     if (entry == NULL) {
         fr_error_set(err, "sources has no entry for \"%s\"", dependency->project);
@@ -162,10 +162,10 @@ static int resolve_dependency(const fr_dependency *dependency, const fr_manifest
             return FR_ERR;
         }
 
-        const cJSON *block = cJSON_GetObjectItemCaseSensitive(module->blocks, language);
+        const cJSON *block = cJSON_GetObjectItemCaseSensitive(module->blocks, block_key);
         if (!cJSON_IsObject(block)) {
             fr_error_set(err, "module \"%s\" of \"%s\" has no \"%s\" block",
-                        name, dependency->project, language);
+                        name, dependency->project, block_key);
             free(queue.items);
             fr_project_free(&project);
             return FR_ERR;
@@ -199,18 +199,18 @@ static int compare_resolved(const void *left, const void *right) {
     return strcmp(a->module, b->module);
 }
 
-int fr_resolve_consumer(const fr_consumer *consumer, const fr_manifest *manifest,
-                        const char *manifest_dir, const fr_registry *registry,
-                        fr_resolved **out, size_t *count, fr_error *err) {
+int fr_resolve_toolchain(const fr_toolchain *toolchain, const fr_manifest *manifest,
+                         const char *manifest_dir, const fr_registry *registry,
+                         fr_resolved **out, size_t *out_count, fr_error *err) {
     *out = NULL;
-    *count = 0;
+    *out_count = 0;
 
     fr_resolved_builder builder;
     memset(&builder, 0, sizeof builder);
 
-    for (size_t index = 0; index < consumer->dependency_count; index++) {
-        if (resolve_dependency(&consumer->dependencies[index], manifest, manifest_dir, registry,
-                               consumer->language, &builder, err) != FR_OK) {
+    for (size_t index = 0; index < toolchain->dependency_count; index++) {
+        if (resolve_dependency(&toolchain->dependencies[index], manifest, manifest_dir, registry,
+                               toolchain->plugin, &builder, err) != FR_OK) {
             fr_resolved_free(builder.items, builder.count);
             return FR_ERR;
         }
@@ -219,20 +219,8 @@ int fr_resolve_consumer(const fr_consumer *consumer, const fr_manifest *manifest
     if (builder.count > 1) qsort(builder.items, builder.count, sizeof *builder.items, compare_resolved);
 
     *out = builder.items;
-    *count = builder.count;
+    *out_count = builder.count;
     return FR_OK;
-}
-
-int fr_resolve_toolchain(const fr_toolchain *toolchain, const fr_manifest *manifest,
-                         const char *manifest_dir, const fr_registry *registry,
-                         fr_resolved **out, size_t *out_count, fr_error *err) {
-    fr_consumer consumer;
-    memset(&consumer, 0, sizeof consumer);
-    consumer.id = toolchain->name;
-    consumer.language = toolchain->plugin;
-    consumer.dependencies = toolchain->dependencies;
-    consumer.dependency_count = toolchain->dependency_count;
-    return fr_resolve_consumer(&consumer, manifest, manifest_dir, registry, out, out_count, err);
 }
 
 void fr_resolved_free(fr_resolved *items, size_t count) {

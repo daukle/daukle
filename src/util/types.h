@@ -38,15 +38,6 @@ typedef struct {
     size_t module_count;
 } fr_dependency;
 
-typedef struct {
-    char *id;
-    char *language;
-    char *file;
-    char *configuration;
-    fr_dependency *dependencies;
-    size_t dependency_count;
-} fr_consumer;
-
 /* name is the instance a manifest declares and every task, derived directory and
    publish "from" is keyed on; plugin is the toolchain a plugin registered, which
    is name unless the [toolchains.<name>] table says otherwise. dir is NULL for
@@ -111,8 +102,6 @@ typedef struct {
     fr_project self;
     fr_source *sources;
     size_t source_count;
-    fr_consumer *consumers;
-    size_t consumer_count;
     fr_toolchain *toolchains;
     size_t toolchain_count;
     fr_task *tasks;

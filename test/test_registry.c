@@ -21,13 +21,6 @@ static int never_loads(void *state, const char *text, const char *origin, const 
     return FR_ERR;
 }
 
-static int never_applies(void *state, const fr_consumer *consumer, const fr_resolved *resolved,
-                         size_t count, const char *original_text, char **out_text, fr_error *err) {
-    (void) state; (void) consumer; (void) resolved; (void) count;
-    (void) original_text; (void) out_text; (void) err;
-    return FR_ERR;
-}
-
 static const fr_config_plugin PRIMARY = { "daukle.config/aaa", "daukle.aaa", 0, never_loads, NULL };
 static const fr_config_plugin OVERLAY = { "daukle.config/bbb", "daukle.bbb", 1, never_loads, NULL };
 
@@ -66,27 +59,13 @@ TEST rejects_a_duplicate_capability(void) {
     PASS();
 }
 
-/* No language capability is compiled in any more, so every caller of
-   fr_registry_add_language sits behind config_lua's own "declared twice" guard
-   and nothing else asserts this branch. */
-TEST rejects_a_duplicate_language_capability(void) {
-    fr_registry *registry = fr_registry_create();
-    fr_language_plugin plugin = { "daukle.language/test", never_applies, NULL };
-    fr_error err;
-    ASSERT_EQ(FR_OK, fr_registry_add_language(registry, &plugin, &err));
-    ASSERT_EQ(FR_ERR, fr_registry_add_language(registry, &plugin, &err));
-    ASSERT_STR_EQ("capability \"daukle.language/test\" is already registered", err.message);
-    fr_registry_destroy(registry);
-    PASS();
-}
-
-TEST keeps_source_and_language_spaces_separate(void) {
+TEST keeps_source_and_toolchain_spaces_separate(void) {
     fr_registry *registry = fr_registry_create();
     int called = 0;
     fr_source_plugin plugin = { "daukle/x", fake_load, &called };
     fr_error err;
     fr_registry_add_source(registry, &plugin, &err);
-    ASSERT(fr_registry_language(registry, "daukle/x") == NULL);
+    ASSERT(fr_registry_toolchain(registry, "daukle/x") == NULL);
     fr_registry_destroy(registry);
     PASS();
 }
@@ -168,19 +147,6 @@ TEST a_toolchain_capability_cannot_be_registered_twice(void) {
     PASS();
 }
 
-TEST a_toolchain_and_a_language_may_share_a_name(void) {
-    fr_registry *registry = fr_registry_create();
-    fr_toolchain_plugin toolchain = { "daukle.toolchain/stub", stub_generate, NULL };
-    fr_error err;
-    int added_toolchain = fr_registry_add_toolchain(registry, &toolchain, &err) == FR_OK;
-    int toolchain_is_not_a_language = fr_registry_language(registry, "daukle.toolchain/stub") == NULL;
-    fr_registry_destroy(registry);
-
-    ASSERT(added_toolchain);
-    ASSERT(toolchain_is_not_a_language);
-    PASS();
-}
-
 static int never_runs(void *state, const fr_task_run_context *context, fr_error *err) {
     (void) state; (void) context; (void) err;
     return FR_ERR;
@@ -233,14 +199,12 @@ int main(int argc, char **argv) {
     RUN_TEST(returns_a_plugin_registered_under_its_capability);
     RUN_TEST(returns_null_for_an_unregistered_capability);
     RUN_TEST(rejects_a_duplicate_capability);
-    RUN_TEST(rejects_a_duplicate_language_capability);
-    RUN_TEST(keeps_source_and_language_spaces_separate);
+    RUN_TEST(keeps_source_and_toolchain_spaces_separate);
     RUN_TEST(registers_and_finds_a_config_plugin);
     RUN_TEST(rejects_a_duplicate_config_capability);
     RUN_TEST(walks_every_registered_config_plugin);
     RUN_TEST(a_toolchain_is_found_by_its_capability);
     RUN_TEST(a_toolchain_capability_cannot_be_registered_twice);
-    RUN_TEST(a_toolchain_and_a_language_may_share_a_name);
     RUN_TEST(a_task_is_found_by_its_capability);
     RUN_TEST(a_task_capability_cannot_be_registered_twice);
     RUN_TEST(every_registered_task_is_walkable);

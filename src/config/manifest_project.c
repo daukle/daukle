@@ -42,7 +42,7 @@ static int read_module(const cJSON *entry, const char *name, fr_module *out, fr_
    "[toolchain.java]" for "[toolchains.java]" used to sync clean, with no
    toolchain, no error and no warning. D-49. */
 static const char *const MANIFEST_KEYS[] = {
-    "schema", "project", "version", "modules", "sources", "consumers",
+    "schema", "project", "version", "modules", "sources",
     "toolchains", "plugins", "publish", "resolvers", "tasks"
 };
 
@@ -78,13 +78,19 @@ static int refuse_an_unknown_manifest_key(const cJSON *root, const char *file_pa
                                           fr_error *err) {
     for (const cJSON *member = root->child; member != NULL; member = member->next) {
         if (member->string == NULL || manifest_key_is_known(member->string)) continue;
+        if (strcmp(member->string, "consumers") == 0) {
+            fr_error_set(err, "\"%s\": [[consumers]] was removed with adopted mode in daukle"
+                              " 0.19.0; declare each dependency under"
+                              " [toolchains.<name>.dependencies] instead", file_path);
+            return FR_ERR;
+        }
         const char *near = a_near_miss_for(member->string);
         if (near != NULL) {
             fr_error_set(err, "\"%s\": \"%s\" is not a section daukle defines; did you mean"
                               " \"%s\"?", file_path, member->string, near);
         } else {
             fr_error_set(err, "\"%s\": \"%s\" is not a key or section daukle defines. It holds"
-                              " schema, project, version, modules, sources, consumers,"
+                              " schema, project, version, modules, sources,"
                               " toolchains, plugins, publish, resolvers and tasks",
                          file_path, member->string);
         }
