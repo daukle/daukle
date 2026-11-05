@@ -41,9 +41,10 @@ void fr_blockers_free(fr_blockers *blockers);
 int fr_migrate_check_run_result(const struct cJSON *result, const char *label,
                                 fr_blockers *blockers, fr_error *err);
 
-/* The same for a translator: manifest, blockers. */
+/* The same for a translator: manifest, blockers, and files, each confined to
+   daukle/<replacer>/, the directory of the plugin whose translator answered. */
 int fr_migrate_check_translation(const struct cJSON *result, const char *source,
-                                 fr_blockers *blockers, fr_error *err);
+                                 const char *replacer, fr_blockers *blockers, fr_error *err);
 
 /* Prints every blocker, grouped by source, to out. */
 void fr_blockers_print(const fr_blockers *blockers, FILE *out);
