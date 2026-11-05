@@ -29,13 +29,17 @@ static const cJSON *member(const cJSON *object, const char *key) {
 
 /* fr_migrate_set_instance writes these from the detection, and it must be
    their only writer: a fragment's value would otherwise win for a root
-   instance and lose for a subdirectory one. */
-static int check_instance_keys(const cJSON *manifest, const char *who, fr_error *err) {
+   instance and lose for a subdirectory one. A translation may name the
+   toolchain of an instance it creates, which no detection describes;
+   fr_migrate_refuse_detected_toolchain keeps it off a detected one. */
+static int check_instance_keys(const cJSON *manifest, const char *who, int may_name_toolchain,
+                               fr_error *err) {
     static const char *const INSTANCE_KEYS[] = { "toolchain", "dir" };
     const cJSON *instance = NULL;
     cJSON_ArrayForEach(instance, cJSON_GetObjectItemCaseSensitive(manifest, "toolchains")) {
         if (!cJSON_IsObject(instance)) continue;
-        for (size_t index = 0; index < sizeof INSTANCE_KEYS / sizeof *INSTANCE_KEYS; index++) {
+        for (size_t index = may_name_toolchain ? 1 : 0;
+             index < sizeof INSTANCE_KEYS / sizeof *INSTANCE_KEYS; index++) {
             if (cJSON_GetObjectItemCaseSensitive(instance, INSTANCE_KEYS[index]) != NULL) {
                 fr_error_set(err, "%s returned a malformed result: manifest sets toolchains.%s.%s,"
                                   " which core writes from the detection and a plugin may not",
@@ -47,7 +51,8 @@ static int check_instance_keys(const cJSON *manifest, const char *who, fr_error 
     return FR_OK;
 }
 
-static int check_manifest(const cJSON *result, const char *who, fr_error *err) {
+static int check_manifest(const cJSON *result, const char *who, int may_name_toolchain,
+                          fr_error *err) {
     const cJSON *manifest = member(result, "manifest");
     if (manifest == NULL) return FR_OK;
     if (!cJSON_IsObject(manifest)) return malformed(err, who, "manifest", "must be a table");
@@ -59,7 +64,7 @@ static int check_manifest(const cJSON *result, const char *who, fr_error *err) {
             return FR_ERR;
         }
     }
-    return check_instance_keys(manifest, who, err);
+    return check_instance_keys(manifest, who, may_name_toolchain, err);
 }
 
 static int check_foreign(const cJSON *result, const char *who, fr_error *err) {
@@ -203,6 +208,44 @@ static int check_files_below(const cJSON *files, const char *directory, const ch
     return FR_OK;
 }
 
+/* The toolchain instance of the translation's own manifest whose daukle/<instance>/ holds
+   path, or NULL when none does. */
+static const char *owning_instance(const cJSON *result, const char *path) {
+    const cJSON *manifest = member(result, "manifest");
+    const cJSON *toolchains = manifest != NULL
+        ? cJSON_GetObjectItemCaseSensitive(manifest, "toolchains") : NULL;
+    const cJSON *instance = NULL;
+    cJSON_ArrayForEach(instance, toolchains) {
+        if (instance->string != NULL && is_inside_instance_directory(path, instance->string)) {
+            return instance->string;
+        }
+    }
+    return NULL;
+}
+
+/** A translator writes files only for the toolchain instances its own manifest sets, as a
+    migrator writes them only for its own instance. */
+static int check_translation_files(const cJSON *result, const char *who, fr_error *err) {
+    const cJSON *files = member(result, "files");
+    if (files == NULL) return FR_OK;
+    if (!fr_json_is_array_or_empty_table(files)) {
+        return malformed(err, who, "files", "must be a list of { path, text } entries");
+    }
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, files) {
+        const cJSON *path = cJSON_IsObject(entry) ? cJSON_GetObjectItemCaseSensitive(entry, "path") : NULL;
+        const char *instance = is_string(path) ? owning_instance(result, path->valuestring) : NULL;
+        if (is_string(path) && instance == NULL) {
+            fr_error_set(err, "%s returned a malformed result: files path \"%s\" must be a relative"
+                              " file path below daukle/<instance>/ of a toolchain instance its"
+                              " manifest sets", who, path->valuestring);
+            return FR_ERR;
+        }
+        if (check_file_entry(entry, instance, who, err) != FR_OK) return FR_ERR;
+    }
+    return FR_OK;
+}
+
 static int check_files(const cJSON *result, const char *who, fr_error *err) {
     const cJSON *files = member(result, "files");
     if (files == NULL) return FR_OK;
@@ -276,7 +319,7 @@ int fr_migrate_check_run_result(const cJSON *result, const char *label, fr_block
     char who[256];
     snprintf(who, sizeof who, "migrator %s", label);
     if (!cJSON_IsObject(result)) return malformed(err, who, "the result", "must be a table");
-    if (check_manifest(result, who, err) != FR_OK) return FR_ERR;
+    if (check_manifest(result, who, 0, err) != FR_OK) return FR_ERR;
     if (check_foreign(result, who, err) != FR_OK) return FR_ERR;
     if (check_blockers(result, who, blockers, err) != FR_OK) return FR_ERR;
     if (check_owned(result, who, err) != FR_OK) return FR_ERR;
@@ -284,11 +327,34 @@ int fr_migrate_check_run_result(const cJSON *result, const char *label, fr_block
     return check_proof(result, who, blockers, err);
 }
 
-int fr_migrate_check_translation(const cJSON *result, const char *source, const char *replacer,
-                                 fr_blockers *blockers, fr_error *err) {
+int fr_migrate_check_translation(const cJSON *result, const char *source, fr_blockers *blockers,
+                                 fr_error *err) {
     if (!cJSON_IsObject(result)) return malformed(err, source, "the result", "must be a table");
-    if (check_manifest(result, source, err) != FR_OK) return FR_ERR;
-    const cJSON *files = member(result, "files");
-    if (files != NULL && check_files_below(files, replacer, source, err) != FR_OK) return FR_ERR;
+    if (check_manifest(result, source, 1, err) != FR_OK) return FR_ERR;
+    if (check_translation_files(result, source, err) != FR_OK) return FR_ERR;
     return check_blockers(result, source, blockers, err);
+}
+
+int fr_migrate_refuse_detected_toolchain(const cJSON *result, const char *source,
+                                         const char *const *detected, size_t detected_count,
+                                         fr_error *err) {
+    const cJSON *manifest = member(result, "manifest");
+    const cJSON *toolchains = manifest != NULL
+        ? cJSON_GetObjectItemCaseSensitive(manifest, "toolchains") : NULL;
+    const cJSON *instance = NULL;
+    cJSON_ArrayForEach(instance, toolchains) {
+        if (!cJSON_IsObject(instance)
+            || cJSON_GetObjectItemCaseSensitive(instance, "toolchain") == NULL) {
+            continue;
+        }
+        for (size_t index = 0; index < detected_count; index++) {
+            if (strcmp(instance->string, detected[index]) == 0) {
+                fr_error_set(err, "%s returned a malformed result: manifest sets toolchains.%s.toolchain,"
+                                  " an instance core writes from the detection", source,
+                             instance->string);
+                return FR_ERR;
+            }
+        }
+    }
+    return FR_OK;
 }

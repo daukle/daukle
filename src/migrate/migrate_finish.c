@@ -338,8 +338,8 @@ static int write_files_of(const cJSON *result, fr_error *err) {
 }
 
 /** The paths were checked by fr_migrate_check_run_result and
-    fr_migrate_check_translation, which confine each to daukle/<instance>/ or
-    daukle/<replacer>/, so nothing here can reach the old tool's files. */
+    fr_migrate_check_translation, which confine each to daukle/<instance>/ of an
+    instance the result describes, so nothing here can reach the old tool's files. */
 static int write_files(const fr_migrate_state *state, fr_error *err) {
     for (size_t index = 0; index < state->kept_count; index++) {
         if (write_files_of(state->kept[index].result, err) != FR_OK) return FR_ERR;
