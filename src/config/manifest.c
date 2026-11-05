@@ -34,18 +34,6 @@ static void dependency_free(fr_dependency *dependency) {
     fr_string_array_free(dependency->modules, dependency->module_count);
 }
 
-static void consumer_free(fr_consumer *consumer) {
-    if (consumer == NULL) return;
-    free(consumer->id);
-    free(consumer->language);
-    free(consumer->file);
-    free(consumer->configuration);
-    for (size_t index = 0; index < consumer->dependency_count; index++) {
-        dependency_free(&consumer->dependencies[index]);
-    }
-    free(consumer->dependencies);
-}
-
 static int manifest_from_json(const cJSON *root, const char *file_path, fr_manifest *out, fr_error *err) {
     if (fr_manifest_project_from_json(root, file_path, &out->self, err) != FR_OK) return FR_ERR;
 
@@ -68,29 +56,6 @@ static int manifest_from_json(const cJSON *root, const char *file_path, fr_manif
         cJSON_ArrayForEach(entry, sources_obj) {
             out->source_count = index + 1;
             if (fr_manifest_read_source(entry, entry->string, &out->sources[index], err) != FR_OK) return FR_ERR;
-            index++;
-        }
-    }
-
-    const cJSON *consumers_arr = cJSON_GetObjectItemCaseSensitive(root, "consumers");
-    if (consumers_arr != NULL) {
-        if (!fr_json_is_array_or_empty_table(consumers_arr)) {
-            fr_error_set(err, "%s.consumers must be an array", file_path);
-            return FR_ERR;
-        }
-        int size = cJSON_GetArraySize(consumers_arr);
-        if (size > 0) {
-            out->consumers = calloc((size_t) size, sizeof *out->consumers);
-            if (out->consumers == NULL) {
-                fr_error_set(err, "out of memory reading %s.consumers", file_path);
-                return FR_ERR;
-            }
-        }
-        size_t index = 0;
-        const cJSON *entry = NULL;
-        cJSON_ArrayForEach(entry, consumers_arr) {
-            out->consumer_count = index + 1;
-            if (fr_manifest_read_consumer(entry, index, &out->consumers[index], err) != FR_OK) return FR_ERR;
             index++;
         }
     }
@@ -231,10 +196,6 @@ void fr_manifest_free(fr_manifest *manifest) {
         source_free(&manifest->sources[index]);
     }
     free(manifest->sources);
-    for (size_t index = 0; index < manifest->consumer_count; index++) {
-        consumer_free(&manifest->consumers[index]);
-    }
-    free(manifest->consumers);
     for (size_t index = 0; index < manifest->toolchain_count; index++) {
         fr_toolchain *toolchain = &manifest->toolchains[index];
         free(toolchain->name);
@@ -263,8 +224,6 @@ void fr_manifest_free(fr_manifest *manifest) {
     free(manifest->tasks);
     manifest->sources = NULL;
     manifest->source_count = 0;
-    manifest->consumers = NULL;
-    manifest->consumer_count = 0;
     manifest->toolchains = NULL;
     manifest->toolchain_count = 0;
     manifest->publishes = NULL;

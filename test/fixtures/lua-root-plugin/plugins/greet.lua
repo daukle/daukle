@@ -1,12 +1,13 @@
 daukle.plugin{ api = 1, uses = {} }
 
-daukle.language{
+daukle.toolchain{
   name = "greet",
-  apply = function(consumer, resolved, text)
+  generate = function(toolchain)
     local lines = {}
-    for index = 1, #resolved do
-      lines[index] = "greet " .. resolved[index].project .. "/" .. resolved[index].module
+    for index = 1, #toolchain.dependencies do
+      local dependency = toolchain.dependencies[index]
+      lines[index] = "greet " .. dependency.project .. "/" .. dependency.module
     end
-    return table.concat(lines, "\n") .. "\n"
+    return { ["greet.txt"] = table.concat(lines, "\n") .. "\n" }
   end,
 }

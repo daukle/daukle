@@ -1,4 +1,4 @@
-daukle.language{
+daukle.source{
   name = string.rep("x", 200),
-  apply = function() return "" end,
+  load = function() return {} end,
 }

@@ -14,7 +14,7 @@
    this list does not would make a plugin's task of that name unreachable, with
    nothing to say why. */
 static const char *RESERVED_COMMANDS[] = {
-    "sync", "check", "add", "config", "plugin", "clean", "tasks", "publish", "help", "init",
+    "sync", "check", "config", "plugin", "clean", "tasks", "publish", "help", "init",
     "migrate", "compare"
 };
 

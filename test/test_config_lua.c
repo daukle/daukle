@@ -171,8 +171,8 @@ TEST a_script_clearing_an_object_to_an_empty_table_stays_an_object(void) {
 /* A lua manifest with no toml beneath it gets no restore_empty_arrays pass,
    because there is no original document to compare against, so its empty
    tables reach the manifest layer as empty objects. Both keys here are ones a
-   real project empties: a repository that declares no consumer yet, and a task
-   that exists to be depended on rather than to depend. See D-5. */
+   real project empties: a module that requires no other, and a task that exists
+   to be depended on rather than to depend. See D-5. */
 TEST a_lua_only_manifest_may_empty_the_arrays_it_declares(void) {
     fr_error err;
     fr_registry *registry = NULL;
@@ -182,7 +182,8 @@ TEST a_lua_only_manifest_may_empty_the_arrays_it_declares(void) {
                                      registry, &manifest, &err);
     char message[256];
     snprintf(message, sizeof message, "%s", status == FR_OK ? "" : err.message);
-    size_t consumers = status == FR_OK ? manifest.consumer_count : 1;
+    size_t requires = status == FR_OK && manifest.self.module_count == 1
+                      ? manifest.self.modules[0].requires_count : 1;
     size_t tasks = status == FR_OK ? manifest.task_count : 0;
     size_t depends = status == FR_OK && tasks == 1 ? manifest.tasks[0].depends_on_count : 1;
 
@@ -191,27 +192,27 @@ TEST a_lua_only_manifest_may_empty_the_arrays_it_declares(void) {
     fr_lua_runtime_shutdown();
 
     ASSERT_STR_EQ("", message);
-    ASSERT_EQ(0, (int) consumers);
+    ASSERT_EQ(0, (int) requires);
     ASSERT_EQ(1, (int) tasks);
     ASSERT_EQ(0, (int) depends);
     PASS();
 }
 
-TEST a_script_registers_a_language_plugin(void) {
+TEST a_script_registers_a_source_plugin(void) {
     fr_error err;
     fr_registry *registry = NULL;
     build_tracked_registry(&registry, &err);
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/lua-plugin/daukle.toml",
                                          registry, &manifest, &err));
-    ASSERT(fr_registry_language(registry, "daukle.language/plaintext") != NULL);
+    ASSERT(fr_registry_source(registry, "daukle.source/generated") != NULL);
     fr_manifest_free(&manifest);
     destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
 
-/* take_slot refuses the second declaration before fr_registry_add_language sees
+/* take_slot refuses the second declaration before fr_registry_add_source sees
    it, so this asserts the whole message: a laxer match cannot tell the two
    refusals apart, and test_registry is what covers the registry's own. */
 TEST a_script_may_not_declare_one_capability_twice(void) {
@@ -221,13 +222,13 @@ TEST a_script_may_not_declare_one_capability_twice(void) {
     fr_manifest manifest;
     ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/lua-collide/daukle.toml",
                                           registry, &manifest, &err));
-    ASSERT(strstr(err.message, "\"daukle.language/npm\" is declared twice") != NULL);
+    ASSERT(strstr(err.message, "\"daukle.source/npm\" is declared twice") != NULL);
     destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
     PASS();
 }
 
-/* Exercises lua_source_load and lua_language_apply together through a real
+/* Exercises lua_source_load and a toolchain's generate together through a real
    fr_sync, not just their registration: a source plugin's "load" must return
    a document that satisfies fr_project_parse in full (schema, project,
    version, modules), and a stack leak in either adapter would corrupt the
@@ -239,7 +240,7 @@ TEST a_script_registered_source_plugin_resolves_through_sync(void) {
     fr_sync_report_free(&report);
 
     char *deps = NULL;
-    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/lua-plugin/deps.txt", &deps, &err));
+    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/lua-plugin/build/daukle/plaintext/deps.txt", &deps, &err));
     ASSERT_STR_EQ("forebay/basekit/ir\n", deps);
     free(deps);
     PASS();
@@ -247,7 +248,7 @@ TEST a_script_registered_source_plugin_resolves_through_sync(void) {
 
 /* The fixture holds no toml beside its daukle.lua, so fr_config_find reaches the
    overlay format as the root manifest and its plugins table is the only way it can
-   name a language at all: the sandbox offers no file reading to write one inline. */
+   name a toolchain at all: the overlay surface offers no daukle.toolchain. */
 TEST a_lua_root_manifest_loads_the_plugins_it_declares(void) {
     fr_error err;
     fr_sync_report report;
@@ -255,7 +256,7 @@ TEST a_lua_root_manifest_loads_the_plugins_it_declares(void) {
     fr_sync_report_free(&report);
 
     char *greeting = NULL;
-    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/lua-root-plugin/greet.txt", &greeting, &err));
+    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/lua-root-plugin/build/daukle/greet/greet.txt", &greeting, &err));
     ASSERT_STR_EQ("greet forebay/basekit/ir\n", greeting);
     free(greeting);
     PASS();
@@ -278,36 +279,16 @@ TEST a_plugin_name_too_long_for_the_capability_buffer_is_rejected(void) {
     PASS();
 }
 
-/* lua_language_apply now runs its whole body, marshaling included, under one
-   lua_pcall so a raw Lua C API call cannot throw unprotected and abort the
-   process. This proves that protection does not change the observable
-   outcome of a script's own error: it still surfaces as a clean FR_ERR with
-   the script's message, whether the error comes from the marshaling this
-   test cannot force to fail or, as here, from the plugin's own code. */
-TEST a_language_plugin_that_raises_an_error_produces_a_clean_failure(void) {
+TEST a_toolchain_plugin_that_raises_an_error_produces_a_clean_failure(void) {
     fr_error err;
     fr_sync_report report;
     ASSERT_EQ(FR_ERR, fr_sync("test/fixtures/lua-plugin-error/daukle.toml", 1, 0, &report, &err));
-    ASSERT(strstr(err.message, "boom from a language plugin") != NULL);
-    PASS();
-}
-
-/* The guard this drives had no case at all until 2026-10-01, and was found by
-   mutating it during D-36's file split: a plugin whose apply returns anything
-   but a string reaches lua_tostring, which answers NULL for a table and for
-   nil. Without the refusal the NULL goes on to strlen. */
-TEST a_language_plugin_that_returns_a_non_string_is_refused(void) {
-    fr_error err;
-    fr_sync_report report;
-    ASSERT_EQ(FR_ERR, fr_sync("test/fixtures/lua-plugin-nonstring/daukle.toml", 1, 0,
-                              &report, &err));
-    ASSERT(strstr(err.message, "expected a string") != NULL);
-    ASSERT(strstr(err.message, "table") != NULL);
+    ASSERT(strstr(err.message, "boom from a toolchain plugin") != NULL);
     PASS();
 }
 
 /* Same proof for lua_source_load's protected frame: the source plugin's load
-   raises before fr_resolve_consumer ever reaches the language plugin. */
+   raises before the toolchain's generate is ever reached. */
 TEST a_source_plugin_that_raises_an_error_produces_a_clean_failure(void) {
     fr_error err;
     fr_sync_report report;
@@ -1486,14 +1467,14 @@ TEST a_resolver_chunk_declares_a_resolver(void) {
     PASS();
 }
 
-TEST a_resolver_chunk_may_not_also_declare_a_language(void) {
+TEST a_resolver_chunk_may_not_also_declare_a_source(void) {
     fr_error err;
     fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
         "daukle.resolver{ resolve = function(c) return { url = c } end }\n"
-        "daukle.language{ name = 'x', apply = function() return '' end }\n";
+        "daukle.source{ name = 'x', load = function() return {} end }\n";
     int status = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err);
     char message[512];
     snprintf(message, sizeof message, "%s", err.message);
@@ -1506,13 +1487,13 @@ TEST a_resolver_chunk_may_not_also_declare_a_language(void) {
     PASS();
 }
 
-TEST a_chunk_that_declared_a_language_may_not_then_declare_a_resolver(void) {
+TEST a_chunk_that_declared_a_source_may_not_then_declare_a_resolver(void) {
     fr_error err;
     fr_registry *registry = create_tracked_registry();
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
-        "daukle.language{ name = 'x', apply = function() return '' end }\n"
+        "daukle.source{ name = 'x', load = function() return {} end }\n"
         "daukle.resolver{ resolve = function(c) return { url = c } end }\n";
     int status = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err);
     char message[512];
@@ -1649,7 +1630,7 @@ TEST a_chunk_declaring_no_resolver_reports_none_declared(void) {
 
     const char *second_chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
-        "daukle.language{ name = 'x', apply = function() return '' end }\n";
+        "daukle.source{ name = 'x', load = function() return {} end }\n";
     int second_loaded = fr_lua_plugin_load(second_chunk, strlen(second_chunk), "second.lua", NULL, 0, NULL, NULL, &err) == FR_OK;
     int declared = fr_lua_resolver_declared();
 
@@ -1672,7 +1653,7 @@ TEST a_refused_resolver_chunk_reports_none_declared(void) {
     const char *chunk =
         "daukle.plugin{ api = 1, uses = {} }\n"
         "daukle.resolver{ resolve = function(c) return { url = c } end }\n"
-        "daukle.language{ name = 'x', apply = function() return '' end }\n";
+        "daukle.source{ name = 'x', load = function() return {} end }\n";
     int status = load_resolver_chunk(chunk, "r.lua", NULL, 0, &err);
     int declared = fr_lua_resolver_declared();
 
@@ -1779,24 +1760,8 @@ TEST reading_a_variable_core_does_not_use_needs_no_declaration(void) {
     PASS();
 }
 
-/* A language or a source may declare provision since D-133, which withholds
-   it from load and apply at run time instead; a resolver still may not. */
-TEST a_language_plugin_may_declare_provision(void) {
-    static char message[512];
-    fr_error err = { "" };
-    fr_registry *registry = create_tracked_registry();
-    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
-    int status = load_declaring_provision(
-        "daukle.language{ name = 'x', apply = function() return {} end }", 0, &err);
-    snprintf(message, sizeof message, "%s", err.message);
-
-    destroy_tracked_registry(registry);
-    fr_lua_runtime_shutdown();
-    ASSERT(began);
-    ASSERT_EQm(message, FR_OK, status);
-    PASS();
-}
-
+/* A source may declare provision since D-133, which withholds it from load at
+   run time instead; a resolver still may not. */
 TEST a_source_plugin_may_declare_provision(void) {
     static char message[512];
     fr_error err = { "" };
@@ -1810,6 +1775,25 @@ TEST a_source_plugin_may_declare_provision(void) {
     fr_lua_runtime_shutdown();
     ASSERT(began);
     ASSERT_EQm(message, FR_OK, status);
+    PASS();
+}
+
+TEST a_plugin_declaring_a_language_is_told_it_was_removed(void) {
+    static char message[512];
+    fr_error err = { "" };
+    fr_registry *registry = create_tracked_registry();
+    int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
+    const char *chunk =
+        "daukle.plugin{ api = 1, uses = {} }\n"
+        "daukle.language{ name = 'x', apply = function() return '' end }\n";
+    int status = fr_lua_plugin_load(chunk, strlen(chunk), "language.lua", NULL, 0, NULL, NULL, &err);
+    snprintf(message, sizeof message, "%s", err.message);
+
+    destroy_tracked_registry(registry);
+    fr_lua_runtime_shutdown();
+    ASSERT(began);
+    ASSERT_EQm(message, FR_ERR, status);
+    ASSERTm(message, strstr(message, "removed with adopted mode") != NULL);
     PASS();
 }
 
@@ -1873,9 +1857,9 @@ static int loads_fixture(const char *manifest) {
     fr_manifest parsed;
     int status = fr_config_load_file(manifest, registry, &parsed, &err);
     int registered = status == FR_OK
-                     && fr_registry_language(registry, "daukle.language/hello") != NULL;
+                     && fr_registry_source(registry, "daukle.source/hello") != NULL;
     snprintf(fixture_message, sizeof fixture_message, "%s",
-             status == FR_OK && !registered ? "the plugin registered no language" : err.message);
+             status == FR_OK && !registered ? "the plugin registered no source" : err.message);
 
     destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
@@ -1888,7 +1872,7 @@ TEST a_module_supplies_what_the_entry_chunk_requires(void) {
     PASS();
 }
 
-TEST a_module_may_declare_a_language(void) {
+TEST a_module_may_declare_a_source(void) {
     int status = loads_fixture("test/fixtures/plugin-module-declares/daukle.toml");
     ASSERT_EQm(fixture_message, FR_OK, status);
     PASS();
@@ -1921,7 +1905,7 @@ TEST a_plugin_declaring_no_uses_may_still_require(void) {
     PASS();
 }
 
-/* If the module ran twice its daukle.language would be declared twice, which an
+/* If the module ran twice its daukle.source would be declared twice, which an
    existing guard refuses: the memo is what makes this load succeed. */
 TEST a_module_required_twice_runs_once(void) {
     int status = loads_fixture("test/fixtures/plugin-module-once/daukle.toml");
@@ -1967,7 +1951,9 @@ static char xp_message[512];
 static xp_artifact xp_unservable;
 static int xp_overflowed;
 
-static const char XP_APPLY[] = "apply = function(consumer, resolved, text) return text end";
+static const char XP_LOAD[] =
+    "load = function(project) return { schema = 1, project = project, version = \"1.0.0\","
+    " modules = {} } end";
 
 static void xp_reset(void) {
     xp_count = 0;
@@ -2132,12 +2118,12 @@ static const char FOO_URL[] = "https://x/foo.tar";
 static const char GRADLE_URL[] = "https://x/gradle.lua";
 static const char MAVEN_URL[] = "https://x/maven.lua";
 
-/* The language is declared AFTER the declaration call, so it reaches the
+/* The source is declared AFTER the declaration call, so it reaches the
    registry only if the whole entry chunk ran rather than the pre-pass alone. */
 static const char JAVA_ENTRY[] =
     "daukle.plugin{ api = 1, uses = {}, exports = { \"lib/coords\" } }\n"
-    "daukle.language{ name = \"java-ran\","
-    " apply = function(consumer, resolved, text) return text end }\n";
+    "daukle.source{ name = \"java-ran\", load = function(project) return { schema = 1,"
+    " project = project, version = \"1.0.0\", modules = {} } end }\n";
 
 static const xp_artifact *xp_serve_java(const char *coords_body) {
     const char *names[] = { "lib/coords.lua" };
@@ -2152,13 +2138,13 @@ TEST a_dependent_reaches_an_exported_module(void) {
     char body[512];
     snprintf(body, sizeof body,
              "local coords = daukle.require(\"java:lib/coords\")\n"
-             "daukle.language{ name = coords.parse(), %s }\n", XP_APPLY);
+             "daukle.source{ name = coords.parse(), %s }\n", XP_LOAD);
     xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java, body));
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
     int computed = status == FR_OK
-                   && fr_registry_language(registry, "daukle.language/parsed") != NULL;
+                   && fr_registry_source(registry, "daukle.source/parsed") != NULL;
     xp_done(registry);
 
     ASSERT_EQm(xp_message, FR_OK, status);
@@ -2224,20 +2210,20 @@ TEST two_dependents_get_their_own_instance(void) {
     snprintf(body, sizeof body,
              "local coords = daukle.require(\"java:lib/coords\")\n"
              "coords.seen = true\n"
-             "daukle.language{ name = \"gradle-saw\", %s }\n", XP_APPLY);
+             "daukle.source{ name = \"gradle-saw\", %s }\n", XP_LOAD);
     xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java, body));
 
     snprintf(body, sizeof body,
              "local coords = daukle.require(\"java:lib/coords\")\n"
              "if coords.seen then error(\"the two dependents share one instance\") end\n"
-             "daukle.language{ name = \"maven-saw\", %s }\n", XP_APPLY);
+             "daukle.source{ name = \"maven-saw\", %s }\n", XP_LOAD);
     xp_serve_chunk(MAVEN_URL, xp_dependent_on("", "java", java, body));
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest_two("gradle", GRADLE_URL, "maven", MAVEN_URL), &registry);
     int both = status == FR_OK
-               && fr_registry_language(registry, "daukle.language/gradle-saw") != NULL
-               && fr_registry_language(registry, "daukle.language/maven-saw") != NULL;
+               && fr_registry_source(registry, "daukle.source/gradle-saw") != NULL
+               && fr_registry_source(registry, "daukle.source/maven-saw") != NULL;
     xp_done(registry);
 
     ASSERT_EQm(xp_message, FR_OK, status);
@@ -2267,18 +2253,18 @@ TEST a_dependencys_entry_chunk_never_runs(void) {
     xp_reset();
     const xp_artifact *java = xp_serve_java("return {}\n");
     char body[256];
-    snprintf(body, sizeof body, "daukle.language{ name = \"gradle-ran\", %s }\n", XP_APPLY);
+    snprintf(body, sizeof body, "daukle.source{ name = \"gradle-ran\", %s }\n", XP_LOAD);
     xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java, body));
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
     int dependent_ran = status == FR_OK
-                        && fr_registry_language(registry, "daukle.language/gradle-ran") != NULL;
-    int provider_ran = fr_registry_language(registry, "daukle.language/java-ran") != NULL;
+                        && fr_registry_source(registry, "daukle.source/gradle-ran") != NULL;
+    int provider_ran = fr_registry_source(registry, "daukle.source/java-ran") != NULL;
     xp_done(registry);
 
     ASSERT_EQm(xp_message, FR_OK, status);
-    ASSERTm("the dependent's own language never reached the registry", dependent_ran);
+    ASSERTm("the dependent's own source never reached the registry", dependent_ran);
     ASSERTm("the dependency's entry chunk ran", !provider_ran);
     PASS();
 }
@@ -2309,13 +2295,13 @@ TEST a_library_module_requires_against_its_own_owner(void) {
     char body[512];
     snprintf(body, sizeof body,
              "local coords = daukle.require(\"java:lib/coords\")\n"
-             "daukle.language{ name = coords.tag, %s }\n", XP_APPLY);
+             "daukle.source{ name = coords.tag, %s }\n", XP_LOAD);
     xp_serve_chunk(GRADLE_URL, xp_dependent_on("", "java", java, body));
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
     int reached = status == FR_OK
-                  && fr_registry_language(registry, "daukle.language/from-foo") != NULL;
+                  && fr_registry_source(registry, "daukle.source/from-foo") != NULL;
     xp_done(registry);
 
     ASSERT_EQm(xp_message, FR_OK, status);
@@ -2342,7 +2328,7 @@ TEST a_provider_that_is_also_a_root_plugin_still_serves_a_bare_instance(void) {
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest_two("java", JAVA_URL, "gradle", GRADLE_URL), &registry);
-    int provider_ran = fr_registry_language(registry, "daukle.language/java-ran") != NULL;
+    int provider_ran = fr_registry_source(registry, "daukle.source/java-ran") != NULL;
     xp_done(registry);
 
     ASSERTm("the provider's own entry chunk never ran", provider_ran);
@@ -2388,13 +2374,13 @@ TEST one_dependent_gets_one_copy_of_a_module_per_artifact(void) {
              "local other = daukle.require(\"foo:lib/counter\")\n"
              "if direct.n ~= 1 then error(\"two paths gave two instances\") end\n"
              "if other.tag ~= \"foo\" then error(\"two artifacts shared one instance\") end\n"
-             "daukle.language{ name = \"one-copy\", %s }\n", XP_APPLY);
+             "daukle.source{ name = \"one-copy\", %s }\n", XP_LOAD);
     xp_serve_chunk(GRADLE_URL, xp_dependent("", requires_both, body));
 
     fr_registry *registry = NULL;
     int status = xp_loads(xp_manifest("gradle", GRADLE_URL), &registry);
     int held = status == FR_OK
-               && fr_registry_language(registry, "daukle.language/one-copy") != NULL;
+               && fr_registry_source(registry, "daukle.source/one-copy") != NULL;
     xp_done(registry);
 
     ASSERT_EQm(xp_message, FR_OK, status);
@@ -2734,8 +2720,6 @@ TEST a_publisher_reaches_the_registry_under_the_publish_prefix(void) {
 }
 
 TEST a_publisher_may_declare_exec(void) {
-    /* The grant itself: the same chunk declaring a source or a language is refused
-       outright for having declared exec. */
     fr_registry *registry = create_tracked_registry();
     fr_error err;
     int began = fr_lua_runtime_begin(".", registry, &err) == FR_OK;
@@ -2888,13 +2872,12 @@ int main(int argc, char **argv) {
     RUN_TEST(a_script_clearing_an_array_to_an_empty_table_still_yields_an_array);
     RUN_TEST(a_script_clearing_an_object_to_an_empty_table_stays_an_object);
     RUN_TEST(a_lua_only_manifest_may_empty_the_arrays_it_declares);
-    RUN_TEST(a_script_registers_a_language_plugin);
+    RUN_TEST(a_script_registers_a_source_plugin);
     RUN_TEST(a_script_may_not_declare_one_capability_twice);
     RUN_TEST(a_script_registered_source_plugin_resolves_through_sync);
     RUN_TEST(a_lua_root_manifest_loads_the_plugins_it_declares);
     RUN_TEST(a_plugin_name_too_long_for_the_capability_buffer_is_rejected);
-    RUN_TEST(a_language_plugin_that_raises_an_error_produces_a_clean_failure);
-    RUN_TEST(a_language_plugin_that_returns_a_non_string_is_refused);
+    RUN_TEST(a_toolchain_plugin_that_raises_an_error_produces_a_clean_failure);
     RUN_TEST(reading_an_undeclared_core_credential_is_refused);
     RUN_TEST(reading_a_declared_core_credential_is_allowed);
     RUN_TEST(reading_a_variable_core_does_not_use_needs_no_declaration);
@@ -2948,8 +2931,8 @@ int main(int argc, char **argv) {
     RUN_TEST(a_hostile_index_metatable_on_the_toolchain_table_is_never_consulted);
     RUN_TEST(a_chunk_not_acquired_as_a_resolver_may_not_declare_one);
     RUN_TEST(a_resolver_chunk_declares_a_resolver);
-    RUN_TEST(a_resolver_chunk_may_not_also_declare_a_language);
-    RUN_TEST(a_chunk_that_declared_a_language_may_not_then_declare_a_resolver);
+    RUN_TEST(a_resolver_chunk_may_not_also_declare_a_source);
+    RUN_TEST(a_chunk_that_declared_a_source_may_not_then_declare_a_resolver);
     RUN_TEST(a_resolver_may_not_declare_exec);
     RUN_TEST(a_resolver_may_not_declare_tool);
     RUN_TEST(a_resolver_needs_a_resolve_function);
@@ -2957,12 +2940,12 @@ int main(int argc, char **argv) {
     RUN_TEST(a_hostile_metatable_returning_a_function_is_never_used_as_resolve);
     RUN_TEST(a_chunk_declaring_no_resolver_reports_none_declared);
     RUN_TEST(a_refused_resolver_chunk_reports_none_declared);
-    RUN_TEST(a_language_plugin_may_declare_provision);
     RUN_TEST(a_source_plugin_may_declare_provision);
+    RUN_TEST(a_plugin_declaring_a_language_is_told_it_was_removed);
     RUN_TEST(a_resolver_plugin_declaring_provision_is_refused);
     RUN_TEST(a_toolchain_plugin_declaring_provision_loads);
     RUN_TEST(a_module_supplies_what_the_entry_chunk_requires);
-    RUN_TEST(a_module_may_declare_a_language);
+    RUN_TEST(a_module_may_declare_a_source);
     RUN_TEST(a_module_may_not_use_a_verb_the_plugin_did_not_declare);
     RUN_TEST(daukle_require_before_daukle_plugin_is_refused);
     RUN_TEST(a_plugin_declaring_no_uses_may_still_require);

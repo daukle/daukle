@@ -9,19 +9,6 @@
 #include <string.h>
 #include <stdio.h>
 
-/* A module entry carries its language blocks beside the keys the core reads
-   from that same entry, so a language may not be named after one: the lookup
-   would find the core's own value instead of a language block. */
-static const char *RESERVED_MODULE_KEYS[] = { "requires" };
-
-static int is_reserved_module_key(const char *name) {
-    size_t count = sizeof RESERVED_MODULE_KEYS / sizeof RESERVED_MODULE_KEYS[0];
-    for (size_t index = 0; index < count; index++) {
-        if (strcmp(RESERVED_MODULE_KEYS[index], name) == 0) return 1;
-    }
-    return 0;
-}
-
 int fr_manifest_read_source(const cJSON *entry, const char *project_name, fr_source *out, fr_error *err) {
     memset(out, 0, sizeof *out);
     char path[256];
@@ -40,11 +27,11 @@ int fr_manifest_read_source(const cJSON *entry, const char *project_name, fr_sou
     return FR_OK;
 }
 
-static int read_dependency(const cJSON *entry, const char *project_name, const char *consumer_path,
+static int read_dependency(const cJSON *entry, const char *project_name, const char *owner_path,
                            fr_dependency *out, fr_error *err) {
     memset(out, 0, sizeof *out);
     char path[320];
-    snprintf(path, sizeof path, "%s.dependencies.%s", consumer_path, project_name);
+    snprintf(path, sizeof path, "%s.dependencies.%s", owner_path, project_name);
 
     out->project = fr_manifest_duplicate(project_name);
     if (out->project == NULL) {
@@ -56,70 +43,6 @@ static int read_dependency(const cJSON *entry, const char *project_name, const c
     if (fr_range_parse(version_text, &out->range, err) != FR_OK) return FR_ERR;
     if (fr_json_array_of_strings(entry, "modules", path, &out->modules, &out->module_count, err) != FR_OK) {
         return FR_ERR;
-    }
-    return FR_OK;
-}
-
-int fr_manifest_read_consumer(const cJSON *entry, size_t consumer_index, fr_consumer *out, fr_error *err) {
-    memset(out, 0, sizeof *out);
-    char path[64];
-    snprintf(path, sizeof path, "consumers[%zu]", consumer_index);
-
-    const char *id = NULL;
-    if (fr_json_string(entry, "id", path, &id, err) != FR_OK) return FR_ERR;
-    out->id = fr_manifest_duplicate(id);
-    if (out->id == NULL) {
-        fr_error_set(err, "out of memory reading %s.id", path);
-        return FR_ERR;
-    }
-
-    const char *language = NULL;
-    if (fr_json_string(entry, "language", path, &language, err) != FR_OK) return FR_ERR;
-    if (is_reserved_module_key(language)) {
-        fr_error_set(err, "%s.language \"%s\" is a reserved module key", path, language);
-        return FR_ERR;
-    }
-    out->language = fr_manifest_duplicate(language);
-    if (out->language == NULL) {
-        fr_error_set(err, "out of memory reading %s.language", path);
-        return FR_ERR;
-    }
-
-    const char *file_name = NULL;
-    if (fr_json_string(entry, "file", path, &file_name, err) != FR_OK) return FR_ERR;
-    out->file = fr_manifest_duplicate(file_name);
-    if (out->file == NULL) {
-        fr_error_set(err, "out of memory reading %s.file", path);
-        return FR_ERR;
-    }
-
-    const char *configuration = NULL;
-    if (fr_json_string(entry, "configuration", path, &configuration, err) != FR_OK) return FR_ERR;
-    out->configuration = fr_manifest_duplicate(configuration);
-    if (out->configuration == NULL) {
-        fr_error_set(err, "out of memory reading %s.configuration", path);
-        return FR_ERR;
-    }
-
-    const cJSON *dependencies_obj = NULL;
-    if (fr_json_object(entry, "dependencies", path, &dependencies_obj, err) != FR_OK) return FR_ERR;
-
-    int size = cJSON_GetArraySize(dependencies_obj);
-    if (size > 0) {
-        out->dependencies = calloc((size_t) size, sizeof *out->dependencies);
-        if (out->dependencies == NULL) {
-            fr_error_set(err, "out of memory reading %s.dependencies", path);
-            return FR_ERR;
-        }
-    }
-    size_t index = 0;
-    const cJSON *dependency_entry = NULL;
-    cJSON_ArrayForEach(dependency_entry, dependencies_obj) {
-        out->dependency_count = index + 1;
-        if (read_dependency(dependency_entry, dependency_entry->string, path, &out->dependencies[index], err) != FR_OK) {
-            return FR_ERR;
-        }
-        index++;
     }
     return FR_OK;
 }

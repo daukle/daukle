@@ -1,2 +1,2 @@
-daukle.language{ name = "npm", apply = function() return "" end }
-daukle.language{ name = "npm", apply = function() return "" end }
+daukle.source{ name = "npm", load = function() return {} end }
+daukle.source{ name = "npm", load = function() return {} end }

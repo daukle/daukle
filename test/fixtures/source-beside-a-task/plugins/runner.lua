@@ -7,13 +7,13 @@ daukle.source{
   end,
 }
 
-daukle.language{
-  name = "passthrough",
-  apply = function(consumer, resolved, text) return text end,
+daukle.toolchain{
+  name = "runner",
+  generate = function() return {} end,
 }
 
 daukle.toolchain{
-  name = "runner",
+  name = "loader",
   generate = function() return {} end,
 }
 

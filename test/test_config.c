@@ -21,7 +21,7 @@ TEST loads_a_toml_manifest_through_the_seam(void) {
     fr_registry *registry = NULL;
     ASSERT_EQ(FR_OK, fr_build_registry(&registry, &err));
     fr_manifest manifest;
-    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle.toml", registry, &manifest, &err));
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/deps/daukle.toml", registry, &manifest, &err));
     ASSERT_STR_EQ("forebay/stub-translator", manifest.self.project);
     fr_manifest_free(&manifest);
     fr_registry_destroy(registry);
@@ -33,7 +33,7 @@ TEST rejects_a_file_no_format_claims(void) {
     fr_registry *registry = NULL;
     fr_build_registry(&registry, &err);
     fr_manifest manifest;
-    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/consumer/daukle.xyz", registry, &manifest, &err));
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/deps/daukle.xyz", registry, &manifest, &err));
     ASSERT(strstr(err.message, "reads \"xyz\"") != NULL);
     ASSERT(strstr(err.message, "daukle.toml") != NULL);
     fr_registry_destroy(registry);
@@ -47,7 +47,7 @@ TEST rejects_a_json_manifest_naming_the_formats_it_reads(void) {
     fr_registry *registry = NULL;
     fr_build_registry(&registry, &err);
     fr_manifest manifest;
-    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/consumer/daukle.json", registry, &manifest, &err));
+    ASSERT_EQ(FR_ERR, fr_config_load_file("test/fixtures/deps/daukle.json", registry, &manifest, &err));
     ASSERT(strstr(err.message, "reads \"json\"") != NULL);
     ASSERT(strstr(err.message, "daukle.toml") != NULL);
     ASSERT(strstr(err.message, "daukle.lua") != NULL);

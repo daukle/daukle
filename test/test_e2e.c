@@ -13,72 +13,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void reset_from_pristine(const char *pristine_path, const char *working_path) {
-    fr_error err;
-    char *text = NULL;
-    fr_file_read_text(pristine_path, &text, &err);
-    fr_file_write_text(working_path, text, &err);
-    free(text);
-}
-
-static void reset_fixtures(void) {
-    reset_from_pristine("test/fixtures/live/stub-translator/stub/build.gradle.pristine",
-                        "test/fixtures/live/stub-translator/stub/build.gradle");
-    reset_from_pristine("test/fixtures/live/stub-translator/teavm-stub/build.gradle.pristine",
-                        "test/fixtures/live/stub-translator/teavm-stub/build.gradle");
-}
-
-TEST reproduces_both_real_consumers(void) {
-    reset_fixtures();
-    fr_sync_report report; fr_error err;
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.toml", 1, 1, &report, &err));
-    ASSERT_EQ(2, (int) report.count);
-    fr_sync_report_free(&report);
-
-    char *stub = NULL;
-    fr_file_read_text("test/fixtures/live/stub-translator/stub/build.gradle", &stub, &err);
-    ASSERT(strstr(stub, "githubImplementation \"forebay:basekit:5.0.0:ir\"") != NULL);
-    free(stub);
-
-    char *teavm = NULL;
-    fr_file_read_text("test/fixtures/live/stub-translator/teavm-stub/build.gradle", &teavm, &err);
-    ASSERT(strstr(teavm, "githubImplementation \"forebay:basekit:5.0.0:ir\"") != NULL);
-    free(teavm);
-    reset_fixtures();
-    PASS();
-}
-
-TEST the_second_run_changes_nothing(void) {
-    reset_fixtures();
-    fr_sync_report report; fr_error err;
-    fr_sync("test/fixtures/live/stub-translator/daukle.toml", 1, 1, &report, &err);
-    fr_sync_report_free(&report);
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.toml", 0, 1, &report, &err));
-    ASSERT_EQ(0, (int) report.count);
-    fr_sync_report_free(&report);
-    reset_fixtures();
-    PASS();
-}
-
-TEST check_names_every_drifted_consumer(void) {
-    reset_fixtures();
-    fr_sync_report report; fr_error err;
-    ASSERT_EQ(FR_OK, fr_sync("test/fixtures/live/stub-translator/daukle.toml", 0, 1, &report, &err));
-    ASSERT_EQ(2, (int) report.count);
-    ASSERT(strstr(report.files[0], "/stub/build.gradle") != NULL);
-    ASSERT(strstr(report.files[1], "teavm-stub/build.gradle") != NULL);
-    fr_sync_report_free(&report);
-    reset_fixtures();
-    PASS();
-}
-
-static const char *BUILD_TEMPLATE =
-    "dependencies {\n"
-    "    // daukle:begin\n"
-    "    // daukle:end\n"
-    "    testImplementation \"junit\"\n"
-    "}\n";
-
 static const char *e2e_temp_root(void) {
     static char root[512];
     snprintf(root, sizeof root, "%s/daukle_test_e2e_github_%d",
@@ -106,67 +40,43 @@ static void remove_e2e_tree(void) {
     fr_test_remove_tree(e2e_cache_root());
 }
 
-/* Two isolated copies of the same consumer, one resolved through a "path"
-   source and one through "github-releases", each writing its own copy of
-   the build file so neither run can be tainted by, or mutate, the other's
+/* Two isolated copies of the same project, one resolved through a "path"
+   source and one through "github-releases", each generating into its own
+   derived directory so neither run can be tainted by, or mutate, the other's
    state or the checked-in fixtures. The producer and each side's plugin copy
    sit inside the manifest's own directory, because neither daukle.read nor a
    local plugin path may climb out of it. */
 static void setup_e2e_tree(void) {
     const char *root = e2e_temp_root();
     char path[700];
-    fr_error err;
 
     fr_test_make_directory(root);
     snprintf(path, sizeof path, "%s/path", root); fr_test_make_directory(path);
-    snprintf(path, sizeof path, "%s/path/consumer", root); fr_test_make_directory(path);
-    snprintf(path, sizeof path, "%s/path/consumer/producer", root); fr_test_make_directory(path);
-    snprintf(path, sizeof path, "%s/path/consumer/plugins", root); fr_test_make_directory(path);
+    snprintf(path, sizeof path, "%s/path/producer", root); fr_test_make_directory(path);
+    snprintf(path, sizeof path, "%s/path/plugins", root); fr_test_make_directory(path);
     snprintf(path, sizeof path, "%s/github", root); fr_test_make_directory(path);
     snprintf(path, sizeof path, "%s/github/plugins", root); fr_test_make_directory(path);
 
-    snprintf(path, sizeof path, "%s/path/consumer/daukle.toml", root);
-    copy_text_file("test/fixtures/consumer/daukle.toml", path);
+    snprintf(path, sizeof path, "%s/path/daukle.toml", root);
+    copy_text_file("test/fixtures/deps/daukle.toml", path);
 
-    snprintf(path, sizeof path, "%s/path/consumer/build.gradle", root);
-    fr_file_write_text(path, BUILD_TEMPLATE, &err);
+    snprintf(path, sizeof path, "%s/path/producer/daukle.toml", root);
+    copy_text_file("test/fixtures/deps/producer/daukle.toml", path);
 
-    snprintf(path, sizeof path, "%s/path/consumer/producer/daukle.toml", root);
-    copy_text_file("test/fixtures/consumer/producer/daukle.toml", path);
+    snprintf(path, sizeof path, "%s/path/plugins/path.lua", root);
+    copy_text_file("test/fixtures/deps/plugins/path.lua", path);
 
-    snprintf(path, sizeof path, "%s/path/consumer/plugins/path.lua", root);
-    copy_text_file("test/fixtures/consumer/plugins/path.lua", path);
-
-    snprintf(path, sizeof path, "%s/path/consumer/plugins/gradle.lua", root);
-    copy_text_file("test/fixtures/consumer/plugins/gradle.lua", path);
+    snprintf(path, sizeof path, "%s/path/plugins/gradle.lua", root);
+    copy_text_file("test/fixtures/deps/plugins/gradle.lua", path);
 
     snprintf(path, sizeof path, "%s/github/daukle-github.toml", root);
-    copy_text_file("test/fixtures/consumer/daukle-github.toml", path);
+    copy_text_file("test/fixtures/deps/daukle-github.toml", path);
 
     snprintf(path, sizeof path, "%s/github/plugins/github.lua", root);
-    copy_text_file("test/fixtures/consumer/plugins/github.lua", path);
+    copy_text_file("test/fixtures/deps/plugins/github.lua", path);
 
     snprintf(path, sizeof path, "%s/github/plugins/gradle.lua", root);
-    copy_text_file("test/fixtures/consumer/plugins/gradle.lua", path);
-
-    snprintf(path, sizeof path, "%s/github/build.gradle", root);
-    fr_file_write_text(path, BUILD_TEMPLATE, &err);
-}
-
-static char *extract_generated_region(const char *text) {
-    const char *begin = strstr(text, "// daukle:begin");
-    if (begin == NULL) return NULL;
-    const char *end = strstr(begin, "// daukle:end");
-    if (end == NULL) return NULL;
-
-    const char *start = begin + strlen("// daukle:begin");
-    size_t length = (size_t) (end - start);
-    char *region = malloc(length + 1);
-    if (region != NULL) {
-        memcpy(region, start, length);
-        region[length] = '\0';
-    }
-    return region;
+    copy_text_file("test/fixtures/deps/plugins/gradle.lua", path);
 }
 
 static int GITHUB_STUB_CALLS = 0;
@@ -187,7 +97,7 @@ static int github_stub_get(const char *url, const fr_http_header *headers, size_
         return FR_ERR;
     }
     char *text = NULL;
-    if (fr_file_read_text("test/fixtures/consumer/producer/daukle.toml", &text, err) != FR_OK) {
+    if (fr_file_read_text("test/fixtures/deps/producer/daukle.toml", &text, err) != FR_OK) {
         return FR_ERR;
     }
     *out_length = strlen(text);
@@ -205,13 +115,15 @@ TEST github_source_matches_path_source(void) {
 
     const char *root = e2e_temp_root();
     char path_manifest[700];
-    char path_build[700];
+    char path_generated[700];
     char github_manifest[700];
-    char github_build[700];
-    snprintf(path_manifest, sizeof path_manifest, "%s/path/consumer/daukle.toml", root);
-    snprintf(path_build, sizeof path_build, "%s/path/consumer/build.gradle", root);
+    char github_generated[700];
+    snprintf(path_manifest, sizeof path_manifest, "%s/path/daukle.toml", root);
+    snprintf(path_generated, sizeof path_generated, "%s/path/build/daukle/gradle/dependencies.txt",
+             root);
     snprintf(github_manifest, sizeof github_manifest, "%s/github/daukle-github.toml", root);
-    snprintf(github_build, sizeof github_build, "%s/github/build.gradle", root);
+    snprintf(github_generated, sizeof github_generated,
+             "%s/github/build/daukle/gradle/dependencies.txt", root);
 
     fr_error err;
     fr_sync_report path_report;
@@ -234,20 +146,15 @@ TEST github_source_matches_path_source(void) {
 
     char *path_text = NULL;
     char *github_text = NULL;
-    fr_file_read_text(path_build, &path_text, &err);
-    fr_file_read_text(github_build, &github_text, &err);
+    fr_file_read_text(path_generated, &path_text, &err);
+    fr_file_read_text(github_generated, &github_text, &err);
 
-    char *path_region = extract_generated_region(path_text);
-    char *github_region = extract_generated_region(github_text);
+    ASSERT(path_text != NULL);
+    ASSERT(github_text != NULL);
+    ASSERT(strstr(path_text, "forebay:basekit:5.0.0:ir\n") != NULL);
+    ASSERT(strstr(path_text, "forebay:basekit:5.0.0:contracts\n") != NULL);
+    ASSERT_STR_EQ(path_text, github_text);
 
-    ASSERT(path_region != NULL);
-    ASSERT(github_region != NULL);
-    ASSERT(strstr(path_region, "githubImplementation \"forebay:basekit:5.0.0:ir\"") != NULL);
-    ASSERT(strstr(path_region, "githubImplementation \"forebay:basekit:5.0.0:contracts\"") != NULL);
-    ASSERT_STR_EQ(path_region, github_region);
-
-    free(path_region);
-    free(github_region);
     free(path_text);
     free(github_text);
 
@@ -255,20 +162,20 @@ TEST github_source_matches_path_source(void) {
     PASS();
 }
 
-/* The drift exit is what a regenerate-and-diff CI gate rests on, and it was
-   only ever proven on the "path" source. A source that fetches has more ways
-   to report nothing at all, so it is worth proving on this path too: check
-   must name the drifted file and leave it untouched, and must fall silent
-   once sync has written it. */
+/* The drift exit is what a regenerate-and-diff CI gate rests on. A source that
+   fetches has more ways to report nothing at all, so it is worth proving on
+   this path too: check must name the drifted file and leave it unwritten, and
+   must fall silent once sync has written it. */
 TEST check_reports_drift_through_the_github_source(void) {
     remove_e2e_tree();
     setup_e2e_tree();
 
     const char *root = e2e_temp_root();
     char github_manifest[700];
-    char github_build[700];
+    char github_generated[700];
     snprintf(github_manifest, sizeof github_manifest, "%s/github/daukle-github.toml", root);
-    snprintf(github_build, sizeof github_build, "%s/github/build.gradle", root);
+    snprintf(github_generated, sizeof github_generated,
+             "%s/github/build/daukle/gradle/dependencies.txt", root);
 
     fr_test_set_env("DAUKLE_CACHE_DIR", e2e_cache_root());
     fr_http_fn original_backend = fr_http_set_backend(github_stub_get);
@@ -278,7 +185,8 @@ TEST check_reports_drift_through_the_github_source(void) {
     int drift_result = fr_sync(github_manifest, 0, 1, &drifted, &err);
 
     char *after_check = NULL;
-    fr_file_read_text(github_build, &after_check, &err);
+    int written_by_check = fr_file_read_text(github_generated, &after_check, &err) == FR_OK;
+    free(after_check);
 
     fr_sync_report written;
     int write_result = fr_sync(github_manifest, 1, 1, &written, &err);
@@ -291,12 +199,10 @@ TEST check_reports_drift_through_the_github_source(void) {
 
     ASSERT_EQ(FR_OK, drift_result);
     ASSERT_EQ(1, (int) drifted.count);
-    ASSERT(strstr(drifted.files[0], "build.gradle") != NULL);
+    ASSERT(strstr(drifted.files[0], "dependencies.txt") != NULL);
     fr_sync_report_free(&drifted);
 
-    ASSERT(after_check != NULL);
-    ASSERT_STR_EQ(BUILD_TEMPLATE, after_check);
-    free(after_check);
+    ASSERT(!written_by_check);
 
     ASSERT_EQ(FR_OK, write_result);
     ASSERT_EQ(1, (int) written.count);
@@ -362,42 +268,17 @@ TEST no_cache_bypasses_both_the_read_and_the_write(void) {
     PASS();
 }
 
-static const char *STALE_PACKAGE_JSON =
-    "{\n"
-    "  \"name\": \"example\",\n"
-    "  \"version\": \"1.0.0\",\n"
-    "  \"dependencies\": {\n"
-    "    \"@intisy-ai/basekit-contracts\": \"%s\",\n"
-    "    \"@intisy-ai/basekit-ir\": \"%s\"\n"
-    "  },\n"
-    "  \"daukle\": {\n"
-    "    \"managed\": {\n"
-    "      \"dependencies\": [\n"
-    "        \"@intisy-ai/basekit-contracts\",\n"
-    "        \"@intisy-ai/basekit-ir\"\n"
-    "      ]\n"
-    "    }\n"
-    "  }\n"
-    "}\n";
-
-static void seed_two_ways_consumer(const char *path, const char *stale_range) {
-    char text[800];
-    snprintf(text, sizeof text, STALE_PACKAGE_JSON, stale_range, stale_range);
-    fr_error err;
-    fr_file_write_text(path, text, &err);
-}
-
-/* Each consumer starts from a different stale range, so two identical files
-   at the end cannot be what two syncs that both did nothing would leave, and
-   a format plugin that dropped "consumers" and reported success would show up
-   here instead of passing unnoticed. Each file is put back before the first
-   assertion, so a failure does not leave the tree dirty either way. */
+/* Each format generates into its own fixture's derived directory, which is
+   removed first, so two identical files at the end cannot be what two syncs
+   that both did nothing would leave, and a format plugin that dropped
+   "toolchains" and reported success would show up here instead of passing
+   unnoticed. */
 TEST the_same_manifest_in_two_formats_writes_the_same_file(void) {
-    const char *toml_consumer = "test/fixtures/two-ways/toml/package.json";
-    const char *lua_consumer = "test/fixtures/two-ways/lua/package.json";
+    const char *toml_generated = "test/fixtures/two-ways/toml/build/daukle/npm/dependencies.txt";
+    const char *lua_generated = "test/fixtures/two-ways/lua/build/daukle/npm/dependencies.txt";
 
-    seed_two_ways_consumer(toml_consumer, "^2.0.0");
-    seed_two_ways_consumer(lua_consumer, "^3.0.0");
+    fr_test_remove_tree("test/fixtures/two-ways/toml/build");
+    fr_test_remove_tree("test/fixtures/two-ways/lua/build");
 
     fr_error err;
     fr_sync_report report;
@@ -412,11 +293,11 @@ TEST the_same_manifest_in_two_formats_writes_the_same_file(void) {
 
     char *from_toml = NULL;
     char *from_lua = NULL;
-    int toml_read = fr_file_read_text(toml_consumer, &from_toml, &err);
-    int lua_read = fr_file_read_text(lua_consumer, &from_lua, &err);
+    int toml_read = fr_file_read_text(toml_generated, &from_toml, &err);
+    int lua_read = fr_file_read_text(lua_generated, &from_lua, &err);
 
-    seed_two_ways_consumer(toml_consumer, "^2.0.0");
-    seed_two_ways_consumer(lua_consumer, "^3.0.0");
+    fr_test_remove_tree("test/fixtures/two-ways/toml/build");
+    fr_test_remove_tree("test/fixtures/two-ways/lua/build");
 
     ASSERT_EQ(FR_OK, toml_status);
     ASSERT_EQ(FR_OK, lua_status);
@@ -989,7 +870,7 @@ TEST a_required_modules_return_value_reaches_the_registry(void) {
 
     int found = 0;
     if (status == FR_OK) {
-        found = fr_registry_language(session.registry, "daukle.language/e2e-dependency-marker-274")
+        found = fr_registry_source(session.registry, "daukle.source/e2e-dependency-marker-274")
                 != NULL;
     }
 
@@ -1043,9 +924,6 @@ int main(int argc, char **argv) {
     }
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_scaffolded_project_syncs);
-    RUN_TEST(reproduces_both_real_consumers);
-    RUN_TEST(the_second_run_changes_nothing);
-    RUN_TEST(check_names_every_drifted_consumer);
     RUN_TEST(github_source_matches_path_source);
     RUN_TEST(check_reports_drift_through_the_github_source);
     RUN_TEST(no_cache_bypasses_both_the_read_and_the_write);

@@ -18,14 +18,6 @@ typedef struct fr_resolved fr_resolved;
 
 typedef struct {
     const char *capability;
-    int (*apply)(void *state, const fr_consumer *consumer,
-                 const fr_resolved *resolved, size_t count,
-                 const char *original_text, char **out_text, fr_error *err);
-    void *state;
-} fr_language_plugin;
-
-typedef struct {
-    const char *capability;
     int (*generate)(void *state, const fr_toolchain *toolchain, const char *project,
                     const char *version, const char *root,
                     const fr_resolved *resolved, size_t count,
@@ -111,7 +103,6 @@ typedef struct {
 fr_registry *fr_registry_create(void);
 void fr_registry_destroy(fr_registry *registry);
 int fr_registry_add_source(fr_registry *registry, const fr_source_plugin *plugin, fr_error *err);
-int fr_registry_add_language(fr_registry *registry, const fr_language_plugin *plugin, fr_error *err);
 int fr_registry_add_config(fr_registry *registry, const fr_config_plugin *plugin, fr_error *err);
 int fr_registry_add_toolchain(fr_registry *registry, const fr_toolchain_plugin *plugin, fr_error *err);
 int fr_registry_add_task(fr_registry *registry, const fr_task_plugin *plugin, fr_error *err);
@@ -124,7 +115,6 @@ const fr_migrator_plugin *fr_registry_migrator_of(const fr_registry *registry, c
 const fr_translator_plugin *fr_registry_translator(const fr_registry *registry, const char *tool,
                                                    const char *id);
 const fr_source_plugin *fr_registry_source(const fr_registry *registry, const char *capability);
-const fr_language_plugin *fr_registry_language(const fr_registry *registry, const char *capability);
 const fr_config_plugin *fr_registry_config(const fr_registry *registry, const char *capability);
 const fr_toolchain_plugin *fr_registry_toolchain(const fr_registry *registry, const char *capability);
 const fr_task_plugin *fr_registry_task(const fr_registry *registry, const char *capability);

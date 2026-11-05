@@ -1,5 +1,0 @@
-dependencies {
-    // daukle:begin
-    // daukle:end
-    testImplementation "junit"
-}

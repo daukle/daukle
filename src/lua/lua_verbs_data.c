@@ -8,7 +8,6 @@
 #include "lua/luax.h"
 #include "net/http.h"
 #include "plugin/registry.h"
-#include "project/lang_region.h"
 #include "project/region.h"
 #include "util/error.h"
 #include "util/tree.h"
@@ -263,32 +262,17 @@ int fr_lua_verb_cache(lua_State *state) {
     return 1;
 }
 
-static const char *pending_region_body;
-
-static int render_pending_body(const fr_consumer *consumer, const fr_resolved *resolved,
-                               size_t count, char **out_text, fr_error *err) {
-    (void) consumer; (void) resolved; (void) count;
-    *out_text = malloc(strlen(pending_region_body) + 1);
-    if (*out_text == NULL) {
-        fr_error_set(err, "out of memory rendering a region");
-        return FR_ERR;
-    }
-    strcpy(*out_text, pending_region_body);
-    return FR_OK;
-}
-
 int fr_lua_verb_region(lua_State *state) {
     const char *text = luaL_checkstring(state, 1);
     const char *begin = luaL_checkstring(state, 2);
     const char *end = luaL_checkstring(state, 3);
-    pending_region_body = luaL_checkstring(state, 4);
+    const char *body = luaL_checkstring(state, 4);
 
     char *out = NULL;
     fr_error err;
-    int status = fr_lang_region_apply(begin, end, render_pending_body, NULL, NULL, 0,
-                                      text, &out, &err);
-    pending_region_body = NULL;
-    if (status != FR_OK) return luaL_error(state, "%s", err.message);
+    if (fr_region_replace(text, begin, end, body, &out, &err) != FR_OK) {
+        return luaL_error(state, "%s", err.message);
+    }
 
     lua_pushstring(state, out);
     free(out);

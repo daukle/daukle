@@ -1,13 +1,12 @@
 # Structure: daukle
 
-A cross-language package coordinate resolver, in C11. It reads a manifest, resolves each project it
-names from a source, and writes that project's dependency coordinates into a consumer's build file
-in the form that consumer's language expects.
+A build tool that is only a plugin API, in C11. It reads a manifest, resolves each toolchain's
+dependencies through sources, and hands everything a plugin needs to the toolchains that generate,
+build and publish.
 
 **This file exists to stop a second module being written for a job one module already has.** Read
-section 2 before adding a source, a language or a helper: every row names the thing that already
-owns that concern, and adding a source or a language means registering a plugin, never touching the
-resolver.
+section 2 before adding a source, a kind or a helper: every row names the thing that already owns
+that concern, and adding a source means registering a plugin, never touching the resolver.
 
 Living document. Update it in the same commit as the change it describes.
 
@@ -68,16 +67,15 @@ the client tier's rules.
 
 | concern | owned by | it is NOT |
 | --- | --- | --- |
-| reading a project or manifest file into structs | `src/config/manifest.c`, with the project block in `manifest_project.c`, the sources, consumers, toolchains and publish targets in `manifest_sections.c` and tasks in `manifest_tasks.c`, behind `manifest_internal.h` | parsing JSON, which is `jsonx` over vendored cJSON |
+| reading a project or manifest file into structs | `src/config/manifest.c`, with the project block in `manifest_project.c`, the sources, toolchains and publish targets in `manifest_sections.c` and tasks in `manifest_tasks.c`, behind `manifest_internal.h` | parsing JSON, which is `jsonx` over vendored cJSON |
 | choosing which module of which project answers a coordinate | `src/plugin/resolve.c` | fetching anything. It resolves, the source fetches |
-| the plugin tables, source, language, config, migrator and translator | `src/plugin/registry.c` | a plugin. It holds `fr_source_plugin`, `fr_language_plugin`, `fr_config_plugin`, `fr_migrator_plugin` and `fr_translator_plugin`. A migrator is found by the label of the plugin that declared it, a translator by its tool and id |
-| the five plugins that were built in | `plugins/*.lua` | staged here until the repositories in spec section 6 exist. Not fixtures: they are the content those repositories will carry, and `cmake/check_agnostic.cmake` holds every fixture copy byte identical to them |
+| the plugin tables, source, config, migrator and translator | `src/plugin/registry.c` | a plugin. It holds `fr_source_plugin`, `fr_config_plugin`, `fr_migrator_plugin` and `fr_translator_plugin`. A migrator is found by the label of the plugin that declared it, a translator by its tool and id |
+| the three source plugins that were built in | `plugins/*.lua` | staged here until the repositories in spec section 6 exist. Not fixtures: they are the content those repositories will carry, and `cmake/check_agnostic.cmake` holds every fixture copy byte identical to them |
 | finding the manifest and choosing its format | `src/config/config.c` | a parser. It dispatches to a registered `fr_config_plugin` |
 | reading json text into the document model | `fr_json_parse` in `src/config/jsonx.c` | a manifest format, nor a registered `fr_config_plugin`. It is reachable only through the `daukle.json_parse` verb. It lived in a `config_json.c` until 2026-10-01, whose name asserted the opposite |
 | reading a toml manifest | `src/config/config_toml.c` | the whole config table. `src/config/config_lua.c` is the overlay beside it, registered the same way |
-| rewriting a marked region of a file in place | `src/project/region.c` | a JSON editor. `src/config/jsonedit.c` is, for files that are JSON |
-| rewriting a toml manifest in place | `src/config/tomledit.c` | a toml parser. It splices spans, as `src/config/jsonedit.c` does for json |
-| the whole write pass over a manifest | `src/project/sync.c` | per-language. It drives the language plugins |
+| replacing a marked region of a text, for the `daukle.region` verb | `src/project/region.c` | a JSON editor. `src/config/jsonedit.c` is, for files that are JSON |
+| the whole write pass over a manifest | `src/project/sync.c` | the generation itself. It opens a session and hands it to `src/project/generate.c` |
 | the derived directory: its path, the ledger of what daukle generated, write-if-changed, the sweep, and clean | `src/project/derived.c` for the ledger, writes and sweep, `src/project/derived_paths.c` for the paths and clean, tested by `test/test_derived.c` | the generation pass, which is `src/project/generate.c`. It is handed a file set and decides only what happens on disk |
 | the generation pass: resolving each declared toolchain, building what its `generate` receives, and validating what it returns | `src/project/generate.c`, tested by `test/test_generate.c` | what happens on disk, which is `src/project/derived.c` |
 | the task graph: collecting a plugin-declared task together with the manifest task blocks that add edges to it, planning a goal's transitive closure in dependency order, running that plan, and, for a publish, both halves of the destination sweep: `fr_tasks_check_publish` plans every selected destination before any of them runs, and `fr_tasks_run_publish` then runs them in the order the manifest declares. The two live together because they are one guarantee, and the command layer that held the second of them has no test binary | `src/project/tasks.c` collects, `tasks_plan.c` plans and `tasks_run.c` runs, all behind `src/project/tasks.h`, tested by `test/test_tasks.c` and, end to end, `test/test_e2e.c` | starting a plugin's process itself. `fr_tasks_run` ensures a run-bearing task's derived directory exists and calls its plugin's `run`; that callback is what calls `daukle.exec`, not `src/project/tasks.c`. The ONE process the task layer starts on its own is a manifest task's `run`, which is `src/project/task_command.c` |
@@ -87,15 +85,14 @@ the client tier's rules.
 | version ranges and ordering | `src/util/semver.c` | date or tag ordering |
 | URL building and escaping | `src/net/url.c` | HTTP |
 | growable strings | `src/util/strbuf.c` | a general container library |
-| the command surface | `src/cli/cli.c` parses, `src/cli/main.c` dispatches, and each command family is its own file behind `src/cli/cli_internal.h`: `cli_config.c`, `cli_add.c`, `cli_plugins.c`, `cli_tasks.c`, `cli_migrate.c` | logic. Everything it calls lives in a module beside it |
+| the command surface | `src/cli/cli.c` parses, `src/cli/main.c` dispatches, and each command family is its own file behind `src/cli/cli_internal.h`: `cli_config.c`, `cli_plugins.c`, `cli_tasks.c`, `cli_migrate.c` | logic. Everything it calls lives in a module beside it |
 | errors | `src/util/error.c`, `fr_error` | logging. The caller decides what to print |
 | which environment variables a plugin may read of the ones daukle itself consumes, and which a child it starts inherits | `fr_lua_verbs_*_env*` in `src/lua/lua_verbs_env.c`, tested by `test/test_exec.c` and `test/test_config_lua.c` | a sandbox. It scrubs only what daukle reads, never the user's own variables, and it cannot know which of those are secret |
 | the lua state, its memory cap and its errors | `src/lua/luax.c` | the sandbox, which is `src/lua/lua_sandbox.c`, nor the config format, which is `src/config/config_lua.c` |
 | what a configuration script may touch | `src/lua/lua_sandbox.c` | a permission system. It curates one globals table and bounds daukle.include |
-| verifying a spliced manifest still parses | `src/config/tomledit.c`, through `FR_CONFIG_TOML` | a second parser. It reads its own output back so no caller is handed text it would be wrong to write |
 | the one lua state's lifetime, running a configuration script and reading it back, and what the daukle table a script sees carries | `src/config/config_lua.c` | the verbs a plugin declares with, which are `src/config/config_declare.c`, nor the sandbox or the lua state, which are `src/lua/lua_sandbox.c` and `src/lua/luax.c` |
-| the declaration verbs, `daukle.language`, `source`, `toolchain`, `task`, `publisher` and `resolver` (`migrator` and `translator` have their own row, "the migrator and translator kinds"): what each one refuses, the slot it fills and what it registers | `src/config/config_declare.c`, with `task` and `publisher` in `config_declare_task.c`, which reads the chunk and slot state only through the accessors `config_lua_internal.h` declares | calling any of them back, which is `src/config/config_dispatch.c`, nor the registry they land in, which is `src/plugin/registry.c` |
-| calling a registered plugin back: the protected frame each dispatch runs under, the table it builds for the callback, and what it reads out of the answer | `src/config/config_dispatch.c` for toolchains and tasks, `config_dispatch_language.c` for languages and `config_dispatch_resolve.c` for sources and resolvers | declaring or registering anything, which is `src/config/config_declare.c`. It is handed the slot and calls the callback the slot names |
+| the declaration verbs, `daukle.source`, `toolchain`, `task`, `publisher` and `resolver`, plus a `daukle.language` that only refuses (`migrator` and `translator` have their own row, "the migrator and translator kinds"): what each one refuses, the slot it fills and what it registers | `src/config/config_declare.c`, with `task` and `publisher` in `config_declare_task.c`, which reads the chunk and slot state only through the accessors `config_lua_internal.h` declares | calling any of them back, which is `src/config/config_dispatch.c`, nor the registry they land in, which is `src/plugin/registry.c` |
+| calling a registered plugin back: the protected frame each dispatch runs under, the table it builds for the callback, and what it reads out of the answer | `src/config/config_dispatch.c` for toolchains and tasks and `config_dispatch_resolve.c` for sources and resolvers | declaring or registering anything, which is `src/config/config_declare.c`. It is handed the slot and calls the callback the slot names |
 | `daukle.require`: what a module name resolves to, the per-load memo, the owner frame a module of another plugin runs under, and the cycle report | `src/lua/lua_modules.c` | where a module's bytes come from, which is `src/plugin/plugin_modules.c`, nor who may reach across a plugin boundary, which is the `requires` graph in `src/plugin/plugin_deps.c`, built by `plugin_deps_acquire.c` |
 | what a plugin may touch, and building one environment per plugin | `src/lua/lua_verbs.c`, which installs the verbs; each family is its own file behind `src/lua/lua_verbs_internal.h`: `_env` (`env`), `_data` (`read`, `fetch`, `cache`, `region`, `json_set`, `json_parse`, `parse`), `_provision` (`provision`, `artifact`, `pin`), `_root` (the root handle's methods), `_exec` (`tool`, `exec`), `_built` (`built`), `_write` (`write`) | the configuration sandbox, which is `src/lua/lua_sandbox.c`. One is per plugin, the other is the state's globals |
 | `daukle.manifest`: the file name daukle was started from, published to a chunk so a plugin registering one task per project entry never spells a name of its own | `fr_lua_verbs_set_manifest_name` in `src/lua/lua_verbs.c`, set around `fr_plugins_load` in `src/config/config.c` | the manifest's CONTENT, which the chunk still reads under `read` and parses under `parse`: a file name is not a capability and is ungated, reading it is one and is not. It names the PRIMARY manifest, because a chunk loads before overlays are applied. It is the empty string, not nil, for the length of every plugin load `daukle migrate` runs, since no manifest exists yet and a chunk testing its name with `string.match` must not raise (`open_session` in `src/migrate/migrate_sessions.c`). `D-110` |
@@ -105,7 +102,7 @@ the client tier's rules.
 | checking what a migrator or translator returned, and holding blockers: the shape of `manifest`, `foreign`, `blockers`, `owned`, `files` and `proof`, and the report grouped by who raised each blocker | `src/migrate/result.c` for blockers and their report, `result_check.c` for the shape checks, tested by `test/test_migrate_e2e.c` | the plugin's logic. Malformed output is an ERROR naming the plugin, because it is a plugin bug; an empty `compare`, or no `proof`, is a BLOCKER, because the migration cannot be proved. Core refuses `plugins` and `schema` in a returned manifest, and `toolchain` and `dir` in any `toolchains` entry, since it owns them |
 | merging the migrators' and translators' manifest fragments, and the keys core fills itself: `schema`, `project`, `version`, `modules`, `[plugins]` and each instance's `toolchain` and `dir` | `src/migrate/merge.c`, tested by `test/test_migrate_merge.c` | choosing the instance name, which `name_instance` in `src/migrate/migrate_sessions.c` does. Two fragments setting one key to different values is a blocker naming the dotted key and both sources, never a silent pick |
 | comparing the old build's artifacts with the new one's | `src/migrate/proof.c`, tested by `test/test_migrate_proof.c` | running either build. `bytes` compares two files and, when both are text (no NUL byte), names up to five lines only in each, as a multiset, before the two digests; `archive` compares the file members' names and bytes and ignores order, directory members and timestamps, and a symlink member is always a difference |
-| writing a manifest as toml: a JSON document rendered as text and read back through the toml reader before it is returned | `src/config/toml_write.c`, tested by `test/test_toml_write.c` | an editor. `src/config/tomledit.c` splices an existing file; this renders a whole new one, and refuses `null` since toml has none. The read-back is its specification, so a shape the renderer never met is an error and not a file that reads back differently |
+| writing a manifest as toml: a JSON document rendered as text and read back through the toml reader before it is returned | `src/config/toml_write.c`, tested by `test/test_toml_write.c` | an editor. It renders a whole new file, never splices an existing one, and refuses `null` since toml has none. The read-back is its specification, so a shape the renderer never met is an error and not a file that reads back differently |
 | the migrator and translator kinds: `daukle.migrator{ tool, toolchain, run, build? }` and `daukle.translator{ tool, id, translate }`, what each refuses, and calling them back | `src/config/config_declare_migrate.c` declares, `src/config/config_dispatch_migrate.c` calls back, with the context struct in `config_dispatch_migrate.h`, and `src/plugin/registry.c` holds them in two further tables beside source, language and config | the other declaration verbs, which stay in `config_declare.c`. Both are refused unless a manifest or `daukle migrate` loaded the plugin, a plugin declares at most one migrator, and a migrator's `toolchain` must be declared above it in the same plugin. `run` and `build` run inside the task window, so `exec`, `provision` and `built` work and the cwd is the instance's derived directory; `translate` runs as a process-free callback, refused `exec` and `provision` by name as a source's `load` is |
 | a toolchain INSTANCE: one plugin's toolchain declared under several manifest names, each with its own `dir`, and what `root` a plugin is handed for it | `src/config/manifest_sections.c` reads the `toolchain` and `dir` keys, `src/project/toolchain_root.c` computes `root` for generation and for a task alike, and `src/project/tasks_instance.c` clones the plugin's tasks once per instance under the instance's name, renaming the toolchain-prefixed edges and leaving a bare edge and another toolchain's edge alone | the task graph, which is `src/project/tasks.c`. `root` is `FR_DERIVED_ROOT_RELATIVE` for an instance with no `dir` and that joined with `dir` otherwise. A toolchain may not be named `migrate`, because `build/daukle/migrate` belongs to `daukle migrate` |
 | refusing `clean` while a migration is unfinished | `holds_unfinished_migration` in `src/project/derived_paths.c`, tested by `test/test_derived.c` | cleaning. The files in `build/daukle/migrate/old` are the only copy of what the migration replaced until `daukle migrate --done` (`fr_migrate_done` in `src/migrate/migrate_finish.c`) deletes them |
@@ -149,18 +146,19 @@ is installed once, when the state is opened, so reusing the state for a second d
 between canonical paths, which `fr_lua_sandbox_install` hands back so there is one resolution rather
 than two that could disagree, and the refusal names both directories.
 
-**Adding a source or a language means writing a Lua plugin and declaring it in `[plugins]`.**
-`config_lua.c:337` and `config_lua.c:355` are the only places that fill in an `fr_language_plugin`
-or an `fr_source_plugin` and register it, turning a `daukle.language{}` or `daukle.source{}`
-declaration into a registry entry; no other file in `src/` calls `fr_registry_add_source` or
-`fr_registry_add_language`, whose only direct callers in `test/` are `test_registry.c`'s unit tests of
-the registry and the one stub source `test_resolve.c:75` injects to watch a plugin get its own state.
-Neither touches `src/plugin/resolve.c`, and a change that does touch it for a new source or language is the
-signal that the seam was bypassed.
+**Adding a source means writing a Lua plugin and declaring it in `[plugins]`.** `lua_declare_source`
+in `src/config/config_declare.c` is the only place that fills in an `fr_source_plugin` and
+registers it; no other file in `src/` calls `fr_registry_add_source`, whose only direct callers in
+`test/` are `test_registry.c`'s unit tests of the registry and the one stub source `test_resolve.c`
+injects to watch a plugin get its own state. Neither touches `src/plugin/resolve.c`, and a change
+that does touch it for a new source is the signal that the seam was bypassed.
 
-**A source's `load` and a language's `apply` may not RUN `exec` or `provision`, though their chunk
-may declare them** (`D-133`, api 2). `fr_lua_dispatch_source_load` and
-`fr_lua_dispatch_language_apply` bracket their `lua_pcall` with
+**Adopted mode is gone** (`D-228`, daukle `0.19.0`): no `language` kind, no `[[consumers]]`, no
+`daukle add`. `daukle.language{}` raises naming the removal, and a manifest carrying `consumers` is
+refused naming `[toolchains.<name>.dependencies]`, so neither is silently ignored.
+
+**A source's `load` may not RUN `exec` or `provision`, though its chunk may declare them**
+(`D-133`, api 2). `fr_lua_dispatch_source_load` brackets its `lua_pcall` with
 `fr_lua_enter_process_free_callback` and its `leave`, a depth counter in `src/config/config_lua.c`,
 and `verb_exec` and `verb_provision` refuse naming the phase while it is non-zero. So one chunk may
 hold a source and a publisher. **Only a resolver is refused at declaration**:
@@ -209,87 +207,50 @@ the cache serves one for the other and emits silently wrong coordinates.
 ## 3. Tests
 
 One test file per src module, under `test/`, on the `greatest` harness. Beyond the per-module tests
-there are `test_e2e.c` and `test_e2e_languages.c` for whole-pass behaviour, and `test_http.c`,
+there is `test_e2e.c` for whole-pass behaviour, and `test_http.c`,
 `test_network.c` and `test_redirect.c` run against `test/http_server.c`, a real local server rather
 than a mock, so redirect and transport behaviour is exercised as it will be in use.
 
-`test/fixtures/` holds consumer build files. Several are gitignored, because they are written by the
-tests themselves.
+`test/fixtures/` holds manifests, producers and stub plugins. Several paths are gitignored, because
+the tests write into them.
 
 Most modules have a dedicated test file; the rest are covered through the tests of the module that
 drives them, such as `fr_json_parse` through `test_lua_verbs.c`'s `json_parse` tests.
 
-**daukle no longer tests what npm, Gradle or C output looks like.** `test_lang_npm.c`,
-`test_lang_gradle.c`, `test_lang_c.c` and `test_source_github.c` were deleted with the modules they
-covered, taking with them `empties_the_region_for_no_modules` and `fails_without_a_configuration`
-for both gradle and c, `names_the_module_whose_block_has_no_coordinate`,
-`names_the_module_whose_block_has_no_url`, the `carries_the_expected_capability` string assertions,
-and github's url and coordinate assertions, which the github swap's commit body lists by name for
-recovery from history. `fails_when_the_target_carries_no_region` is lost for c's case only; gradle's
-equivalent is still driven end to end by `reports_a_build_file_without_markers`
-(`test/test_sync.c:78-87`).
-After the extraction that output is not daukle's behaviour, so the coverage belongs to `daukle/npm`,
-`daukle/gradle`, `daukle/c` and `daukle/github`. daukle's suite will not catch a regression in Gradle
-coordinate formatting. Accepted in spec section 7.
+**daukle does not test what any tool's output looks like**: that coverage belongs to the plugin
+repositories. What daukle covers, and must keep covering, is the **mechanism**: that a source
+plugin's returned table becomes an `fr_project`, that a toolchain's resolved dependencies reach its
+`generate`, and that a missing capability names the plugin that would provide it. The
+`agnostic_core` ctest entry compares each `plugins/*.lua` against every same-named copy under
+`test/fixtures/`, so an edit to the staged file, or to one copy and not the rest, is not invisible.
 
-What daukle still covers, and must keep covering, is the **mechanism**: that a language plugin's
-returned text reaches the consumer file, that a source plugin's returned table becomes an
-`fr_project`, and that a missing capability names the plugin that would provide it.
-`test_e2e_languages.c` is the broadest test of real language output end to end: it is the only test
-exercising c's output at all, and the only one exercising npm's formatting depth, through
-multi-entry ordering, the optional-`sha256` mix, one space before each package, the absent trailing
-newline, idempotence, the npm untouched-text and ledger-sort cases, and the one case the ledger
-exists for: a package the ledger owns and the resolver dropped leaves the target, while a package the
-user added by hand and no ledger claims stays. `test_sync.c` and `test_e2e.c` also assert real gradle
-output, but neither touches c or npm's formatting rules.
-`test_e2e_languages.c` does its work through byte-identical copies of `plugins/` inside its own
-fixture directories rather than through `plugins/` itself, and Task 14 must replace those copies with
-minimal fixtures rather than delete the test. No test loads a staged plugin directly, which is why the
-`agnostic_core` ctest entry also compares each `plugins/*.lua` against every same-named copy under
-`test/fixtures/`: an edit to the staged file, or to one copy and not the rest, would otherwise be
-invisible for as long as the staging directory exists.
-
-**`fr_registry_add_source`'s and `fr_registry_add_language`'s duplicate-capability refusal is now
-unreachable from every production path.** Both callers sit behind `take_slot` in `src/config/config_lua.c`,
+**`fr_registry_add_source`'s duplicate-capability refusal is unreachable from every production
+path.** Its caller sits behind `take_slot` in `src/config/config_lua.c`,
 which refuses a duplicate first, and every production path destroys the registry and the Lua runtime
 together, so reaching the registry's own refusal needs a registry that outlives a runtime shutdown.
-It is asserted only by direct unit tests in `test/test_registry.c`. That refusal is the reason each
-of the five plugin swaps had to be a single atomic commit, so the work ends by leaving the guard that
-shaped it reachable only from tests.
+It is asserted only by direct unit tests in `test/test_registry.c`.
 
 ## 4. State
 
 The resolver, the cache, the sync pass and the CLI are all implemented and tested. Every source and
-every language now arrives through a plugin: `fr_build_registry` in `src/project/sync.c` registers only the
-config formats, and the registry's source and language tables start empty. The configuration surface
+every toolchain arrives through a plugin: `fr_build_registry` in `src/project/sync.c` registers only the
+config formats, and every other registry table starts empty. The configuration surface
 is TOML with an optional Lua overlay: `src/config/config.c` finds the manifest and dispatches to a registered
 `fr_config_plugin` by a capability string built from the file's extension, and `src/config/config_toml.c` and
 `src/config/config_lua.c` are the only two registered formats, chosen the same way, with neither named in
 `src/config/config.c` itself. TOML is the format a manifest is authored in going forward, and it is also the
 asset name the `daukle/github` plugin fetches by default from a release. JSON is no longer a manifest
 format at all: `fr_json_parse` registers nothing and survives only so a plugin can read its own data
-file through `daukle.json_parse`, such as npm recovering its ledger from a `package.json`.
+file through `daukle.json_parse`.
 
 Task **F-7** in `spisor/docs/TASKS.md` is unaffected by this work: it says both of the phase-2
 manifest writers are proven against fixtures only, because nothing in the ecosystem publishes a
 manifest release asset yet. basekit's 5.0.0 release carries eight jars and no manifest. Until
 something publishes one, the writers have never met real input.
 
-`daukle add` edits TOML only, and `src/cli/cli_add.c` names that format on purpose: it checks the manifest path
-ends in `.toml` and calls `fr_toml_edit_set_dependency` directly, which is a deliberate, accepted
-exception to the agnostic-core rule (ruling R29). The general form would be an edit hook on
-`fr_config_plugin`, so every format supplies its own editor and `src/cli/cli_add.c` names none of them, but that
-would touch a plugin struct four completed tasks already depend on and would buy nothing until a JSON
-or Lua manifest needs editing in place too, so it is deferred rather than built now.
-
-`daukle add` appends a dependency that is not there yet and updates the version of one that is. It
-does not rewrite an existing module list, so `--modules` for a dependency that already exists is an
-error rather than a silent discard, and whatever it produces is read back through the TOML reader
-before anything is written.
-
-A manifest's `[plugins]` table registers a source or a language by running each declared plugin in a
+A manifest's `[plugins]` table registers a plugin's declarations by running each declared plugin in a
 `src/lua/lua_verbs.c` environment scoped to exactly the verbs it declared, through `src/plugin/plugins.c`. It is now
-the only route into the registry's source and language tables:
+the only route into the registry's plugin tables:
 `fr_build_registry` registers only the config formats, and the five files that used to compile a
 source or a language directly into the binary, `source_path.c`, `source_github.c`, `lang_npm.c`,
 `lang_gradle.c` and `lang_c.c`, are gone. `FR_SOURCE_[A-Z]` and `FR_LANGUAGE_[A-Z]` are in the

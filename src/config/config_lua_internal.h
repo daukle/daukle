@@ -47,10 +47,6 @@ typedef struct {
 /* What each registered plugin kind is dispatched through. Every one takes the
    slot above as its state pointer, and each is what config_declare.c stores in
    the registry when a plugin of that kind declares itself. */
-int fr_lua_dispatch_language_apply(void *state, const fr_consumer *consumer,
-                                  const fr_resolved *resolved, size_t count,
-                                  const char *original_text, char **out_text,
-                                  fr_error *err);
 int fr_lua_dispatch_toolchain_generate(void *state, const fr_toolchain *toolchain,
                                       const char *project, const char *version,
                                       const char *root, const fr_resolved *resolved,
@@ -94,8 +90,8 @@ int fr_lua_declare_chunk_begin(lua_State *state);
    backup when it did not. */
 void fr_lua_declare_chunk_end(lua_State *state, int succeeded, int backup);
 
-/* Puts the two verbs a configuration script may call, language and source, on
-   the daukle table on top of the stack. The plugin environment gets the whole
+/* Puts the verbs a configuration script may call, source and the refused
+   language, on the daukle table on top of the stack. The plugin environment gets the whole
    set through fr_lua_verbs_install_registration instead. */
 void fr_lua_declare_install_config_surface(lua_State *state);
 

@@ -429,7 +429,7 @@ TEST fr_project_parse_refuses_a_fetched_manifest_declaring_plugins(void) {
     PASS();
 }
 
-TEST a_local_plugin_registers_its_language(void) {
+TEST a_local_plugin_registers_its_toolchain(void) {
     fr_error err;
     fr_registry *registry = NULL;
     ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
@@ -438,7 +438,7 @@ TEST a_local_plugin_registers_its_language(void) {
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-local/daukle.toml",
                                          registry, &manifest, &err));
 
-    ASSERT(fr_registry_language(registry, "daukle.language/hello") != NULL);
+    ASSERT(fr_registry_toolchain(registry, "daukle.toolchain/hello") != NULL);
 
     fr_manifest_free(&manifest);
     destroy_tracked_registry(registry);
@@ -446,16 +446,16 @@ TEST a_local_plugin_registers_its_language(void) {
     PASS();
 }
 
-/* Registration into the language table is not emission through it: this runs
-   the whole sync pass and reads what the plugin's apply actually wrote. */
-TEST sync_writes_through_a_plugin_registered_language(void) {
+/* Registration into the toolchain table is not emission through it: this runs
+   the whole sync pass and reads what the plugin's generate actually wrote. */
+TEST sync_generates_through_a_plugin_registered_toolchain(void) {
     fr_error err;
     fr_sync_report report;
     ASSERT_EQ(FR_OK, fr_sync("test/fixtures/plugin-local/daukle.toml", 1, 1, &report, &err));
     fr_sync_report_free(&report);
 
     char *written = NULL;
-    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/plugin-local/hello.txt", &written, &err));
+    ASSERT_EQ(FR_OK, fr_file_read_text("test/fixtures/plugin-local/build/daukle/hello/hello.txt", &written, &err));
     ASSERT_STR_EQ("forebay/basekit/contracts\nforebay/basekit/ir\n", written);
     free(written);
     PASS();
@@ -470,7 +470,7 @@ TEST a_verb_a_plugin_declared_is_there_when_it_runs(void) {
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-declared-verb/daukle.toml",
                                          registry, &manifest, &err));
 
-    ASSERT(fr_registry_language(registry, "daukle.language/brewfile") != NULL);
+    ASSERT(fr_registry_source(registry, "daukle.source/brewfile") != NULL);
 
     fr_manifest_free(&manifest);
     destroy_tracked_registry(registry);
@@ -486,25 +486,10 @@ TEST a_manifest_declaring_no_plugins_opens_no_lua_state(void) {
     ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
 
     fr_manifest manifest;
-    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/consumer/daukle-unknown-source.toml",
+    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/deps/daukle-unknown-source.toml",
                                          registry, &manifest, &err));
 
     ASSERT(fr_lua_runtime_state() == NULL);
-
-    fr_manifest_free(&manifest);
-    destroy_tracked_registry(registry);
-    fr_lua_runtime_shutdown();
-    PASS();
-}
-
-TEST a_language_plugin_may_declare_exec(void) {
-    fr_error err;
-    fr_registry *registry = NULL;
-    ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
-
-    fr_manifest manifest;
-    ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-language-declares-exec/daukle.toml",
-                                         registry, &manifest, &err));
 
     fr_manifest_free(&manifest);
     destroy_tracked_registry(registry);
@@ -618,7 +603,7 @@ static const modules_loaded *load_plugin_modules_in(const char *fixture,
     out.status = fr_config_load_file(manifest_path, registry, &manifest, &err);
     if (out.status == FR_OK) {
         out.toolchain = fr_registry_toolchain(registry, "daukle.toolchain/modular") != NULL;
-        out.deps = fr_registry_language(registry, "daukle.language/modular-deps") != NULL;
+        out.deps = fr_registry_source(registry, "daukle.source/modular-deps") != NULL;
         fr_manifest_free(&manifest);
     }
     snprintf(out.message, sizeof out.message, "%s", err.message);
@@ -759,7 +744,7 @@ TEST an_override_no_named_module_declares_is_refused(void) {
     PASS();
 }
 
-/* The per-kind gates fire when daukle.language and its siblings are CALLED, so
+/* The per-kind gates fire when daukle.source and its siblings are CALLED, so
    a chunk that provisions at its top level has already fetched and unpacked a
    tree by then, during `daukle check` and `daukle config print`. Asserting the
    refusal names daukle.provision is what makes this a refusal test: without the
@@ -783,7 +768,7 @@ TEST a_plugin_provisioning_before_it_declares_is_refused_at_the_call(void) {
 }
 
 /* daukle.tool alone must still load: the refusal is exec's alone, not tool's. */
-TEST a_language_plugin_declaring_tool_but_not_exec_still_loads(void) {
+TEST a_source_plugin_declaring_tool_but_not_exec_still_loads(void) {
     fr_error err;
     fr_registry *registry = NULL;
     ASSERT_EQ(FR_OK, build_tracked_registry(&registry, &err));
@@ -791,7 +776,7 @@ TEST a_language_plugin_declaring_tool_but_not_exec_still_loads(void) {
     fr_manifest manifest;
     ASSERT_EQ(FR_OK, fr_config_load_file("test/fixtures/plugin-tool-only/daukle.toml",
                                          registry, &manifest, &err));
-    ASSERT(fr_registry_language(registry, "daukle.language/ok") != NULL);
+    ASSERT(fr_registry_source(registry, "daukle.source/ok") != NULL);
 
     fr_manifest_free(&manifest);
     destroy_tracked_registry(registry);
@@ -961,7 +946,7 @@ TEST an_alias_with_a_reserved_character_is_refused(void) {
     PASS();
 }
 
-/* plugins/c.lua ships in this repo as a real one-letter alias, and
+/* daukle/c is a real plugin with a one-letter alias, and
    daukle.require("c:x") would be refused as a path escape by
    fr_lua_sandbox_climbs_out before ever reaching the colon split (a letter
    followed by ":" is the Windows drive-letter shape). Refusing the alias here,
@@ -1153,7 +1138,7 @@ static int stub_release_asset(const char *url, const fr_http_header *headers, si
     }
 
     char *text = NULL;
-    if (fr_file_read_text("test/fixtures/consumer/producer/daukle.toml", &text, err) != FR_OK) {
+    if (fr_file_read_text("test/fixtures/deps/producer/daukle.toml", &text, err) != FR_OK) {
         return FR_ERR;
     }
     *out_length = strlen(text);
@@ -1164,7 +1149,7 @@ static int stub_release_asset(const char *url, const fr_http_header *headers, si
 static const char *GITHUB_BLOCK =
     "{\"kind\":\"github-releases\",\"repo\":\"forebay/basekit\",\"version\":\"5.0.0\"}";
 
-/* Loads the shipped github plugin from the consumer fixture's copy and resolves
+/* Loads the shipped github plugin from the deps fixture's copy and resolves
    one source block through it. The toml format is registered because the plugin
    hands the body it fetched to daukle.parse, and the cache is off so every call
    reaches the stub instead of the entry the previous call would have written. */
@@ -1177,8 +1162,8 @@ static int github_source_load(const char *block_json, fr_error *err) {
     cJSON *document = cJSON_Parse("{\"plugins\":{\"github\":\"./plugins/github.lua\"}}");
     int status = FR_ERR;
     if (fr_registry_add_config(registry, &FR_CONFIG_TOML, err) == FR_OK
-        && fr_lua_runtime_begin("test/fixtures/consumer", registry, err) == FR_OK
-        && fr_plugins_load(registry, document, "test/fixtures/consumer", err) == FR_OK) {
+        && fr_lua_runtime_begin("test/fixtures/deps", registry, err) == FR_OK
+        && fr_plugins_load(registry, document, "test/fixtures/deps", err) == FR_OK) {
         const fr_source_plugin *source =
             fr_registry_source(registry, "daukle.source/github-releases");
         cJSON *block = cJSON_Parse(block_json);
@@ -1275,7 +1260,7 @@ static const char *INLINE_RESOLVER =
 
 static const char *ARTIFACT_BODY =
     "daukle.plugin{ api = 1, uses = {} }\n"
-    "daukle.language{ name = 'from-url', apply = function() return '' end }\n";
+    "daukle.source{ name = 'from-url', load = function() return {} end }\n";
 
 /* Which url was asked for, so a test can assert that the url the resolver
    named is the url that was fetched. Without it the stub answers every url
@@ -1294,7 +1279,7 @@ static int stub_inline(const char *url, const fr_http_header *headers, size_t he
 }
 
 /* Loads document_json with stub_inline installed, reports the load's status
-   through out_status and returns whether the language a fetched artifact
+   through out_status and returns whether the source a fetched artifact
    registers arrived. Every caller below needs the same setup and the same
    teardown, and a helper is how the teardown stops being the thing a new test
    forgets. */
@@ -1308,7 +1293,7 @@ static int loads_from_url(const char *document_json, int *out_status, fr_error *
         cJSON *document = cJSON_Parse(document_json);
         if (fr_lua_runtime_begin(".", registry, err) == FR_OK) {
             *out_status = fr_plugins_load(registry, document, ".", err);
-            registered = fr_registry_language(registry, "daukle.language/from-url") != NULL;
+            registered = fr_registry_source(registry, "daukle.source/from-url") != NULL;
         }
         cJSON_Delete(document);
         destroy_tracked_registry(registry);
@@ -1476,7 +1461,7 @@ TEST the_headers_a_resolver_returns_reach_the_artifact_fetch(void) {
    exists only so a comparison weakened from strict "greater than" to
    non-strict "greater than or equal" has something to expose: it would pull
    in p2.lua, the later of the tied pair, instead of leaving p.lua's earlier
-   win alone. Each tag registers a differently named language so the test can
+   win alone. Each tag registers a differently named source so the test can
    tell exactly which asset was fetched. */
 static int stub_releases_index(const char *url, const fr_http_header *headers, size_t header_count,
                                char **out_body, size_t *out_length, fr_error *err) {
@@ -1494,19 +1479,19 @@ static int stub_releases_index(const char *url, const fr_http_header *headers, s
                               out_length);
     } else if (strstr(url, "/o.lua") != NULL) {
         *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
-                              "daukle.language{ name = 'remote-1-1-0', apply = function() return '' end }\n",
+                              "daukle.source{ name = 'remote-1-1-0', load = function() return {} end }\n",
                               out_length);
     } else if (strstr(url, "/p2.lua") != NULL) {
         *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
-                              "daukle.language{ name = 'remote-1-2-0-again', apply = function() return '' end }\n",
+                              "daukle.source{ name = 'remote-1-2-0-again', load = function() return {} end }\n",
                               out_length);
     } else if (strstr(url, "/p.lua") != NULL) {
         *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
-                              "daukle.language{ name = 'remote-1-2-0', apply = function() return '' end }\n",
+                              "daukle.source{ name = 'remote-1-2-0', load = function() return {} end }\n",
                               out_length);
     } else {
         *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
-                              "daukle.language{ name = 'remote-2-0-0', apply = function() return '' end }\n",
+                              "daukle.source{ name = 'remote-2-0-0', load = function() return {} end }\n",
                               out_length);
     }
     return FR_OK;
@@ -1538,10 +1523,10 @@ TEST the_github_resolver_picks_the_highest_release_in_range(void) {
 
     int began = fr_lua_runtime_begin("test/fixtures/github-resolver", registry, &err) == FR_OK;
     int loaded = fr_plugins_load(registry, document, "test/fixtures/github-resolver", &err) == FR_OK;
-    int highest_in_range = fr_registry_language(registry, "daukle.language/remote-1-2-0") != NULL;
-    int lower_in_range = fr_registry_language(registry, "daukle.language/remote-1-1-0") != NULL;
-    int out_of_range = fr_registry_language(registry, "daukle.language/remote-2-0-0") != NULL;
-    int tied_duplicate = fr_registry_language(registry, "daukle.language/remote-1-2-0-again") != NULL;
+    int highest_in_range = fr_registry_source(registry, "daukle.source/remote-1-2-0") != NULL;
+    int lower_in_range = fr_registry_source(registry, "daukle.source/remote-1-1-0") != NULL;
+    int out_of_range = fr_registry_source(registry, "daukle.source/remote-2-0-0") != NULL;
+    int tied_duplicate = fr_registry_source(registry, "daukle.source/remote-1-2-0-again") != NULL;
     int requests = release_requests;
 
     /* Every other fixture resolves a coordinate to itself, so this is the one
@@ -1592,7 +1577,7 @@ static int stub_release_published_later(const char *url, const fr_http_header *h
             out_length);
     } else {
         *out_body = copy_body("daukle.plugin{ api = 1, uses = {} }\n"
-                              "daukle.language{ name = 'remote-1-2-0', apply = function() return '' end }\n",
+                              "daukle.source{ name = 'remote-1-2-0', load = function() return {} end }\n",
                               out_length);
     }
     return FR_OK;
@@ -1910,7 +1895,7 @@ TEST a_failed_pin_discards_the_cached_artifact(void) {
     PASS();
 }
 
-/* Follows the shape of ARTIFACT_BODY above, but the language name encodes which
+/* Follows the shape of ARTIFACT_BODY above, but the source name encodes which
    url was fetched, so a test can tell "target-one" (the resolver's first,
    cached answer) apart from "target-two" (the answer only an update that
    disables the cache can reach). */
@@ -1922,7 +1907,7 @@ static int stub_named_artifacts(const char *url, const fr_http_header *headers,
     char body[256];
     snprintf(body, sizeof body,
             "daukle.plugin{ api = 1, uses = {} }\n"
-            "daukle.language{ name = '%s', apply = function() return '' end }\n", name);
+            "daukle.source{ name = '%s', load = function() return {} end }\n", name);
     *out_body = copy_body(body, out_length);
     return FR_OK;
 }
@@ -2468,7 +2453,7 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     cJSON *document = cJSON_Parse(document_json);
     int first_load = fr_lua_runtime_begin(".", first_registry, &err) == FR_OK
                   && fr_plugins_load(first_registry, document, ".", &err) == FR_OK;
-    int got_one = fr_registry_language(first_registry, "daukle.language/target-one") != NULL;
+    int got_one = fr_registry_source(first_registry, "daukle.source/target-one") != NULL;
     destroy_tracked_registry(first_registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
@@ -2480,7 +2465,7 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     int built_second = build_tracked_registry(&second_registry, &err) == FR_OK;
     int second_load = fr_lua_runtime_begin(".", second_registry, &err) == FR_OK
                    && fr_plugins_load(second_registry, document, ".", &err) == FR_OK;
-    int still_one = fr_registry_language(second_registry, "daukle.language/target-one") != NULL;
+    int still_one = fr_registry_source(second_registry, "daukle.source/target-one") != NULL;
     destroy_tracked_registry(second_registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
@@ -2514,7 +2499,7 @@ TEST plugin_update_re_resolves_and_takes_the_new_url(void) {
     int built_third = build_tracked_registry(&third_registry, &err) == FR_OK;
     int third_load = fr_lua_runtime_begin(".", third_registry, &err) == FR_OK
                   && fr_plugins_load(third_registry, document, ".", &err) == FR_OK;
-    int got_two = fr_registry_language(third_registry, "daukle.language/target-two") != NULL;
+    int got_two = fr_registry_source(third_registry, "daukle.source/target-two") != NULL;
     destroy_tracked_registry(third_registry);
     fr_lua_runtime_shutdown();
     fr_plugins_report_clear();
@@ -2649,7 +2634,7 @@ TEST fr_plugins_update_cache_with_no_label_touches_only_the_given_entries(void) 
     snprintf(other_only, sizeof other_only, "{\"plugins\":{\"o\":\"%s\"}}", other_url);
 
     /* Seeded with two separate loads, each its own registry: both fetch the
-       same stub body, which registers one fixed language name, and loading
+       same stub body, which registers one fixed source name, and loading
        them together in one call would collide on that name. */
     int declared_seeded = FR_ERR;
     int other_seeded = FR_ERR;
@@ -2826,7 +2811,7 @@ TEST a_local_plugin_with_a_matching_pin_loads_and_a_wrong_one_fails_naming_both_
     cJSON *ok_document = cJSON_Parse(good);
     ASSERT_EQ(FR_OK, fr_lua_runtime_begin("test/fixtures/plugin-local", registry, &err));
     ASSERT_EQ(FR_OK, fr_plugins_load(registry, ok_document, "test/fixtures/plugin-local", &err));
-    ASSERT(fr_registry_language(registry, "daukle.language/hello") != NULL);
+    ASSERT(fr_registry_toolchain(registry, "daukle.toolchain/hello") != NULL);
     cJSON_Delete(ok_document);
     destroy_tracked_registry(registry);
     fr_lua_runtime_shutdown();
@@ -3011,8 +2996,7 @@ static int stub_serves_the_archive(const char *url, const fr_http_header *header
 static const char ARCHIVE_ENTRY[] =
     "daukle.plugin{ api = 1, uses = {} }\n"
     "local greeting = daukle.require(\"lib/greeting\")\n"
-    "daukle.language{ name = greeting.name,\n"
-    "                 apply = function(consumer, resolved, text) return text end }\n";
+    "daukle.source{ name = greeting.name, load = function() return {} end }\n";
 static const char ARCHIVE_MODULE[] = "return { name = \"from-archive\" }\n";
 
 static void build_served_archive(int with_entry) {
@@ -3054,7 +3038,7 @@ static int loads_served_archive(const char *pin, int *out_registered) {
     int status = FR_ERR;
     if (fr_lua_runtime_begin(".", registry, &err) == FR_OK) {
         status = fr_plugins_load(registry, document, ".", &err);
-        *out_registered = fr_registry_language(registry, "daukle.language/from-archive") != NULL;
+        *out_registered = fr_registry_source(registry, "daukle.source/from-archive") != NULL;
     }
     snprintf(archive_message, sizeof archive_message, "%s", err.message);
 
@@ -3345,11 +3329,10 @@ int main(int argc, char **argv) {
     RUN_TEST(a_fetched_manifest_may_not_declare_plugins);
     RUN_TEST(a_fetched_manifest_without_plugins_is_accepted);
     RUN_TEST(fr_project_parse_refuses_a_fetched_manifest_declaring_plugins);
-    RUN_TEST(a_local_plugin_registers_its_language);
-    RUN_TEST(sync_writes_through_a_plugin_registered_language);
+    RUN_TEST(a_local_plugin_registers_its_toolchain);
+    RUN_TEST(sync_generates_through_a_plugin_registered_toolchain);
     RUN_TEST(a_verb_a_plugin_declared_is_there_when_it_runs);
     RUN_TEST(a_manifest_declaring_no_plugins_opens_no_lua_state);
-    RUN_TEST(a_language_plugin_may_declare_exec);
     RUN_TEST(a_source_plugin_may_declare_exec);
     RUN_TEST(a_chunk_may_declare_a_source_beside_a_toolchain_with_exec);
     RUN_TEST(a_plugin_execing_before_it_declares_is_refused_at_the_call);
@@ -3369,7 +3352,7 @@ int main(int argc, char **argv) {
     RUN_TEST(an_override_no_named_module_declares_is_refused);
     RUN_TEST(a_plugin_gets_the_real_libraries_whatever_the_overlay_rebinds);
     RUN_TEST(a_plugin_provisioning_before_it_declares_is_refused_at_the_call);
-    RUN_TEST(a_language_plugin_declaring_tool_but_not_exec_still_loads);
+    RUN_TEST(a_source_plugin_declaring_tool_but_not_exec_still_loads);
     RUN_TEST(a_verb_uses_does_not_know_is_refused);
     RUN_TEST(a_plugin_written_against_a_later_api_says_which);
     RUN_TEST(an_api_below_one_is_refused);

@@ -5,10 +5,7 @@ version = "1.0.0"
 [modules]
 [sources]
 
-[[consumers]]
-id = "text"
-language = "erroring"
-file = "deps.txt"
-configuration = "deps"
+[plugins]
+erroring = "./plugins/erroring.lua"
 
-[consumers.dependencies]
+[toolchains.erroring]

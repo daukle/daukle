@@ -63,7 +63,7 @@ fr_registry *fr_lua_registering_registry(void);
 
 /* True while a plugin chunk is running, so daukle.exec can name that phase in
    its refusal. Generation, see fr_lua_generation_is_running, and a source's
-   load or a language's apply, see fr_lua_process_free_callback_phase, are the
+   load, see fr_lua_process_free_callback_phase, are the
    other named windows. None of them is the refusal of record: that is
    fr_lua_task_dispatch_is_running, checked after them. */
 int fr_lua_plugin_exec_is_refused(void);
@@ -79,8 +79,8 @@ int fr_lua_task_dispatch_is_running(void);
 void fr_lua_enter_task_dispatch(void);
 void fr_lua_leave_task_dispatch(void);
 
-/* A source's load and a language's apply run on every command, often for a
-   dependency the user did not write, so neither may start a process even when
+/* A source's load runs on every command, often for a
+   dependency the user did not write, so it may not start a process even when
    its chunk's `uses` names exec for a task, publish or migrator callback beside it. A
    depth, not a flag, so a load nested inside another load cannot clear the
    gate when it returns. The phase names the outermost callback. D-133. */

@@ -13,8 +13,8 @@
 #define FR_CLI_MAX_WORDS 3
 
 /* A flag-shaped next token is treated as a missing value rather than consumed:
-   "add foo@1.0 --to --modules" must not set add_consumer to the literal
-   string "--modules". */
+   "migrate --report --json" must not set report_path to the literal
+   string "--json". */
 static int has_value_argument(int index, int argc, char **argv) {
     return index + 1 < argc && argv[index + 1][0] != '-';
 }
@@ -66,9 +66,6 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
     out->resolving = 0;
     out->instruction_limit = 0;
     out->memory_limit = 0;
-    out->add_spec = NULL;
-    out->add_consumer = NULL;
-    out->add_modules = NULL;
     out->plugin_label = NULL;
     out->plugin_unknown_subcommand = NULL;
     out->plugin_update_rejected_option = NULL;
@@ -103,10 +100,6 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
             out->verbose = 1;
         } else if (strcmp(argument, "--resolve") == 0) {
             out->resolving = 1;
-        } else if (strcmp(argument, "--to") == 0 && has_value_argument(index, argc, argv)) {
-            out->add_consumer = argv[++index];
-        } else if (strcmp(argument, "--modules") == 0 && has_value_argument(index, argc, argv)) {
-            out->add_modules = argv[++index];
         } else if (strcmp(argument, "--catalog") == 0 && has_value_argument(index, argc, argv)) {
             if (!append_repeated(out->catalogs, &out->catalog_count,
                                  sizeof out->catalogs / sizeof *out->catalogs, argv[++index])) {
@@ -149,11 +142,6 @@ void fr_cli_parse(int argc, char **argv, fr_cli_options *out) {
         if (word_count > 2) return;
         out->command = strcmp(command, "sync") == 0 ? FR_CLI_SYNC : FR_CLI_CHECK;
         if (word_count == 2) out->manifest_path = words[1];
-    } else if (strcmp(command, "add") == 0) {
-        if (word_count != 2 || out->add_consumer == NULL) return;
-        if (strchr(words[1], '@') == NULL) return;
-        out->add_spec = words[1];
-        out->command = FR_CLI_ADD;
     } else if (strcmp(command, "config") == 0) {
         if (word_count < 2 || strcmp(words[1], "print") != 0) return;
         out->command = FR_CLI_CONFIG_PRINT;
@@ -227,10 +215,6 @@ static const fr_cli_command_doc COMMAND_DOCS[] = {
       "Exits non-zero when a sync would do work. A fresh clone of a generating toolchain is\n"
       "legitimately out of sync, so this is not a precondition for sync, it is the assertion\n"
       "that one has already run." },
-    { FR_CLI_ADD, "add", "add <project>@<range> --to <consumer> [--modules a,b]",
-      "record a dependency in the manifest",
-      "The range is a requirement rather than a version: what it resolves to is decided at sync\n"
-      "time and written to the lock, not here." },
     { FR_CLI_CONFIG_PRINT, "config", "config print [manifest]",
       "print the configuration as daukle resolved it", NULL },
     { FR_CLI_PLUGIN_UPDATE, "plugin", "plugin update [label]",
