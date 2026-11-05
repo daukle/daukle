@@ -30,7 +30,7 @@ int fr_manifest_read_source(const cJSON *entry, const char *project_name, fr_sou
 static int read_dependency(const cJSON *entry, const char *project_name, const char *owner_path,
                            fr_dependency *out, fr_error *err) {
     memset(out, 0, sizeof *out);
-    char path[320];
+    char path[640];
     snprintf(path, sizeof path, "%s.dependencies.%s", owner_path, project_name);
 
     out->project = fr_manifest_duplicate(project_name);
