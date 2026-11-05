@@ -407,6 +407,45 @@ TEST a_translator_from_a_plugin_other_than_the_replacer_does_not_answer(void) {
     PASS();
 }
 
+/* A translator may carry its own generated files, confined to the directory of
+   the plugin it belongs to, as a migrator's are to its instance's: daukle/npm
+   writes the pins of the dependencies daukle/node's migrator hands it. */
+TEST a_translator_writes_files_in_its_own_directory(void) {
+    migrate_case test_case;
+    open_case(&test_case, "translatorfiles", "hello");
+    serve_releaser_catalog(&test_case, FIXTURES "/plugin-foreign.lua", FIXTURES "/releaser-files.lua");
+    run_case(&test_case);
+    char *pins = project_text(&test_case, "daukle/releaser/pins.txt");
+    int written = pins != NULL && strcmp(pins, "pinned, resolving false") == 0;
+    free(pins);
+    int status = test_case.status;
+    fr_migrate_outcome outcome = test_case.outcome;
+    close_case(&test_case);
+
+    ASSERT_EQm(last_message, FR_OK, status);
+    ASSERT_EQm(last_message, FR_MIGRATE_DONE, outcome);
+    ASSERT(written);
+    PASS();
+}
+
+TEST a_translator_file_outside_its_directory_is_refused(void) {
+    migrate_case test_case;
+    open_case(&test_case, "translatorelsewhere", "hello");
+    serve_releaser_catalog(&test_case, FIXTURES "/plugin-foreign.lua",
+                           FIXTURES "/releaser-files-elsewhere.lua");
+    run_case(&test_case);
+    int status = test_case.status;
+    int named = strstr(test_case.err.message, "\"daukle/stub/pins.txt\" must be a relative file path below"
+                                     " daukle/releaser/") != NULL;
+    int wrote = project_file_exists(&test_case, "daukle/stub/pins.txt");
+    close_case(&test_case);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(last_message, named);
+    ASSERT_FALSE(wrote);
+    PASS();
+}
+
 typedef struct {
     int status;
     fr_migrate_outcome outcome;
@@ -964,6 +1003,8 @@ int main(int argc, char **argv) {
     RUN_TEST(an_unclaimed_foreign_plugin_is_a_blocker);
     RUN_TEST(a_translator_carries_a_foreign_plugin_over);
     RUN_TEST(a_translator_from_a_plugin_other_than_the_replacer_does_not_answer);
+    RUN_TEST(a_translator_writes_files_in_its_own_directory);
+    RUN_TEST(a_translator_file_outside_its_directory_is_refused);
     RUN_TEST(an_owned_path_that_does_not_exist_writes_nothing);
     RUN_TEST(nested_owned_paths_write_nothing);
     RUN_TEST(an_occupied_place_in_the_old_directory_writes_nothing);

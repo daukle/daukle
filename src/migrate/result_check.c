@@ -191,22 +191,27 @@ static int check_file_entry(const cJSON *entry, const char *instance, const char
     return FR_OK;
 }
 
-static int check_files(const cJSON *result, const char *who, fr_error *err) {
-    const cJSON *files = member(result, "files");
-    if (files == NULL) return FR_OK;
+static int check_files_below(const cJSON *files, const char *directory, const char *who,
+                             fr_error *err) {
     if (!fr_json_is_array_or_empty_table(files)) {
         return malformed(err, who, "files", "must be a list of { path, text } entries");
     }
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, files) {
+        if (check_file_entry(entry, directory, who, err) != FR_OK) return FR_ERR;
+    }
+    return FR_OK;
+}
+
+static int check_files(const cJSON *result, const char *who, fr_error *err) {
+    const cJSON *files = member(result, "files");
+    if (files == NULL) return FR_OK;
     const char *instance = single_instance_name(result);
-    if (instance == NULL) {
+    if (instance == NULL && fr_json_is_array_or_empty_table(files)) {
         return malformed(err, who, "files", "needs a manifest with exactly one toolchain, whose"
                                             " name is the directory the files belong to");
     }
-    const cJSON *entry = NULL;
-    cJSON_ArrayForEach(entry, files) {
-        if (check_file_entry(entry, instance, who, err) != FR_OK) return FR_ERR;
-    }
-    return FR_OK;
+    return check_files_below(files, instance, who, err);
 }
 
 static int check_compare_entry(const cJSON *entry, const char *who, fr_error *err) {
@@ -279,9 +284,11 @@ int fr_migrate_check_run_result(const cJSON *result, const char *label, fr_block
     return check_proof(result, who, blockers, err);
 }
 
-int fr_migrate_check_translation(const cJSON *result, const char *source, fr_blockers *blockers,
-                                 fr_error *err) {
+int fr_migrate_check_translation(const cJSON *result, const char *source, const char *replacer,
+                                 fr_blockers *blockers, fr_error *err) {
     if (!cJSON_IsObject(result)) return malformed(err, source, "the result", "must be a table");
     if (check_manifest(result, source, err) != FR_OK) return FR_ERR;
+    const cJSON *files = member(result, "files");
+    if (files != NULL && check_files_below(files, replacer, source, err) != FR_OK) return FR_ERR;
     return check_blockers(result, source, blockers, err);
 }
