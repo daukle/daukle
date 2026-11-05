@@ -26,10 +26,17 @@
 
 static const char *const FIRST_KEYS[] = { "schema", "project", "version", "modules", "plugins" };
 
+static int holds_files(const cJSON *result) {
+    const cJSON *files = cJSON_GetObjectItemCaseSensitive(result, "files");
+    return files != NULL && cJSON_GetArraySize(files) > 0;
+}
+
 static int returned_any_files(const fr_migrate_state *state) {
     for (size_t index = 0; index < state->kept_count; index++) {
-        const cJSON *files = cJSON_GetObjectItemCaseSensitive(state->kept[index].result, "files");
-        if (files != NULL && cJSON_GetArraySize(files) > 0) return 1;
+        if (holds_files(state->kept[index].result)) return 1;
+    }
+    for (size_t index = 0; index < state->foreign_count; index++) {
+        if (holds_files(state->foreign[index].translation)) return 1;
     }
     return 0;
 }
@@ -322,15 +329,24 @@ static int write_carried_file(const cJSON *entry, fr_error *err) {
     return fr_file_write_text(path, text, err);
 }
 
-/** The paths were checked by fr_migrate_check_run_result, which confines each
-    to daukle/<instance>/, so nothing here can reach the old tool's files. */
+static int write_files_of(const cJSON *result, fr_error *err) {
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, cJSON_GetObjectItemCaseSensitive(result, "files")) {
+        if (write_carried_file(entry, err) != FR_OK) return FR_ERR;
+    }
+    return FR_OK;
+}
+
+/** The paths were checked by fr_migrate_check_run_result and
+    fr_migrate_check_translation, which confine each to daukle/<instance>/ or
+    daukle/<replacer>/, so nothing here can reach the old tool's files. */
 static int write_files(const fr_migrate_state *state, fr_error *err) {
     for (size_t index = 0; index < state->kept_count; index++) {
-        const cJSON *entry = NULL;
-        cJSON_ArrayForEach(entry, cJSON_GetObjectItemCaseSensitive(state->kept[index].result,
-                                                                   "files")) {
-            if (write_carried_file(entry, err) != FR_OK) return FR_ERR;
-        }
+        if (write_files_of(state->kept[index].result, err) != FR_OK) return FR_ERR;
+    }
+    for (size_t index = 0; index < state->foreign_count; index++) {
+        const cJSON *translation = state->foreign[index].translation;
+        if (translation != NULL && write_files_of(translation, err) != FR_OK) return FR_ERR;
     }
     return FR_OK;
 }

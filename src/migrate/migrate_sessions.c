@@ -238,7 +238,8 @@ static int translate(fr_migrate_state *state, const fr_registry *registry,
     if (status != FR_OK) return FR_ERR;
     char source[FR_MIGRATE_TEXT_SIZE];
     snprintf(source, sizeof source, "translator %s/%s", kept->tool, id);
-    return fr_migrate_check_translation(record->translation, source, &state->blockers, err);
+    return fr_migrate_check_translation(record->translation, source, record->replacer->id,
+                                        &state->blockers, err);
 }
 
 static int build_old(const fr_registry *registry, const fr_migrate_kept *kept, fr_error *err) {
