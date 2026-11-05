@@ -418,9 +418,9 @@ daukle.translator{
 ```
 
 `translate` receives `{ tool, kind, id, instance, resolving, config? }` and returns `{ manifest, blockers }`,
-checked as above, and since api 8 optionally `files`, each confined to `daukle/<plugin id>/`, the
-directory of the plugin the translator belongs to, and written before the proof as a migrator's
-are. **A translator is process free**: `exec` and `provision` are refused by name, exactly as in a
+checked as above, and since api 8 optionally `files`, each below `daukle/<instance>/` of a
+toolchain instance the translation's own manifest sets, and written before the proof as a
+migrator's are. **A translator is process free**: `exec` and `provision` are refused by name, exactly as in a
 source's `load`, so it cannot start the old tool. `daukle.pin` works in a `--resolve` run, which is
 how a resolver pins what a migrator handed it.
 

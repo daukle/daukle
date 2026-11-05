@@ -344,7 +344,7 @@ TEST a_fragment_setting_an_instance_key_core_owns_is_an_error(void) {
 
         cJSON *translation = parse(json);
         ASSERT(translation != NULL);
-        ASSERT_EQ(FR_ERR, fr_migrate_check_translation(translation, "translator gradle/dep", "dep",
+        ASSERT_EQ(FR_ERR, fr_migrate_check_translation(translation, "translator gradle/dep",
                                                        &blockers, &err));
         ASSERTm(err.message, strstr(err.message, "translator gradle/dep") != NULL);
         cJSON_Delete(translation);
@@ -366,13 +366,13 @@ TEST a_translation_records_blockers_and_refuses_core_keys(void) {
     fr_error err;
     cJSON *result = parse("{\"manifest\":{\"x\":1},\"blockers\":[{\"construct\":\"c\","
                           "\"where\":\"w\",\"why\":\"y\"}]}");
-    ASSERT_EQ(FR_OK, fr_migrate_check_translation(result, "translator gradle/dep", "dep", &blockers, &err));
+    ASSERT_EQ(FR_OK, fr_migrate_check_translation(result, "translator gradle/dep", &blockers, &err));
     ASSERT_EQ(1, blockers.count);
     ASSERT_STR_EQ("translator gradle/dep", blockers.items[0].source);
     cJSON_Delete(result);
 
     result = parse("{\"manifest\":{\"plugins\":{}}}");
-    ASSERT_EQ(FR_ERR, fr_migrate_check_translation(result, "translator gradle/dep", "dep", &blockers, &err));
+    ASSERT_EQ(FR_ERR, fr_migrate_check_translation(result, "translator gradle/dep", &blockers, &err));
     ASSERT(strstr(err.message, "translator gradle/dep") != NULL);
     cJSON_Delete(result);
     fr_blockers_free(&blockers);

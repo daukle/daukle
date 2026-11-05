@@ -203,6 +203,44 @@ static int check_files_below(const cJSON *files, const char *directory, const ch
     return FR_OK;
 }
 
+/* The toolchain instance of the translation's own manifest whose daukle/<instance>/ holds
+   path, or NULL when none does. */
+static const char *owning_instance(const cJSON *result, const char *path) {
+    const cJSON *manifest = member(result, "manifest");
+    const cJSON *toolchains = manifest != NULL
+        ? cJSON_GetObjectItemCaseSensitive(manifest, "toolchains") : NULL;
+    const cJSON *instance = NULL;
+    cJSON_ArrayForEach(instance, toolchains) {
+        if (instance->string != NULL && is_inside_instance_directory(path, instance->string)) {
+            return instance->string;
+        }
+    }
+    return NULL;
+}
+
+/** A translator writes files only for the toolchain instances its own manifest sets, as a
+    migrator writes them only for its own instance. */
+static int check_translation_files(const cJSON *result, const char *who, fr_error *err) {
+    const cJSON *files = member(result, "files");
+    if (files == NULL) return FR_OK;
+    if (!fr_json_is_array_or_empty_table(files)) {
+        return malformed(err, who, "files", "must be a list of { path, text } entries");
+    }
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, files) {
+        const cJSON *path = cJSON_IsObject(entry) ? cJSON_GetObjectItemCaseSensitive(entry, "path") : NULL;
+        const char *instance = is_string(path) ? owning_instance(result, path->valuestring) : NULL;
+        if (is_string(path) && instance == NULL) {
+            fr_error_set(err, "%s returned a malformed result: files path \"%s\" must be a relative"
+                              " file path below daukle/<instance>/ of a toolchain instance its"
+                              " manifest sets", who, path->valuestring);
+            return FR_ERR;
+        }
+        if (check_file_entry(entry, instance, who, err) != FR_OK) return FR_ERR;
+    }
+    return FR_OK;
+}
+
 static int check_files(const cJSON *result, const char *who, fr_error *err) {
     const cJSON *files = member(result, "files");
     if (files == NULL) return FR_OK;
@@ -284,11 +322,10 @@ int fr_migrate_check_run_result(const cJSON *result, const char *label, fr_block
     return check_proof(result, who, blockers, err);
 }
 
-int fr_migrate_check_translation(const cJSON *result, const char *source, const char *replacer,
-                                 fr_blockers *blockers, fr_error *err) {
+int fr_migrate_check_translation(const cJSON *result, const char *source, fr_blockers *blockers,
+                                 fr_error *err) {
     if (!cJSON_IsObject(result)) return malformed(err, source, "the result", "must be a table");
     if (check_manifest(result, source, err) != FR_OK) return FR_ERR;
-    const cJSON *files = member(result, "files");
-    if (files != NULL && check_files_below(files, replacer, source, err) != FR_OK) return FR_ERR;
+    if (check_translation_files(result, source, err) != FR_OK) return FR_ERR;
     return check_blockers(result, source, blockers, err);
 }
