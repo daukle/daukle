@@ -339,9 +339,10 @@ int fr_migrate_refuse_detected_toolchain(const cJSON *result, const char *source
                                          const char *const *detected, size_t detected_count,
                                          fr_error *err) {
     const cJSON *manifest = member(result, "manifest");
+    const cJSON *toolchains = manifest != NULL
+        ? cJSON_GetObjectItemCaseSensitive(manifest, "toolchains") : NULL;
     const cJSON *instance = NULL;
-    cJSON_ArrayForEach(instance, manifest != NULL
-                                     ? cJSON_GetObjectItemCaseSensitive(manifest, "toolchains") : NULL) {
+    cJSON_ArrayForEach(instance, toolchains) {
         if (!cJSON_IsObject(instance)
             || cJSON_GetObjectItemCaseSensitive(instance, "toolchain") == NULL) {
             continue;
