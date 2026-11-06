@@ -34,8 +34,9 @@
    the "daukle.array" mark on a table pushed from an array. Api 6 is core loading
    a committed daukle/<dir>/<file> pin file with no include line (D-201). Api 7 is
    context.resolving in generate and task callbacks (D-202). Api 8 is a translator's files. Api 9
-   is the "archive-json" proof comparison (D-250). */
-#define FR_PLUGIN_API_PROVIDED 9
+   is the "archive-json" proof comparison (D-250). Api 10 is a migrator's `instances` result
+   (D-248). */
+#define FR_PLUGIN_API_PROVIDED 10
 
 static fr_plugin_declaration *declaration_in_progress;
 
