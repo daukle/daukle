@@ -32,6 +32,10 @@ typedef struct {
 int fr_detect(const char *root, const fr_catalog *catalog, const char *const *with,
               size_t with_count, fr_detections *out, fr_error *err);
 
+/* Records plugin at dir unless it is already recorded there. */
+int fr_detections_add(fr_detections *detections, const fr_catalog_plugin *plugin, const char *dir,
+                      fr_error *err);
+
 void fr_detections_free(fr_detections *detections);
 
 /* Exposed for the tests: "*" and "?" within one name, nothing else special. */
