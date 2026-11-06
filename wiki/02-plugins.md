@@ -389,7 +389,7 @@ return {
 | `blockers` | what cannot be expressed, each `{ construct, where, why, surface? }` |
 | `owned` | the relative paths of the old tool's files, moved to `build/daukle/migrate/old` once the proof passes. `daukle.toml`, `daukle.lua`, `.`, `build` and anything at or below `build/daukle` are refused, as is a path that climbs out or holds a backslash |
 | `files` | optional, `api = 4`: a list of `{ path, text }` that daukle writes beside `daukle.toml` before the proof runs, creating directories. `path` is relative to the project and must be a file below `daukle/<instance>/`, where `<instance>` is the one toolchain the returned `manifest` names; an absolute path, `..`, a backslash, a control character or a directory is refused, and so is a `text` that is not a string. On a failed proof the files stay beside `daukle.toml` |
-| `proof` | `{ task, compare }`: the task to run in the new project, and the artifacts to compare, each `{ old, new, as }` with `as` either `"bytes"` or `"archive"` and both paths relative to the project |
+| `proof` | `{ task, compare }`: the task to run in the new project, and the artifacts to compare, each `{ old, new, as }` with `as` one of `"bytes"`, `"archive"` or, since api 9, `"archive-json"`, and both paths relative to the project |
 
 **A result that is not this shape is an error naming the plugin**, because it is a plugin bug and
 not a fact about the user's project. A missing `proof`, or an empty `compare`, is a blocker instead:
@@ -398,7 +398,10 @@ object, and every list key accepts it as an empty list.
 
 `as = "archive"` compares the file members' names and bytes and ignores their order, directory
 members and timestamps, so a jar written by a different tool still compares equal for the same
-content. A symlink member is always a difference. `as = "bytes"` compares the two files.
+content. A symlink member is always a difference. `as = "archive-json"` does the same and compares a
+member named `*.json` by its parsed value, so whitespace and key order do not count, for a plugin
+that renders a manifest into the archive itself; a member that does not parse is compared by its
+bytes. `as = "bytes"` compares the two files.
 
 After the manifest is written, migrate runs the new project's `proof.task`, and `build` has already
 built the old project with `context.proof` set to the same `proof` table, so `compare.old` exists

@@ -47,8 +47,55 @@ static int grow_members(proof_members *list, fr_error *err) {
     return FR_OK;
 }
 
+static int ends_with_json(const char *name) {
+    size_t length = strlen(name);
+    return length >= 5 && strcmp(name + length - 5, ".json") == 0;
+}
+
+static int compare_keys(const void *left, const void *right) {
+    const cJSON *first = *(const cJSON *const *) left;
+    const cJSON *second = *(const cJSON *const *) right;
+    return strcmp(first->string, second->string);
+}
+
+/* Relinks every object's members in key order, recursively, so two documents that hold the same
+   value print the same. Returns 0 when out of memory. */
+static int sort_object_keys(cJSON *item) {
+    size_t count = 0;
+    for (cJSON *child = item->child; child != NULL; child = child->next) {
+        if (!sort_object_keys(child)) return 0;
+        count++;
+    }
+    if (!cJSON_IsObject(item) || count < 2) return 1;
+    cJSON **children = malloc(count * sizeof *children);
+    if (children == NULL) return 0;
+    size_t index = 0;
+    for (cJSON *child = item->child; child != NULL; child = child->next) children[index++] = child;
+    qsort(children, count, sizeof *children, compare_keys);
+    for (index = 0; index < count; index++) {
+        children[index]->prev = index == 0 ? children[count - 1] : children[index - 1];
+        children[index]->next = index + 1 < count ? children[index + 1] : NULL;
+    }
+    item->child = children[0];
+    free(children);
+    return 1;
+}
+
+/* The digest of a JSON member's value, independent of whitespace and key order, or 0 when the
+   member is not JSON, so it is compared by its bytes instead. */
+static int json_value_digest(const fr_archive_member *member, char *digest) {
+    cJSON *parsed = cJSON_ParseWithLength((const char *) member->bytes, member->length);
+    if (parsed == NULL) return 0;
+    char *canonical = sort_object_keys(parsed) ? cJSON_PrintUnformatted(parsed) : NULL;
+    cJSON_Delete(parsed);
+    if (canonical == NULL) return 0;
+    fr_sha256_hex(canonical, strlen(canonical), digest);
+    cJSON_free(canonical);
+    return 1;
+}
+
 static int add_member(proof_members *list, const fr_archive_member *member, const char *path,
-                      fr_error *err) {
+                      int json_values, fr_error *err) {
     if (list->count >= MAX_MEMBERS) {
         fr_error_set(err, "comparing \"%s\": it holds more than %u members", path, MAX_MEMBERS);
         return FR_ERR;
@@ -62,7 +109,9 @@ static int add_member(proof_members *list, const fr_archive_member *member, cons
     }
     entry->is_symlink = member->kind == FR_MEMBER_SYMLINK;
     entry->digest[0] = '\0';
-    if (!entry->is_symlink) fr_sha256_hex(member->bytes, member->length, entry->digest);
+    int by_value = !entry->is_symlink && json_values && ends_with_json(entry->name)
+                   && json_value_digest(member, entry->digest);
+    if (!entry->is_symlink && !by_value) fr_sha256_hex(member->bytes, member->length, entry->digest);
     list->count++;
     return FR_OK;
 }
@@ -71,7 +120,7 @@ static int compare_members_by_name(const void *left, const void *right) {
     return strcmp(((const proof_member *) left)->name, ((const proof_member *) right)->name);
 }
 
-static int list_archive(const char *path, proof_members *list, fr_error *err) {
+static int list_archive(const char *path, int json_values, proof_members *list, fr_error *err) {
     fr_archive *archive = NULL;
     if (fr_archive_open(path, MAX_MEMBER_BYTES, &archive, err) != FR_OK) return FR_ERR;
     const fr_archive_member *member = NULL;
@@ -83,7 +132,7 @@ static int list_archive(const char *path, proof_members *list, fr_error *err) {
             return FR_OK;
         }
         if (member->kind == FR_MEMBER_DIRECTORY) continue;
-        if (add_member(list, member, path, err) != FR_OK) break;
+        if (add_member(list, member, path, json_values, err) != FR_OK) break;
     }
     fr_archive_close(archive);
     free_members(list);
@@ -204,12 +253,12 @@ static int walk_sorted_members(const proof_members *old_list, const proof_member
     return status;
 }
 
-int fr_proof_list_archive_differences(const char *old_path, const char *new_path,
+int fr_proof_list_archive_differences(const char *old_path, const char *new_path, int json_values,
                                       fr_proof_differences *out, fr_error *err) {
     proof_members old_list = { 0 };
     proof_members new_list = { 0 };
-    if (list_archive(old_path, &old_list, err) != FR_OK) return FR_ERR;
-    if (list_archive(new_path, &new_list, err) != FR_OK) {
+    if (list_archive(old_path, json_values, &old_list, err) != FR_OK) return FR_ERR;
+    if (list_archive(new_path, json_values, &new_list, err) != FR_OK) {
         free_members(&old_list);
         return FR_ERR;
     }
@@ -220,10 +269,10 @@ int fr_proof_list_archive_differences(const char *old_path, const char *new_path
     return status;
 }
 
-int fr_proof_compare_archives(const char *old_path, const char *new_path, int *out_same,
+int fr_proof_compare_archives(const char *old_path, const char *new_path, int json_values, int *out_same,
                               char *difference, size_t difference_size, fr_error *err) {
     fr_proof_differences list = { 0 };
-    if (fr_proof_list_archive_differences(old_path, new_path, &list, err) != FR_OK) return FR_ERR;
+    if (fr_proof_list_archive_differences(old_path, new_path, json_values, &list, err) != FR_OK) return FR_ERR;
     *out_same = list.count == 0;
     if (list.count > 0 && difference_size > 0) {
         fr_proof_describe_archive_difference(&list.items[0], difference, difference_size);

@@ -207,6 +207,44 @@ TEST an_archive_member_with_other_bytes_is_named(void) {
     PASS();
 }
 
+static int compares_json_member(fr_proof_kind kind, const char *old_text, const char *new_text,
+                                const char *name, int *same) {
+    const char *names[] = { name };
+    const char *old_contents[] = { old_text };
+    const char *new_contents[] = { new_text };
+    if (!write_zip("old.zip", names, old_contents, 1) || !write_zip("new.zip", names, new_contents, 1)) return 0;
+    char difference[DIFFERENCE_SIZE] = "";
+    fr_error err;
+    return compare(kind, "old.zip", "new.zip", same, difference, &err) == FR_OK;
+}
+
+TEST archive_json_compares_a_json_member_by_its_value(void) {
+    const char *old_text = "{\n  \"b\": [1, {\"y\": 2, \"x\": 1}],\n  \"a\": \"t\"\n}\n";
+    const char *new_text = "{\"a\":\"t\",\"b\":[1,{\"x\":1,\"y\":2}]}";
+    int same = 0;
+    ASSERT(compares_json_member(FR_PROOF_ARCHIVE_JSON, old_text, new_text, "package/package.json", &same));
+    ASSERT(same);
+    ASSERT(compares_json_member(FR_PROOF_ARCHIVE, old_text, new_text, "package/package.json", &same));
+    ASSERT(!same);
+    PASS();
+}
+
+TEST archive_json_still_names_a_json_member_whose_value_differs(void) {
+    int same = 1;
+    ASSERT(compares_json_member(FR_PROOF_ARCHIVE_JSON, "{\"a\": [1, 2]}", "{\"a\": [2, 1]}", "x.json", &same));
+    ASSERT(!same);
+    PASS();
+}
+
+TEST archive_json_compares_other_members_by_their_bytes(void) {
+    int same = 1;
+    ASSERT(compares_json_member(FR_PROOF_ARCHIVE_JSON, "{\"a\": 1}", "{ \"a\": 1 }", "x.txt", &same));
+    ASSERT(!same);
+    ASSERT(compares_json_member(FR_PROOF_ARCHIVE_JSON, "{\"a\": 1", "{ \"a\": 1", "broken.json", &same));
+    ASSERT(!same);
+    PASS();
+}
+
 TEST a_missing_side_is_an_error(void) {
     ASSERT(write_file("new.bin", "x", 1));
     int same = 1;
@@ -339,6 +377,8 @@ TEST the_kind_vocabulary_is_parsed_in_one_place(void) {
     ASSERT_EQ(FR_PROOF_BYTES, kind);
     ASSERT_EQ(FR_OK, fr_proof_kind_parse("archive", &kind));
     ASSERT_EQ(FR_PROOF_ARCHIVE, kind);
+    ASSERT_EQ(FR_OK, fr_proof_kind_parse("archive-json", &kind));
+    ASSERT_EQ(FR_PROOF_ARCHIVE_JSON, kind);
     ASSERT_EQ(FR_ERR, fr_proof_kind_parse("Bytes", &kind));
     ASSERT_EQ(FR_ERR, fr_proof_kind_parse("", &kind));
     PASS();
@@ -357,6 +397,9 @@ SUITE(migrate_proof) {
     RUN_TEST(archives_with_the_same_members_in_another_order_are_the_same);
     RUN_TEST(an_archive_member_missing_on_one_side_is_named);
     RUN_TEST(an_archive_member_with_other_bytes_is_named);
+    RUN_TEST(archive_json_compares_a_json_member_by_its_value);
+    RUN_TEST(archive_json_still_names_a_json_member_whose_value_differs);
+    RUN_TEST(archive_json_compares_other_members_by_their_bytes);
     RUN_TEST(a_missing_side_is_an_error);
     RUN_TEST(archive_timestamps_are_ignored);
     RUN_TEST(the_kind_vocabulary_is_parsed_in_one_place);
