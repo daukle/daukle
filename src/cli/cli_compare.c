@@ -58,7 +58,7 @@ int fr_cli_compare(const fr_cli_options *options) {
     const char *as = options->compare_as != NULL ? options->compare_as : "bytes";
     fr_proof_kind kind;
     if (fr_proof_kind_parse(as, &kind) != FR_OK) {
-        fprintf(stderr, "daukle: --as takes \"bytes\" or \"archive\", not \"%s\"\n", as);
+        fprintf(stderr, "daukle: --as takes \"bytes\", \"archive\" or \"archive-json\", not \"%s\"\n", as);
         return 2;
     }
     const char *not_a_file = first_non_file(options);
