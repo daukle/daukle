@@ -240,8 +240,9 @@ int fr_proof_compare(const char *root, const char *old_path, const char *new_pat
         || join_path(root, new_path, new_full, err) != FR_OK) {
         return FR_ERR;
     }
-    if (kind == FR_PROOF_ARCHIVE) {
-        return fr_proof_compare_archives(old_full, new_full, out_same, difference, difference_size, err);
+    if (kind != FR_PROOF_BYTES) {
+        return fr_proof_compare_archives(old_full, new_full, kind == FR_PROOF_ARCHIVE_JSON, out_same,
+                                         difference, difference_size, err);
     }
     return compare_bytes(old_full, new_full, out_same, difference, difference_size, err);
 }
@@ -274,8 +275,8 @@ int fr_proof_list_differences(const char *root, const char *old_path, const char
         || join_path(root, new_path, new_full, err) != FR_OK) {
         return FR_ERR;
     }
-    if (kind == FR_PROOF_ARCHIVE) {
-        return fr_proof_list_archive_differences(old_full, new_full, out, err);
+    if (kind != FR_PROOF_BYTES) {
+        return fr_proof_list_archive_differences(old_full, new_full, kind == FR_PROOF_ARCHIVE_JSON, out, err);
     }
     return list_bytes_difference(old_full, new_full, out, err);
 }
@@ -287,6 +288,10 @@ int fr_proof_kind_parse(const char *text, fr_proof_kind *out) {
     }
     if (strcmp(text, "archive") == 0) {
         *out = FR_PROOF_ARCHIVE;
+        return FR_OK;
+    }
+    if (strcmp(text, "archive-json") == 0) {
+        *out = FR_PROOF_ARCHIVE_JSON;
         return FR_OK;
     }
     return FR_ERR;

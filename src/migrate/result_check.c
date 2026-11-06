@@ -267,7 +267,7 @@ static int check_compare_entry(const cJSON *entry, const char *who, fr_error *er
     fr_proof_kind parsed_kind;
     if (fr_proof_kind_parse(kind->valuestring, &parsed_kind) != FR_OK) {
         fr_error_set(err, "%s returned a malformed result: proof.compare \"as\" is \"%s\", and"
-                          " must be \"bytes\" or \"archive\"", who, kind->valuestring);
+                          " must be \"bytes\", \"archive\" or \"archive-json\"", who, kind->valuestring);
         return FR_ERR;
     }
     if (!fr_manifest_relative_path_is_safe(old_path->valuestring)
