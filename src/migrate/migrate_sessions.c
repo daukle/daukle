@@ -159,6 +159,33 @@ static fr_migrate_call call_for(const fr_migrate_kept *kept, const cJSON *proof)
     return call;
 }
 
+static int is_below(const char *dir, const char *path) {
+    if (dir == NULL) return 1;
+    size_t length = strlen(dir);
+    return strncmp(dir, path, length) == 0 && path[length] == '/' && path[length + 1] != '\0';
+}
+
+/** Records each directory a migrator handed back in `instances` as a detection of the same
+    plugin, so this session's loop runs the same migrator on it next (api 10). */
+static int add_handed_instances(fr_migrate_state *state, const fr_catalog_plugin *plugin,
+                                const char *label, const char *dir, const cJSON *result,
+                                fr_error *err) {
+    const cJSON *instances = cJSON_GetObjectItemCaseSensitive(result, "instances");
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, instances) {
+        if (!is_below(dir, entry->valuestring)) {
+            fr_error_set(err, "migrator %s returned a malformed result: instance \"%s\" is not a"
+                              " directory below \"%s\", the one it was asked about",
+                         label, entry->valuestring, dir != NULL ? dir : ".");
+            return FR_ERR;
+        }
+        if (fr_detections_add(&state->detections, plugin, entry->valuestring, err) != FR_OK) {
+            return FR_ERR;
+        }
+    }
+    return FR_OK;
+}
+
 static int run_migrator(fr_migrate_state *state, const fr_registry *registry,
                         const fr_detection *detection, fr_error *err) {
     const char *label = detection->plugin->id;
@@ -177,7 +204,10 @@ static int run_migrator(fr_migrate_state *state, const fr_registry *registry,
     fr_migrate_kept *kept = &state->kept[state->kept_count - 1];
     fr_migrate_call call = call_for(kept, NULL);
     if (fr_lua_dispatch_migrator_run(migrator, &call, &kept->result, err) != FR_OK) return FR_ERR;
-    return fr_migrate_check_run_result(kept->result, label, &state->blockers, err);
+    if (fr_migrate_check_run_result(kept->result, label, &state->blockers, err) != FR_OK) {
+        return FR_ERR;
+    }
+    return add_handed_instances(state, detection->plugin, label, kept->dir, kept->result, err);
 }
 
 int fr_migrate_session_a(fr_migrate_state *state, fr_error *err) {

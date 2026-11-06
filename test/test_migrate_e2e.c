@@ -990,8 +990,124 @@ TEST a_detection_in_a_subdirectory_migrates_as_its_own_instance(void) {
     PASS();
 }
 
+/* A root detection and one in "web", which detection collapses into the root's; the root
+   migrator hands back what root_instances lists. */
+static void open_instances_case(migrate_case *test_case, const char *label,
+                                const char *root_instances) {
+    open_case(test_case, label, "hello");
+    const char *directories[] = { "web", "web/out" };
+    make_project_directories(test_case, directories, 2);
+    char path[1024];
+    project_path(test_case, "instances.txt", path, sizeof path);
+    write_bytes(path, root_instances);
+    project_path(test_case, "web/instances.txt", path, sizeof path);
+    write_bytes(path, "");
+    project_path(test_case, "web/faketool.conf", path, sizeof path);
+    copy_fixture_file(FIXTURES "/project/faketool.conf", path);
+    project_path(test_case, "web/out/greeting.txt", path, sizeof path);
+    write_bytes(path, "hello");
+    serve_stub_catalog_rule(test_case, FIXTURES "/plugin-instances.lua",
+                            "{\"files\":[\"faketool.conf\"],\"scope\":\"tree\"}");
+}
+
+TEST a_handed_back_instance_migrates_as_its_own(void) {
+    migrate_case test_case;
+    open_instances_case(&test_case, "handed", "web\n");
+    run_case(&test_case);
+
+    char *manifest = project_text(&test_case, "daukle.toml");
+    int names_root = manifest != NULL && strstr(manifest, "[toolchains.stub]") != NULL;
+    int names_web = manifest != NULL && strstr(manifest, "[toolchains.stub-web]") != NULL;
+    int names_dir = manifest != NULL && strstr(manifest, "dir = \"web\"") != NULL;
+    free(manifest);
+    int root_moved = project_file_exists(&test_case, "build/daukle/migrate/old/faketool.conf");
+    int web_moved = project_file_exists(&test_case, "build/daukle/migrate/old/web/faketool.conf");
+    int status = test_case.status;
+    fr_migrate_outcome outcome = test_case.outcome;
+    close_case(&test_case);
+
+    ASSERT_EQm(last_message, FR_OK, status);
+    ASSERT_EQm(last_message, FR_MIGRATE_DONE, outcome);
+    ASSERT(names_root);
+    ASSERT(names_web);
+    ASSERT(names_dir);
+    ASSERT(root_moved);
+    ASSERT(web_moved);
+    PASS();
+}
+
+TEST a_collapsed_detection_stays_the_outer_ones_without_instances(void) {
+    migrate_case test_case;
+    open_instances_case(&test_case, "collapsed", "");
+    run_case(&test_case);
+
+    char *manifest = project_text(&test_case, "daukle.toml");
+    int names_web = manifest != NULL && strstr(manifest, "stub-web") != NULL;
+    free(manifest);
+    int web_kept_in_place = project_file_exists(&test_case, "web/faketool.conf");
+    int status = test_case.status;
+    close_case(&test_case);
+
+    ASSERT_EQm(last_message, FR_OK, status);
+    ASSERT_FALSE(names_web);
+    ASSERT(web_kept_in_place);
+    PASS();
+}
+
+static int refuses_handed_instances(const char *label, const char *root_instances,
+                                    const char *needle) {
+    migrate_case test_case;
+    open_instances_case(&test_case, label, root_instances);
+    run_case(&test_case);
+    int wrote = project_file_exists(&test_case, "daukle.toml");
+    int explained = strstr(test_case.err.message, needle) != NULL;
+    snprintf(last_message, sizeof last_message, "%s", test_case.err.message);
+    int status = test_case.status;
+    close_case(&test_case);
+    return status == FR_ERR && !wrote && explained;
+}
+
+TEST an_instance_inside_the_derived_tree_is_a_malformed_result(void) {
+    ASSERTm(last_message, refuses_handed_instances("derived", "build/daukle/x\n",
+                                                   "instance \"build/daukle/x\" must be a relative"));
+    PASS();
+}
+
+TEST an_instance_that_climbs_out_is_a_malformed_result(void) {
+    ASSERTm(last_message, refuses_handed_instances("climbs", "../elsewhere\n",
+                                                   "instance \"../elsewhere\" must be a relative"));
+    PASS();
+}
+
+TEST an_instance_outside_the_asking_directory_is_a_malformed_result(void) {
+    migrate_case test_case;
+    open_instances_case(&test_case, "sibling", "web\n");
+    const char *directories[] = { "docs" };
+    make_project_directories(&test_case, directories, 1);
+    char path[1024];
+    project_path(&test_case, "web/instances.txt", path, sizeof path);
+    write_bytes(path, "docs\n");
+    run_case(&test_case);
+    int wrote = project_file_exists(&test_case, "daukle.toml");
+    int explained = strstr(test_case.err.message,
+                           "instance \"docs\" is not a directory below \"web\"") != NULL;
+    snprintf(last_message, sizeof last_message, "%s", test_case.err.message);
+    int status = test_case.status;
+    close_case(&test_case);
+
+    ASSERT_EQm(last_message, FR_ERR, status);
+    ASSERT_FALSE(wrote);
+    ASSERTm(last_message, explained);
+    PASS();
+}
+
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
+    RUN_TEST(a_handed_back_instance_migrates_as_its_own);
+    RUN_TEST(an_instance_outside_the_asking_directory_is_a_malformed_result);
+    RUN_TEST(a_collapsed_detection_stays_the_outer_ones_without_instances);
+    RUN_TEST(an_instance_inside_the_derived_tree_is_a_malformed_result);
+    RUN_TEST(an_instance_that_climbs_out_is_a_malformed_result);
     RUN_TEST(done_refuses_an_old_directory_that_is_a_link);
     RUN_TEST(done_refuses_an_old_directory_that_resolves_outside_the_project);
     RUN_TEST(a_linked_old_directory_blocks_before_anything_is_written);

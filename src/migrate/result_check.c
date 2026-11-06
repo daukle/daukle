@@ -164,6 +164,27 @@ static int check_owned(const cJSON *result, const char *who, fr_error *err) {
     return FR_OK;
 }
 
+/** `instances`, since api 10: subdirectories the migrator hands back to be migrated as detections
+    of their own. Whether each is below the detection's directory is checked where that is known. */
+static int check_instances(const cJSON *result, const char *who, fr_error *err) {
+    const cJSON *instances = member(result, "instances");
+    if (instances == NULL) return FR_OK;
+    if (!fr_json_is_array_or_empty_table(instances)) {
+        return malformed(err, who, "instances", "must be a list of directories");
+    }
+    const cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, instances) {
+        if (!is_string(entry)) return malformed(err, who, "instances", "must be a list of directories");
+        const char *path = entry->valuestring;
+        if (is_or_contains_derived_dir(path) || !fr_manifest_relative_path_is_safe(path)) {
+            fr_error_set(err, "%s returned a malformed result: instance \"%s\" must be a relative"
+                              " directory below the project and outside " DERIVED_DIR, who, path);
+            return FR_ERR;
+        }
+    }
+    return FR_OK;
+}
+
 static const char *single_instance_name(const cJSON *result) {
     const cJSON *manifest = member(result, "manifest");
     const cJSON *toolchains = manifest != NULL
@@ -323,6 +344,7 @@ int fr_migrate_check_run_result(const cJSON *result, const char *label, fr_block
     if (check_foreign(result, who, err) != FR_OK) return FR_ERR;
     if (check_blockers(result, who, blockers, err) != FR_OK) return FR_ERR;
     if (check_owned(result, who, err) != FR_OK) return FR_ERR;
+    if (check_instances(result, who, err) != FR_OK) return FR_ERR;
     if (check_files(result, who, err) != FR_OK) return FR_ERR;
     return check_proof(result, who, blockers, err);
 }

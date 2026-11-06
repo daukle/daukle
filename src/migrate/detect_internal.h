@@ -30,10 +30,6 @@ char *fr_detect_join(const char *base, const char *name);
 
 int fr_detect_is_with(const fr_detect_run *run, const fr_catalog_plugin *plugin);
 
-/* Records plugin at dir unless it is already recorded there. */
-int fr_detections_add(fr_detections *detections, const fr_catalog_plugin *plugin, const char *dir,
-                      fr_error *err);
-
 /* Evaluates every rule that admits relative_dir against its listing, settles
    the claims on each file and records the winners in run->found. directory is
    the same place as a path that can be opened. */
