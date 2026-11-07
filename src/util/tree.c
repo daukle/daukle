@@ -30,9 +30,9 @@ static void windows_reason(DWORD code, fr_error *err) {
     else fr_error_set(err, "%s", text);
 }
 
-/* The ANSI code page in both directions, because every other path in core
-   reaches the file system through the ANSI CRT: a name listed here has to open
-   there, exactly as it did when this file called the A functions. */
+/* @implNote The ANSI code page in both directions, because every other path in
+   core reaches the file system through the ANSI CRT: a name listed here has to
+   open there, exactly as it did when this file called the A functions. */
 static wchar_t *to_wide(const char *text) {
     int length = MultiByteToWideChar(CP_ACP, 0, text, -1, NULL, 0);
     if (length <= 0) return NULL;
@@ -84,9 +84,9 @@ static void normalise_separators(wchar_t *path) {
     path[kept] = L'\0';
 }
 
-/* The \\?\ form is what lifts the MAX_PATH limit, and it also switches off the
-   normalisation Windows would otherwise do, so the path is made absolute and
-   its separators are normalised here first. */
+/* @implNote The \\?\ form is what lifts the MAX_PATH limit, and it also
+   switches off the normalisation Windows would otherwise do, so the path is
+   made absolute and its separators are normalised here first. */
 static wchar_t *extended_path(const char *path) {
     wchar_t *wide = to_wide(path);
     if (wide == NULL) return NULL;
@@ -148,12 +148,6 @@ static void relay_entry(const WIN32_FIND_DATAW *found, void *context) {
 
 static void remove_tree_wide(const wchar_t *path);
 
-/* A link is removed as the single node it is rather than descended into:
-   opening a junction or a directory symlink for listing follows it
-   transparently, which is exactly how an unguarded sweep deletes whatever the
-   link points at instead of the link itself. A child whose path cannot be
-   built is left in place, which leaves its parent behind for the caller's
-   re-probe to report. */
 static void remove_child(const WIN32_FIND_DATAW *found, void *context) {
     wchar_t *child = join_wide(context, found->cFileName);
     if (child == NULL) return;
@@ -175,11 +169,6 @@ static char *join_path(const char *directory, const char *name) {
     return joined;
 }
 
-/* A link is removed as the single node it is rather than descended into:
-   opening a directory symlink for listing follows it transparently, which is
-   exactly how an unguarded sweep deletes whatever the link points at instead of
-   the link itself. A child whose path cannot be built is left in place, which
-   leaves its parent behind for the caller's re-probe to report. */
 static void remove_child(const char *name, int is_directory, int is_link, void *context) {
     char *child_path = join_path((const char *) context, name);
     if (child_path == NULL) return;
@@ -199,7 +188,7 @@ int fr_list_directory_checked(const char *directory, fr_directory_visitor visit,
 #ifdef _WIN32
     wchar_t *extended = extended_path(directory);
     if (extended == NULL) {
-        fr_error_set(err, "the path cannot be made absolute");
+        fr_error_set(err, "the path cannot be converted for the Windows API");
         return FR_ERR;
     }
     narrow_relay relay = { visit, context };

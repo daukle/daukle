@@ -10,7 +10,13 @@
 
    @implNote Containment is deliberately NOT checked here. A provisioned root
    and a derived directory do not share a rule, so each caller keeps its own
-   check; this function only walks and unlinks. */
+   check; this function only walks and unlinks.
+
+   @implNote A link (a junction or a directory symlink) is removed as the
+   single node it is, never descended into: listing it follows it
+   transparently, which is how an unguarded sweep deletes what the link points
+   at instead of the link. A child whose path cannot be built stays, and so
+   does its parent, for the caller's re-probe to report. */
 void fr_remove_tree(const char *path);
 
 typedef void (*fr_directory_visitor)(const char *name, int is_directory, int is_link,
