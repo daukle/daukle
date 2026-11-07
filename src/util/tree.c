@@ -4,9 +4,11 @@
 
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
+#include <wchar.h>
 #include <windows.h>
 #else
 #include <dirent.h>
@@ -27,6 +29,164 @@ static void windows_reason(DWORD code, fr_error *err) {
     if (length == 0) fr_error_set(err, "Windows error %lu", (unsigned long) code);
     else fr_error_set(err, "%s", text);
 }
+
+/* The ANSI code page in both directions, because every other path in core
+   reaches the file system through the ANSI CRT: a name listed here has to open
+   there, exactly as it did when this file called the A functions. */
+static wchar_t *to_wide(const char *text) {
+    int length = MultiByteToWideChar(CP_ACP, 0, text, -1, NULL, 0);
+    if (length <= 0) return NULL;
+    wchar_t *wide = malloc((size_t) length * sizeof *wide);
+    if (wide != NULL && MultiByteToWideChar(CP_ACP, 0, text, -1, wide, length) <= 0) {
+        free(wide);
+        return NULL;
+    }
+    return wide;
+}
+
+static char *to_narrow(const wchar_t *text) {
+    int length = WideCharToMultiByte(CP_ACP, 0, text, -1, NULL, 0, NULL, NULL);
+    if (length <= 0) return NULL;
+    char *narrow = malloc((size_t) length);
+    if (narrow != NULL && WideCharToMultiByte(CP_ACP, 0, text, -1, narrow, length, NULL, NULL) <= 0) {
+        free(narrow);
+        return NULL;
+    }
+    return narrow;
+}
+
+static wchar_t *concat_wide(const wchar_t *first, const wchar_t *second, const wchar_t *third) {
+    size_t first_length = wcslen(first), second_length = wcslen(second);
+    size_t third_length = wcslen(third);
+    wchar_t *joined = malloc((first_length + second_length + third_length + 1) * sizeof *joined);
+    if (joined == NULL) return NULL;
+    memcpy(joined, first, first_length * sizeof *joined);
+    memcpy(joined + first_length, second, second_length * sizeof *joined);
+    memcpy(joined + first_length + second_length, third, (third_length + 1) * sizeof *joined);
+    return joined;
+}
+
+static wchar_t *join_wide(const wchar_t *directory, const wchar_t *name) {
+    size_t length = wcslen(directory);
+    int has_separator = length > 0 && directory[length - 1] == L'\\';
+    return concat_wide(directory, has_separator ? L"" : L"\\", name);
+}
+
+/* Keeps the two leading separators of a UNC path and the one after a drive. */
+static void normalise_separators(wchar_t *path) {
+    size_t kept = 0;
+    for (size_t at = 0; path[at] != L'\0'; at++) {
+        wchar_t character = path[at] == L'/' ? L'\\' : path[at];
+        int repeats_separator = character == L'\\' && kept > 1 && path[kept - 1] == L'\\';
+        if (!repeats_separator) path[kept++] = character;
+    }
+    while (kept > 3 && path[kept - 1] == L'\\') kept--;
+    path[kept] = L'\0';
+}
+
+/* The \\?\ form is what lifts the MAX_PATH limit, and it also switches off the
+   normalisation Windows would otherwise do, so the path is made absolute and
+   its separators are normalised here first. */
+static wchar_t *extended_path(const char *path) {
+    wchar_t *wide = to_wide(path);
+    if (wide == NULL) return NULL;
+    DWORD needed = GetFullPathNameW(wide, 0, NULL, NULL);
+    wchar_t *full = needed == 0 ? NULL : malloc(needed * sizeof *full);
+    DWORD written = full == NULL ? 0 : GetFullPathNameW(wide, needed, full, NULL);
+    free(wide);
+    if (written == 0 || written >= needed) {
+        free(full);
+        return NULL;
+    }
+    if (wcsncmp(full, L"\\\\?\\", 4) == 0 || wcsncmp(full, L"\\\\.\\", 4) == 0) return full;
+    normalise_separators(full);
+    int is_unc = full[0] == L'\\' && full[1] == L'\\';
+    wchar_t *extended = is_unc ? concat_wide(L"\\\\?\\UNC\\", L"", full + 2)
+                               : concat_wide(L"\\\\?\\", L"", full);
+    free(full);
+    return extended;
+}
+
+typedef void (*wide_visitor)(const WIN32_FIND_DATAW *found, void *context);
+
+static DWORD list_wide(const wchar_t *directory, wide_visitor visit, void *context) {
+    wchar_t *pattern = join_wide(directory, L"*");
+    if (pattern == NULL) return ERROR_NOT_ENOUGH_MEMORY;
+    WIN32_FIND_DATAW found;
+    HANDLE handle = FindFirstFileW(pattern, &found);
+    DWORD failure = handle == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+    free(pattern);
+    if (handle == INVALID_HANDLE_VALUE) return failure;
+    do {
+        if (wcscmp(found.cFileName, L".") == 0 || wcscmp(found.cFileName, L"..") == 0) continue;
+        visit(&found, context);
+    } while (FindNextFileW(handle, &found));
+    FindClose(handle);
+    return ERROR_SUCCESS;
+}
+
+static int is_directory_entry(const WIN32_FIND_DATAW *found) {
+    return (found->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+static int is_link_entry(const WIN32_FIND_DATAW *found) {
+    return (found->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
+typedef struct {
+    fr_directory_visitor visit;
+    void *context;
+} narrow_relay;
+
+static void relay_entry(const WIN32_FIND_DATAW *found, void *context) {
+    const narrow_relay *relay = context;
+    char *name = to_narrow(found->cFileName);
+    if (name == NULL) return;
+    relay->visit(name, is_directory_entry(found), is_link_entry(found), relay->context);
+    free(name);
+}
+
+static void remove_tree_wide(const wchar_t *path);
+
+/* A link is removed as the single node it is rather than descended into:
+   opening a junction or a directory symlink for listing follows it
+   transparently, which is exactly how an unguarded sweep deletes whatever the
+   link points at instead of the link itself. A child whose path cannot be
+   built is left in place, which leaves its parent behind for the caller's
+   re-probe to report. */
+static void remove_child(const WIN32_FIND_DATAW *found, void *context) {
+    wchar_t *child = join_wide(context, found->cFileName);
+    if (child == NULL) return;
+    if (is_directory_entry(found) && !is_link_entry(found)) remove_tree_wide(child);
+    else if (is_directory_entry(found)) RemoveDirectoryW(child);
+    else DeleteFileW(child);
+    free(child);
+}
+
+static void remove_tree_wide(const wchar_t *path) {
+    (void) list_wide(path, remove_child, (void *) path);
+    RemoveDirectoryW(path);
+}
+#else
+static char *join_path(const char *directory, const char *name) {
+    size_t length = strlen(directory) + 1 + strlen(name) + 1;
+    char *joined = malloc(length);
+    if (joined != NULL) snprintf(joined, length, "%s/%s", directory, name);
+    return joined;
+}
+
+/* A link is removed as the single node it is rather than descended into:
+   opening a directory symlink for listing follows it transparently, which is
+   exactly how an unguarded sweep deletes whatever the link points at instead of
+   the link itself. A child whose path cannot be built is left in place, which
+   leaves its parent behind for the caller's re-probe to report. */
+static void remove_child(const char *name, int is_directory, int is_link, void *context) {
+    char *child_path = join_path((const char *) context, name);
+    if (child_path == NULL) return;
+    if (is_directory && !is_link) fr_remove_tree(child_path);
+    else remove(child_path);
+    free(child_path);
+}
 #endif
 
 void fr_list_directory(const char *directory, fr_directory_visitor visit, void *context) {
@@ -37,26 +197,18 @@ void fr_list_directory(const char *directory, fr_directory_visitor visit, void *
 int fr_list_directory_checked(const char *directory, fr_directory_visitor visit, void *context,
                               fr_error *err) {
 #ifdef _WIN32
-    char pattern[1024];
-    int written = snprintf(pattern, sizeof pattern, "%s/*", directory);
-    if (written < 0 || (size_t) written >= sizeof pattern) {
-        fr_error_set(err, "the path is too long");
+    wchar_t *extended = extended_path(directory);
+    if (extended == NULL) {
+        fr_error_set(err, "the path cannot be made absolute");
         return FR_ERR;
     }
-
-    WIN32_FIND_DATAA found;
-    HANDLE handle = FindFirstFileA(pattern, &found);
-    if (handle == INVALID_HANDLE_VALUE) {
-        windows_reason(GetLastError(), err);
+    narrow_relay relay = { visit, context };
+    DWORD failure = list_wide(extended, relay_entry, &relay);
+    free(extended);
+    if (failure != ERROR_SUCCESS) {
+        windows_reason(failure, err);
         return FR_ERR;
     }
-    do {
-        if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) continue;
-        int is_directory = (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
-        int is_link = (found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-        visit(found.cFileName, is_directory, is_link, context);
-    } while (FindNextFileA(handle, &found));
-    FindClose(handle);
 #else
     DIR *dir = opendir(directory);
     if (dir == NULL) {
@@ -66,11 +218,12 @@ int fr_list_directory_checked(const char *directory, fr_directory_visitor visit,
     const struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-        char child[1024];
-        int child_written = snprintf(child, sizeof child, "%s/%s", directory, entry->d_name);
-        if (child_written < 0 || (size_t) child_written >= sizeof child) continue;
+        char *child = join_path(directory, entry->d_name);
+        if (child == NULL) continue;
         struct stat info;
-        if (lstat(child, &info) != 0) continue;
+        int stat_failed = lstat(child, &info) != 0;
+        free(child);
+        if (stat_failed) continue;
         int is_link = S_ISLNK(info.st_mode);
         visit(entry->d_name, !is_link && S_ISDIR(info.st_mode), is_link, context);
     }
@@ -79,31 +232,14 @@ int fr_list_directory_checked(const char *directory, fr_directory_visitor visit,
     return FR_OK;
 }
 
-/* A link is removed as the single node it is rather than descended into:
-   opening a junction or a directory symlink for listing follows it
-   transparently, which is exactly how an unguarded sweep deletes whatever the
-   link points at instead of the link itself. */
-static void remove_child(const char *name, int is_directory, int is_link, void *context) {
-    char child_path[1024];
-    int written = snprintf(child_path, sizeof child_path, "%s/%s", (const char *) context, name);
-    if (written < 0 || (size_t) written >= sizeof child_path) return;
-    if (is_link) {
-#ifdef _WIN32
-        if (is_directory) RemoveDirectoryA(child_path); else remove(child_path);
-#else
-        remove(child_path);
-#endif
-        return;
-    }
-    if (is_directory) fr_remove_tree(child_path);
-    else remove(child_path);
-}
-
 void fr_remove_tree(const char *path) {
-    fr_list_directory(path, remove_child, (void *) path);
 #ifdef _WIN32
-    RemoveDirectoryA(path);
+    wchar_t *extended = extended_path(path);
+    if (extended == NULL) return;
+    remove_tree_wide(extended);
+    free(extended);
 #else
+    fr_list_directory(path, remove_child, (void *) path);
     rmdir(path);
 #endif
 }
