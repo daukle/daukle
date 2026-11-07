@@ -82,7 +82,7 @@ static int run_proof_task(const fr_session *session, const fr_task_set *set, con
         }
         *synced = 1;
     }
-    int status = fr_tasks_run(&plan, session, err);
+    int status = fr_tasks_run(set, &plan, session, err);
     fr_tasks_plan_free(&plan);
     return status;
 }

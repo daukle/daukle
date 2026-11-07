@@ -52,6 +52,9 @@ int fr_lua_verbs_push_library_env(lua_State *state, const char *dependent, const
    child as an ordinary addition, which no filter on inheritance sees. D-32. */
 void fr_lua_verbs_set_declared_env(const char *const *names, size_t count);
 
+/* The list fr_lua_verbs_set_declared_env last set, so a nested task run can put it back. */
+void fr_lua_verbs_declared_env(const char *const **out_names, size_t *out_count);
+
 /* Copies the declared list so a registered plugin can keep it past the chunk,
    which is where every callback that needs it actually runs. Returns 0, or -1
    out of memory with nothing allocated. */

@@ -23,6 +23,11 @@ void fr_lua_verbs_set_declared_env(const char *const *names, size_t count) {
     declared_env_count = count;
 }
 
+void fr_lua_verbs_declared_env(const char *const **out_names, size_t *out_count) {
+    *out_names = declared_env;
+    *out_count = declared_env_count;
+}
+
 /* Case insensitive on Windows, where environment variable names are, so that a
    plugin declaring "DAUKLE_TOKEN" is not bypassed by a child inheriting
    "daukle_token". build_environment_block already follows this rule for

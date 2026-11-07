@@ -129,6 +129,13 @@ void fr_lua_set_task_cwd(const char *directory);
 const char *fr_lua_task_generated_dir(void);
 void fr_lua_set_task_generated_dir(const char *directory);
 
+/* Runs another task of the project, with what it depends on, inside the task run in progress.
+   The task layer registers it for the length of a run, so daukle.run_task reaches the plan
+   without this layer including it; NULL outside a run. */
+typedef int (*fr_lua_task_runner)(const char *goal, fr_error *err);
+void fr_lua_set_task_runner(fr_lua_task_runner runner);
+fr_lua_task_runner fr_lua_task_runner_in_progress(void);
+
 /* Sets language, source, toolchain, task, resolver and plugin on the table on
    top of the stack, for lua_verbs.c to build a plugin environment around; the
    underlying functions are file statics here, so this is their only way out. */

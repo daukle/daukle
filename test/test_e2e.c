@@ -393,7 +393,7 @@ TEST a_task_runs_its_child_in_the_derived_directory(void) {
     const char *marker = "test/fixtures/task-cwd/build/daukle/runner/ran-here.txt";
     remove(marker);
 
-    int status = fr_tasks_run(&plan, &session, &err);
+    int status = fr_tasks_run(&set, &plan, &session, &err);
     int ran_here = file_exists(marker);
 
     put_environment("PATH", saved_path);
@@ -404,6 +404,43 @@ TEST a_task_runs_its_child_in_the_derived_directory(void) {
 
     ASSERT_EQ(FR_OK, status);
     ASSERT(ran_here);
+    PASS();
+}
+
+/* The outer task writes after both nested runs, so its file lands in its own derived directory
+   only if the dispatch put the outer task's cwd back rather than clearing it. */
+TEST a_task_runs_another_task_and_carries_on_in_its_own_directory(void) {
+    fr_error err;
+    fr_session session;
+    ASSERT_EQ(FR_OK, fr_session_open("test/fixtures/task-runs-task/daukle.toml", 1, &session, &err));
+    fr_task_set set;
+    ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
+    fr_task_plan plan;
+    ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "outer:both", &plan, &err));
+
+    const char *inner = "test/fixtures/task-runs-task/build/daukle/inner/inner.txt";
+    const char *outer = "test/fixtures/task-runs-task/build/daukle/outer/outer.txt";
+    remove(inner);
+    remove(outer);
+    err.message[0] = '\0';
+    int status = fr_tasks_run(&set, &plan, &session, &err);
+    char *written = NULL;
+    fr_error read_err;
+    int read = fr_file_read_text(outer, &written, &read_err);
+    int inner_ran = file_exists(inner);
+
+    fr_tasks_plan_free(&plan);
+    fr_tasks_set_free(&set);
+    fr_session_close(&session);
+    remove(inner);
+    remove(outer);
+
+    ASSERTm(err.message, status == FR_OK);
+    ASSERT(inner_ran);
+    ASSERT_EQ(FR_OK, read);
+    ASSERTm(written, strstr(written, "true false ") == written);
+    ASSERTm(written, strstr(written, "the inner task said no") != NULL);
+    free(written);
     PASS();
 }
 
@@ -421,7 +458,7 @@ TEST a_function_planted_in_a_library_table_never_runs_in_another_plugins_task(vo
     ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "victim:check", &plan, &err));
 
     err.message[0] = '\0';
-    int status = fr_tasks_run(&plan, &session, &err);
+    int status = fr_tasks_run(&set, &plan, &session, &err);
 
     fr_tasks_plan_free(&plan);
     fr_tasks_set_free(&set);
@@ -474,7 +511,7 @@ TEST a_task_still_execs_after_its_chunks_source_was_refused(void) {
         fr_task_plan plan;
         if (fr_tasks_collect(session.registry, &session.manifest, &set, &err) == FR_OK) {
             if (fr_tasks_plan(&set, "runner:touch", &plan, &err) == FR_OK) {
-                status = fr_tasks_run(&plan, &session, &err);
+                status = fr_tasks_run(&set, &plan, &session, &err);
                 fr_tasks_plan_free(&plan);
             }
             fr_tasks_set_free(&set);
@@ -538,7 +575,7 @@ static int token_a_task_child_saw(const char *manifest, char *out, size_t limit,
     put_environment("DAUKLE_TEST_CHILD", last == NULL ? self_path : last + 1);
     fr_test_set_env("GITHUB_TOKEN", "token-the-child-should-see");
 
-    int status = fr_tasks_run(&plan, &session, err);
+    int status = fr_tasks_run(&set, &plan, &session, err);
 
     fr_test_set_env("GITHUB_TOKEN", NULL);
     put_environment("PATH", saved_path);
@@ -619,7 +656,7 @@ TEST a_manifest_task_runs_a_program_from_a_real_manifest(void) {
     const char *marker = "test/fixtures/task-run/ran-here.txt";
     remove(marker);
 
-    int status = fr_tasks_run(&plan, &session, &err);
+    int status = fr_tasks_run(&set, &plan, &session, &err);
     int ran_beside_the_manifest = file_exists(marker);
 
     put_environment("PATH", saved_path);
@@ -673,7 +710,7 @@ TEST a_publisher_runs_its_child_in_the_from_toolchains_directory(void) {
     const char *marker = "test/fixtures/publish-cwd/build/daukle/runner/ran-here.txt";
     remove(marker);
 
-    int status = fr_tasks_run(&plan, &session, &err);
+    int status = fr_tasks_run(&set, &plan, &session, &err);
     int ran_here = file_exists(marker);
 
     put_environment("PATH", saved_path);
@@ -929,6 +966,7 @@ int main(int argc, char **argv) {
     RUN_TEST(no_cache_bypasses_both_the_read_and_the_write);
     RUN_TEST(the_same_manifest_in_two_formats_writes_the_same_file);
     RUN_TEST(a_task_runs_its_child_in_the_derived_directory);
+    RUN_TEST(a_task_runs_another_task_and_carries_on_in_its_own_directory);
     RUN_TEST(a_function_planted_in_a_library_table_never_runs_in_another_plugins_task);
     RUN_TEST(a_task_still_execs_after_its_chunks_source_was_refused);
     RUN_TEST(a_task_child_inherits_a_credential_its_plugin_declared);

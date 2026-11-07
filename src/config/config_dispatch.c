@@ -355,8 +355,15 @@ static int protected_task_run(lua_State *state) {
     return 0;
 }
 
+/* @implNote what a run replaces is put back when it ends, not cleared: daukle.run_task starts
+   one inside another, and the outer task carries on afterwards. */
 int fr_lua_dispatch_task_run(void *state, const fr_task_run_context *context, fr_error *err) {
     int top = lua_gettop(fr_lua_runtime_state());
+    lua_task_context *outer_context = task_context;
+    const char *outer_cwd = task_cwd, *outer_generated_dir = task_generated_dir;
+    const char *const *outer_env;
+    size_t outer_env_count;
+    fr_lua_verbs_declared_env(&outer_env, &outer_env_count);
     lua_task_context wrapper = { state, context };
     task_context = &wrapper;
     fr_lua_verbs_set_declared_env(
@@ -368,10 +375,10 @@ int fr_lua_dispatch_task_run(void *state, const fr_task_run_context *context, fr
     fr_lua_enter_task_dispatch();
     int status = lua_pcall(fr_lua_runtime_state(), 0, 0, 0);
     fr_lua_leave_task_dispatch();
-    fr_lua_set_task_generated_dir(NULL);
-    fr_lua_set_task_cwd(NULL);
-    task_context = NULL;
-    fr_lua_verbs_set_declared_env(NULL, 0);
+    fr_lua_set_task_generated_dir(outer_generated_dir);
+    fr_lua_set_task_cwd(outer_cwd);
+    task_context = outer_context;
+    fr_lua_verbs_set_declared_env(outer_env, outer_env_count);
 
     if (status != LUA_OK) {
         fr_error_set(err, "%s", fr_lua_error_text(fr_lua_runtime_state()));
