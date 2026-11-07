@@ -106,10 +106,39 @@ TEST a_tree_deeper_than_max_path_is_removed_without_following_its_link(void) {
     PASS();
 }
 
+TEST a_relative_root_deeper_than_max_path_is_removed(void) {
+    char previous[1024];
+    ASSERT(fr_test_get_working_directory(previous, sizeof previous));
+    ASSERT(fr_test_set_working_directory(fr_test_temp_base()));
+    snprintf(scratch, sizeof scratch, "./daukle_test_tree_relative_%d", fr_test_process_id());
+    fr_test_remove_tree(scratch);
+    fr_test_make_directory(scratch);
+
+    char level[700], leaf[800];
+    snprintf(level, sizeof level, "%s/%s", scratch, SEGMENT);
+    snprintf(leaf, sizeof leaf, "%s/leaf.txt", level);
+    fr_error err;
+    int built = fr_test_make_directory(level) == 0
+                && fr_file_write_text(leaf, "leaf\n", &err) == FR_OK;
+    for (int nested = 1; built && nested < LEVELS; nested++) built = nest_one_level();
+    size_t absolute_length = strlen(fr_test_temp_base()) + strlen(scratch)
+                             + LEVELS * (strlen(SEGMENT) + 1) + strlen("/leaf.txt");
+
+    if (built) fr_remove_tree(scratch);
+    int tree_gone = !path_exists(scratch);
+    fr_test_set_working_directory(previous);
+
+    ASSERTm("building the relative tree failed", built);
+    ASSERTm("the tree is not deeper than MAX_PATH", absolute_length > 260);
+    ASSERTm("the relative tree deeper than MAX_PATH survived fr_remove_tree", tree_gone);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_tree_deeper_than_max_path_is_removed_without_following_its_link);
+    RUN_TEST(a_relative_root_deeper_than_max_path_is_removed);
     GREATEST_MAIN_END();
 }
