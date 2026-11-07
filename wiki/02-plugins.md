@@ -203,6 +203,26 @@ not descend into what a link points at. **It returns rather than raises for the 
 plugin has to tell apart**, because the sandbox has no `pcall`. A daukle that predates it refuses
 `uses = { "list" }` by name, so it needs no api bump.
 
+## Running another task: `daukle.run_task`
+
+`daukle.run_task(name)` runs another task of the project, with everything it depends on, in the
+middle of the running task, and returns `true`, or `false` and the failing task's message. Declare
+`"run_task"` in `uses`:
+
+```lua
+local ok, why = daukle.run_task("node-pi-extension:test")
+if not ok then error(why, 0) end   -- what "a && b" does when b fails
+```
+
+**A task runs at most once per invocation**, whichever plan reaches it first: a dependency the
+nested run already ran is skipped by the outer plan, and the other way round. **A task that is
+running right now is refused**, itself or any task below it, since running it again from inside it
+would never end. An unknown name, an edge naming nothing and a cycle are refused as `daukle <task>`
+refuses them. **It returns rather than raises** because the sandbox has no `pcall` and a plugin
+implementing `a || b` needs the failure as a value. It is available inside a task's `run` and a
+publisher's `publish`, where a task run is in progress, and refused everywhere else. A daukle that
+predates it refuses `uses = { "run_task" }` by name, so it needs no api bump.
+
 ## What `api` is for, and when to raise it
 
 `api = 1` says which plugin api your plugin was written against. **daukle refuses an api HIGHER

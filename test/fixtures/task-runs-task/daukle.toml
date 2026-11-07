@@ -1,0 +1,15 @@
+schema = 1
+project = "daukle/task-runs-task"
+version = "1.0.0"
+
+[modules]
+
+[plugins]
+outer = "./plugins/outer.lua"
+inner = "./plugins/inner.lua"
+
+[toolchains.outer]
+version = "1"
+
+[toolchains.inner]
+version = "1"

@@ -890,7 +890,7 @@ TEST a_project_provisions_a_tool_and_runs_it(void) {
     if (collected == FR_OK) planned = fr_tasks_plan(&set, "provisioner:run", &plan, &err);
 
     int run_status = FR_ERR;
-    if (planned == FR_OK) run_status = fr_tasks_run(&plan, &session, &err);
+    if (planned == FR_OK) run_status = fr_tasks_run(&set, &plan, &session, &err);
 
     int ran_here = file_exists(marker);
 

@@ -61,7 +61,7 @@ int fr_cli_run_task(const char *task_name, int use_cache, int verbose) {
     }
     fr_sync_report_free(&report);
 
-    int status = fr_tasks_run(&plan, &session, &err);
+    int status = fr_tasks_run(&set, &plan, &session, &err);
     fr_tasks_plan_free(&plan);
     fr_tasks_set_free(&set);
     fr_session_close(&session);

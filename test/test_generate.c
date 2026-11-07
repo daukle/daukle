@@ -385,7 +385,7 @@ TEST a_task_sees_the_module_list_and_its_requires_in_lua(void) {
     ASSERT_EQ(FR_OK, fr_tasks_collect(session.registry, &session.manifest, &set, &err));
     fr_task_plan plan;
     ASSERT_EQ(FR_OK, fr_tasks_plan(&set, "stub:list", &plan, &err));
-    int status = fr_tasks_run(&plan, &session, &err);
+    int status = fr_tasks_run(&set, &plan, &session, &err);
     fr_tasks_plan_free(&plan);
     fr_tasks_set_free(&set);
     fr_session_close(&session);
