@@ -486,7 +486,7 @@ TEST a_plan_runs_its_tasks_in_order(void) {
     session.manifest = manifest;
     session.manifest_dir = scratch;
 
-    ASSERT_EQ(FR_OK, fr_tasks_run(&plan, &session, &err));
+    ASSERT_EQ(FR_OK, fr_tasks_run(&set, &plan, &session, &err));
     ASSERT_STR_EQ("a:one;a:two;", log);
 
     fr_tasks_plan_free(&plan);
@@ -520,7 +520,7 @@ TEST a_failing_task_stops_the_run_naming_itself(void) {
     session.manifest = manifest;
     session.manifest_dir = scratch;
 
-    ASSERT_EQ(FR_ERR, fr_tasks_run(&plan, &session, &err));
+    ASSERT_EQ(FR_ERR, fr_tasks_run(&set, &plan, &session, &err));
     ASSERT(strstr(err.message, "task \"a:one\"") != NULL);
     ASSERT(strstr(err.message, "the compiler said no") != NULL);
 
@@ -558,7 +558,7 @@ TEST a_task_sees_the_module_list_and_its_requires(void) {
     session.manifest = manifest;
     session.manifest_dir = scratch;
 
-    ASSERT_EQ(FR_OK, fr_tasks_run(&plan, &session, &err));
+    ASSERT_EQ(FR_OK, fr_tasks_run(&set, &plan, &session, &err));
     ASSERT(strstr(seen, "lib;") != NULL);
     ASSERT(strstr(seen, "app<lib;") != NULL);
 
@@ -594,7 +594,7 @@ TEST a_run_publishes_the_base_relative_derived_directory(void) {
     session.manifest = manifest;
     session.manifest_dir = scratch;
 
-    ASSERT_EQ(FR_OK, fr_tasks_run(&plan, &session, &err));
+    ASSERT_EQ(FR_OK, fr_tasks_run(&set, &plan, &session, &err));
     ASSERT_STR_EQ("build/daukle/a", recorded_cwd);
     ASSERT(strstr(recorded_cwd, scratch) == NULL);
 
@@ -792,7 +792,7 @@ TEST a_publish_task_run_receives_its_destination(void) {
     session.manifest_dir = scratch;
 
     seen_publish_name[0] = '\0';
-    int status = fr_tasks_run(&plan, &session, &err);
+    int status = fr_tasks_run(&set, &plan, &session, &err);
     char seen[64];
     snprintf(seen, sizeof seen, "%s", seen_publish_name);
 
@@ -835,7 +835,7 @@ TEST a_manifest_orders_a_publish_step_after_a_build(void) {
     session.manifest = manifest;
     session.manifest_dir = scratch;
 
-    int status = fr_tasks_run(&plan, &session, &err);
+    int status = fr_tasks_run(&set, &plan, &session, &err);
     char order[128];
     snprintf(order, sizeof order, "%s", log);
 
@@ -1026,7 +1026,7 @@ static int run_goal(fr_registry *registry, fr_manifest *manifest, const char *go
     session.manifest = *manifest;
     session.manifest_dir = scratch;
 
-    int status = fr_tasks_run(&plan, &session, err);
+    int status = fr_tasks_run(&set, &plan, &session, err);
     fr_tasks_plan_free(&plan);
     fr_tasks_set_free(&set);
     return status;

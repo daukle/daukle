@@ -19,7 +19,7 @@ static const char *BASE[] = {
 
 static const char *KNOWN_VERBS[] = {
     "fetch", "read", "cache", "env", "region", "json_set", "json_parse", "parse", "exec", "tool",
-    "provision", "artifact", "write", "pin", "built", "publish", "list"
+    "provision", "artifact", "write", "pin", "built", "publish", "list", "run_task"
 };
 
 /* daukle.publish is spec section 10's next reserved name: a fourth table and
@@ -127,6 +127,8 @@ static void install_one(lua_State *state, const char *name) {
         lua_pushcfunction(state, fr_lua_verb_pin);
     } else if (strcmp(name, "built") == 0) {
         lua_pushcfunction(state, fr_lua_verb_built);
+    } else if (strcmp(name, "run_task") == 0) {
+        lua_pushcfunction(state, fr_lua_verb_run_task);
     } else if (fr_lua_verbs_is_reserved(name)) {
         lua_pushcfunction(state, reserved_verb);
     } else {

@@ -93,8 +93,11 @@ void fr_tasks_unknown_message(const char *goal, size_t plugin_count, char *out, 
    created nothing for it (a compiler-driven toolchain's ordinary case), and
    ensuring an already-existing directory is a no-op, not an error. A task
    whose run raises stops the run: tasks already run stay run, and nothing is
-   undone. */
-int fr_tasks_run(const fr_task_plan *plan, const fr_session *session, fr_error *err);
+   undone. set is the one plan was built from: a running task may run another
+   task of it through daukle.run_task, and every task runs at most once per
+   call, whichever plan reached it first. */
+int fr_tasks_run(const fr_task_set *set, const fr_task_plan *plan, const fr_session *session,
+                 fr_error *err);
 
 /* Spells the task name a publish destination runs under. Non-zero when it fit. */
 int fr_tasks_publish_goal(const char *destination, char *out, size_t out_size);
