@@ -67,6 +67,13 @@ typedef struct {
     fr_session session;
 } nested_fixture;
 
+static nested_fixture new_fixture(void) {
+    nested_fixture fixture;
+    memset(&fixture, 0, sizeof fixture);
+    fixture.registry = fr_registry_create();
+    return fixture;
+}
+
 static int run_goal(nested_fixture *fixture, const char *goal, fr_error *err) {
     fixture->manifest = manifest_of(
         "{\"schema\":1,\"project\":\"me/app\",\"version\":\"1.0.0\",\"modules\":{},"
@@ -96,7 +103,7 @@ static void begin(const char *label) {
 
 TEST a_running_task_runs_another_with_what_it_depends_on(void) {
     begin("runs");
-    nested_fixture fixture = { fr_registry_create() };
+    nested_fixture fixture = new_fixture();
     const char *needs_one[] = { "a:one" };
     fr_task_plugin one = { "daukle.task/a:one", NULL, NULL, 0, logging_run, NULL };
     fr_task_plugin two = { "daukle.task/a:two", NULL, needs_one, 1, logging_run, NULL };
@@ -115,7 +122,7 @@ TEST a_running_task_runs_another_with_what_it_depends_on(void) {
 
 TEST a_task_the_nested_run_completed_is_not_run_again(void) {
     begin("once");
-    nested_fixture fixture = { fr_registry_create() };
+    nested_fixture fixture = new_fixture();
     const char *needs_both[] = { "a:outer", "a:two" };
     fr_task_plugin two = { "daukle.task/a:two", NULL, NULL, 0, logging_run, NULL };
     fr_task_plugin outer = { "daukle.task/a:outer", NULL, NULL, 0, nesting_run, "a:two" };
@@ -133,7 +140,7 @@ TEST a_task_the_nested_run_completed_is_not_run_again(void) {
 
 TEST a_failing_nested_task_is_reported_to_the_task_that_ran_it(void) {
     begin("fails");
-    nested_fixture fixture = { fr_registry_create() };
+    nested_fixture fixture = new_fixture();
     fr_task_plugin bad = { "daukle.task/a:bad", NULL, NULL, 0, failing_run, NULL };
     fr_task_plugin outer = { "daukle.task/a:outer", NULL, NULL, 0, nesting_run, "a:bad" };
     fr_error err;
@@ -149,7 +156,7 @@ TEST a_failing_nested_task_is_reported_to_the_task_that_ran_it(void) {
 
 TEST a_task_may_not_run_itself_from_inside_itself(void) {
     begin("itself");
-    nested_fixture fixture = { fr_registry_create() };
+    nested_fixture fixture = new_fixture();
     fr_task_plugin outer = { "daukle.task/a:outer", NULL, NULL, 0, nesting_run, "a:outer" };
     fr_error err;
     fr_registry_add_task(fixture.registry, &outer, &err);
@@ -163,7 +170,7 @@ TEST a_task_may_not_run_itself_from_inside_itself(void) {
 
 TEST a_nested_goal_nothing_declares_is_refused(void) {
     begin("unknown");
-    nested_fixture fixture = { fr_registry_create() };
+    nested_fixture fixture = new_fixture();
     fr_task_plugin outer = { "daukle.task/a:outer", NULL, NULL, 0, nesting_run, "a:missing" };
     fr_error err;
     fr_registry_add_task(fixture.registry, &outer, &err);
@@ -176,7 +183,7 @@ TEST a_nested_goal_nothing_declares_is_refused(void) {
 
 TEST no_runner_is_offered_once_the_run_ends(void) {
     begin("ends");
-    nested_fixture fixture = { fr_registry_create() };
+    nested_fixture fixture = new_fixture();
     fr_task_plugin one = { "daukle.task/a:one", NULL, NULL, 0, logging_run, NULL };
     fr_error err;
     fr_registry_add_task(fixture.registry, &one, &err);
