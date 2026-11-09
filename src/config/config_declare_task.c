@@ -132,8 +132,7 @@ int fr_lua_declare_task(lua_State *state) {
     }
     fr_lua_plugin_slot *slot = fr_lua_declare_next_slot();
     if (slot == NULL) {
-        return luaL_error(state, "too many declarations in one configuration;"
-                          " at most %d are allowed", FR_LUA_MAX_PLUGINS);
+        return luaL_error(state, "out of memory recording a declaration");
     }
 
     memset(slot, 0, sizeof *slot);

@@ -15,7 +15,7 @@
    plugin slots every declaration fills. Neither file reaches into the other's
    storage: everything that crosses does so through this file. */
 
-#define FR_LUA_MAX_PLUGINS 128
+#define FR_LUA_FIRST_PLUGIN_CAPACITY 128
 
 /* One registered plugin: the capability it answers to, the lua reference of
    the callback it registered, and, for a task, what it is part of and what it

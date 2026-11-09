@@ -15,13 +15,17 @@
    left in it, so every site that takes one zeroes it first: otherwise a
    source reusing a task's index inherits that task's part_of and depends_on,
    and fr_lua_runtime_shutdown frees them a second time. */
-static fr_lua_plugin_slot plugin_slots[FR_LUA_MAX_PLUGINS];
+/* Each slot is its own allocation: a registered plugin keeps a pointer to its
+   slot as its state, so growing this table must not move one. */
+static fr_lua_plugin_slot **plugin_slots;
+static size_t plugin_slot_capacity;
+static size_t plugin_slots_allocated;
 static size_t plugin_slot_count;
 static fr_registry *registering_into;
 
 fr_lua_plugin_slot *fr_lua_declare_slot_for(const char *capability) {
     for (size_t index = 0; index < plugin_slot_count; index++) {
-        if (strcmp(plugin_slots[index].capability, capability) == 0) return &plugin_slots[index];
+        if (strcmp(plugin_slots[index]->capability, capability) == 0) return plugin_slots[index];
     }
     return NULL;
 }
@@ -35,11 +39,6 @@ int fr_lua_declare_take_slot(lua_State *state, const char *prefix, const char *f
     const char *name = lua_tostring(state, -1);
     if (name == NULL) return luaL_error(state, "a %s needs a name", prefix);
 
-    if (plugin_slot_count == FR_LUA_MAX_PLUGINS) {
-        return luaL_error(state, "too many declarations in one configuration;"
-                          " at most %d are allowed", FR_LUA_MAX_PLUGINS);
-    }
-
     char capability[128];
     int written = snprintf(capability, sizeof capability, "%s%s", prefix, name);
     if (written < 0 || (size_t) written >= sizeof capability) {
@@ -51,7 +50,8 @@ int fr_lua_declare_take_slot(lua_State *state, const char *prefix, const char *f
         return luaL_error(state, "\"%s\" is declared twice", capability);
     }
 
-    fr_lua_plugin_slot *slot = &plugin_slots[plugin_slot_count];
+    fr_lua_plugin_slot *slot = fr_lua_declare_next_slot();
+    if (slot == NULL) return luaL_error(state, "out of memory recording a declaration");
     memset(slot, 0, sizeof *slot);
     size_t length = strlen(capability) + 1;
     slot->capability = malloc(length);
@@ -257,12 +257,26 @@ void fr_lua_declare_count_publisher(void) {
     chunk_publisher_count++;
 }
 
-/* The slot the next declaration fills, or NULL when every slot is taken. It is
-   not counted until fr_lua_declare_count_slot, so a declaration that raises
-   first leaves nothing for the shutdown loop to free twice. */
+static int reserve_slot_table(void) {
+    if (plugin_slots_allocated < plugin_slot_capacity) return 0;
+    size_t capacity = plugin_slot_capacity == 0 ? FR_LUA_FIRST_PLUGIN_CAPACITY : plugin_slot_capacity * 2;
+    fr_lua_plugin_slot **slots = realloc(plugin_slots, capacity * sizeof *slots);
+    if (slots == NULL) return -1;
+    plugin_slots = slots;
+    plugin_slot_capacity = capacity;
+    return 0;
+}
+
+/* The slot the next declaration fills, or NULL when out of memory. It is not
+   counted until fr_lua_declare_count_slot, so a declaration that raises first
+   leaves nothing for the shutdown loop to free twice. */
 fr_lua_plugin_slot *fr_lua_declare_next_slot(void) {
-    if (plugin_slot_count == FR_LUA_MAX_PLUGINS) return NULL;
-    return &plugin_slots[plugin_slot_count];
+    if (plugin_slot_count < plugin_slots_allocated) return plugin_slots[plugin_slot_count];
+    if (reserve_slot_table() != 0) return NULL;
+    fr_lua_plugin_slot *slot = calloc(1, sizeof *slot);
+    if (slot == NULL) return NULL;
+    plugin_slots[plugin_slots_allocated++] = slot;
+    return slot;
 }
 
 void fr_lua_declare_count_slot(void) {
@@ -346,18 +360,23 @@ void fr_lua_declare_reset(void) {
     resolver_env = NULL;
     resolver_env_count = 0;
     for (size_t index = 0; index < plugin_slot_count; index++) {
-        free(plugin_slots[index].capability);
-        free(plugin_slots[index].part_of);
-        for (size_t d = 0; d < plugin_slots[index].depends_on_count; d++) {
-            free(plugin_slots[index].depends_on[d]);
+        free(plugin_slots[index]->capability);
+        free(plugin_slots[index]->part_of);
+        for (size_t d = 0; d < plugin_slots[index]->depends_on_count; d++) {
+            free(plugin_slots[index]->depends_on[d]);
         }
-        free(plugin_slots[index].depends_on);
-        for (size_t e = 0; e < plugin_slots[index].env_count; e++) {
-            free(plugin_slots[index].env[e]);
+        free(plugin_slots[index]->depends_on);
+        for (size_t e = 0; e < plugin_slots[index]->env_count; e++) {
+            free(plugin_slots[index]->env[e]);
         }
-        free(plugin_slots[index].env);
-        fr_lua_declare_free_migrate_strings(&plugin_slots[index]);
+        free(plugin_slots[index]->env);
+        fr_lua_declare_free_migrate_strings(plugin_slots[index]);
     }
+    for (size_t index = 0; index < plugin_slots_allocated; index++) free(plugin_slots[index]);
+    free(plugin_slots);
+    plugin_slots = NULL;
+    plugin_slot_capacity = 0;
+    plugin_slots_allocated = 0;
     plugin_slot_count = 0;
     registering_into = NULL;
 }
