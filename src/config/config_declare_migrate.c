@@ -76,8 +76,7 @@ static void require_function_field(lua_State *state, fr_lua_plugin_slot *slot, c
 static fr_lua_plugin_slot *take_slot(lua_State *state, const char *capability) {
     fr_lua_plugin_slot *slot = fr_lua_declare_next_slot();
     if (slot == NULL) {
-        luaL_error(state, "too many declarations in one configuration;"
-                          " at most %d are allowed", FR_LUA_MAX_PLUGINS);
+        luaL_error(state, "out of memory recording a declaration");
     }
     memset(slot, 0, sizeof *slot);
     slot->second_callback = LUA_NOREF;
