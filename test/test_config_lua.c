@@ -2849,6 +2849,23 @@ TEST a_publish_callback_reads_its_destination(void) {
     PASS();
 }
 
+TEST a_configuration_may_declare_hundreds_of_tasks(void) {
+    fr_registry *registry = create_tracked_registry();
+    fr_error err;
+    ASSERT_EQ(FR_OK, fr_lua_runtime_begin(".", registry, &err));
+    const char *uses[] = { "exec" };
+    const char *chunk =
+        "daukle.toolchain{ name = 'node', generate = function() return {} end }\n"
+        "for index = 1, 400 do daukle.task{ name = 'node:t' .. index, run = function() end } end\n";
+    ASSERT_EQ(FR_OK, fr_lua_plugin_load(chunk, strlen(chunk), "node.lua", uses, 1, NULL, NULL, &err));
+    ASSERT_EQ((size_t) 400, fr_registry_task_count(registry));
+    ASSERT(fr_registry_task(registry, "daukle.task/node:t1")->state != NULL);
+    ASSERT(fr_registry_task(registry, "daukle.task/node:t400")->run != NULL);
+    fr_lua_runtime_shutdown();
+    destroy_tracked_registry(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 /* Most cases assert before their cleanup, and a runtime one failure left open
@@ -2974,5 +2991,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_resolver_chunk_may_not_declare_a_publisher);
     RUN_TEST(a_publisher_chunk_declaring_a_task_is_told_why);
     RUN_TEST(a_publish_callback_reads_its_destination);
+    RUN_TEST(a_configuration_may_declare_hundreds_of_tasks);
     GREATEST_MAIN_END();
 }

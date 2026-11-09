@@ -192,6 +192,27 @@ TEST every_registered_task_is_walkable(void) {
     PASS();
 }
 
+TEST a_project_may_register_many_tasks_and_a_found_one_stays_valid(void) {
+    enum { TASKS = 500 };
+    static char names[TASKS][32];
+    fr_registry *registry = fr_registry_create();
+    fr_error err;
+    const fr_task_plugin *first = NULL;
+    for (int index = 0; index < TASKS; index++) {
+        snprintf(names[index], sizeof names[index], "daukle.task/n:%d", index);
+        fr_task_plugin plugin;
+        memset(&plugin, 0, sizeof plugin);
+        plugin.capability = names[index];
+        ASSERT_EQ(FR_OK, fr_registry_add_task(registry, &plugin, &err));
+        if (index == 0) first = fr_registry_task(registry, names[0]);
+    }
+    ASSERT_EQ((size_t) TASKS, fr_registry_task_count(registry));
+    ASSERT_STR_EQ(names[0], first->capability);
+    ASSERT_STR_EQ(names[TASKS - 1], fr_registry_task(registry, names[TASKS - 1])->capability);
+    fr_registry_destroy(registry);
+    PASS();
+}
+
 GREATEST_MAIN_DEFS();
 
 int main(int argc, char **argv) {
@@ -208,5 +229,6 @@ int main(int argc, char **argv) {
     RUN_TEST(a_task_is_found_by_its_capability);
     RUN_TEST(a_task_capability_cannot_be_registered_twice);
     RUN_TEST(every_registered_task_is_walkable);
+    RUN_TEST(a_project_may_register_many_tasks_and_a_found_one_stays_valid);
     GREATEST_MAIN_END();
 }
