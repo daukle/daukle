@@ -374,9 +374,11 @@ Both callbacks receive a `context` table:
 | `host` | `{ os, arch }`, as in a task's context |
 | `proof` | in `build` only: the `proof` table `run` returned |
 
-The instance is the toolchain's own name for a detection at the root, and `<toolchain>-<dir>` with
-each `/` in `dir` replaced by `-` for one in a subdirectory. A name that is not a usable task name,
-or that another detection already took, is a blocker.
+The instance is the toolchain's own name for a detection at the root, and `<toolchain>-<dir>` for
+one in a subdirectory, with each `/` in `dir` replaced by `-` and each byte a task name refuses by
+`_` and its two lowercase hex digits, so `packages/@acme/web` under `node` is
+`node-packages-_40acme-web`. A name another detection already took, or one past 255 bytes, is a
+blocker.
 
 **`exec` and `provision` work inside `run` and `build`**, and `daukle.built` and `daukle.write` as
 well. The working directory is the instance's derived directory, `build/daukle/<instance>/`, which

@@ -76,14 +76,14 @@ static int open_session(const fr_migrate_state *state, size_t count, fr_registry
     return status;
 }
 
+static int byte_is_usable(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+}
+
 static int leaf_is_usable(const char *text) {
     if (!((text[0] >= 'a' && text[0] <= 'z') || (text[0] >= '0' && text[0] <= '9'))) return 0;
     for (const char *cursor = text; *cursor != '\0'; cursor++) {
-        char c = *cursor;
-        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_'
-              || c == '-')) {
-            return 0;
-        }
+        if (!byte_is_usable(*cursor)) return 0;
     }
     return 1;
 }
@@ -95,19 +95,42 @@ static int instance_is_taken(const fr_migrate_state *state, const char *instance
     return 0;
 }
 
+static int append_directory_byte(char *out, size_t *used, char byte) {
+    size_t room = FR_MIGRATE_INSTANCE_SIZE - *used;
+    int written = byte == '/' ? snprintf(out + *used, room, "-")
+        : byte_is_usable(byte) ? snprintf(out + *used, room, "%c", byte)
+        : snprintf(out + *used, room, "_%02x", (unsigned char)byte);
+    if (written < 0 || (size_t)written >= room) return 0;
+    *used += (size_t)written;
+    return 1;
+}
+
+/** Writes the instance name of `dir` under `toolchain`, returning 0 when it does not fit.
+ *
+ * @implNote a byte a task name refuses becomes `_` and two hex digits rather than being dropped or
+ * folded, so `@scope` and `scope` stay two instances, and a pure spelling is one a migrator can
+ * derive for a directory it is not running in. `daukle/node`'s `lib/instance_name.lua` mirrors it.
+ */
+static int spell_instance(const char *toolchain, const char *dir, char *out) {
+    int written = dir == NULL
+        ? snprintf(out, FR_MIGRATE_INSTANCE_SIZE, "%s", toolchain)
+        : snprintf(out, FR_MIGRATE_INSTANCE_SIZE, "%s-", toolchain);
+    if (written < 0 || written >= FR_MIGRATE_INSTANCE_SIZE) return 0;
+    size_t used = (size_t)written;
+    for (const char *cursor = dir; cursor != NULL && *cursor != '\0'; cursor++) {
+        if (!append_directory_byte(out, &used, *cursor)) return 0;
+    }
+    return 1;
+}
+
 /* The root instance keeps the toolchain's own name, so a single-toolchain
    project migrates to the manifest it would have been written as by hand. */
 static int name_instance(fr_migrate_state *state, const char *toolchain, const char *dir,
                          char *out, fr_error *err) {
-    int written = dir == NULL
-        ? snprintf(out, FR_MIGRATE_INSTANCE_SIZE, "%s", toolchain)
-        : snprintf(out, FR_MIGRATE_INSTANCE_SIZE, "%s-%s", toolchain, dir);
-    for (char *cursor = out; *cursor != '\0'; cursor++) {
-        if (*cursor == '/') *cursor = '-';
-    }
+    int fits = spell_instance(toolchain, dir, out);
     const char *where = dir != NULL ? dir : ".";
     char why[FR_MIGRATE_TEXT_SIZE];
-    if (written < 0 || written >= FR_MIGRATE_INSTANCE_SIZE || !leaf_is_usable(out)) {
+    if (!fits || !leaf_is_usable(out)) {
         snprintf(why, sizeof why, "the instance name \"%s\" is not a usable task name: it must be"
                                   " lowercase letters, digits, '.', '_' and '-'", out);
         return fr_migrate_core_blocker(state, "toolchain instance", where, why, err) == FR_OK
