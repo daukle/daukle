@@ -1036,6 +1036,57 @@ TEST a_handed_back_instance_migrates_as_its_own(void) {
     PASS();
 }
 
+static void add_instance_directory(migrate_case *test_case, const char *dir) {
+    char out_dir[512], file[1024];
+    snprintf(out_dir, sizeof out_dir, "%s/out", dir);
+    const char *directories[] = { dir, out_dir };
+    make_project_directories(test_case, directories, 2);
+    snprintf(file, sizeof file, "%s/instances.txt", dir);
+    char path[1024];
+    project_path(test_case, file, path, sizeof path);
+    write_bytes(path, "");
+    snprintf(file, sizeof file, "%s/faketool.conf", dir);
+    project_path(test_case, file, path, sizeof path);
+    copy_fixture_file(FIXTURES "/project/faketool.conf", path);
+    snprintf(file, sizeof file, "%s/out/greeting.txt", dir);
+    project_path(test_case, file, path, sizeof path);
+    write_bytes(path, "hello");
+}
+
+TEST a_directory_a_task_name_refuses_is_escaped_and_stays_its_own(void) {
+    migrate_case test_case;
+    open_case(&test_case, "escaped", "hello");
+    const char *parents[] = { "@acme", "acme", "Upper" };
+    make_project_directories(&test_case, parents, 3);
+    add_instance_directory(&test_case, "@acme/web");
+    add_instance_directory(&test_case, "acme/web");
+    add_instance_directory(&test_case, "Upper/web");
+    char path[1024];
+    project_path(&test_case, "instances.txt", path, sizeof path);
+    write_bytes(path, "@acme/web\nacme/web\nUpper/web\n");
+    serve_stub_catalog_rule(&test_case, FIXTURES "/plugin-instances.lua",
+                            "{\"files\":[\"faketool.conf\"],\"scope\":\"tree\"}");
+    run_case(&test_case);
+
+    char *manifest = project_text(&test_case, "daukle.toml");
+    int names_scoped = manifest != NULL && strstr(manifest, "[toolchains.stub-_40acme-web]") != NULL;
+    int names_plain = manifest != NULL && strstr(manifest, "[toolchains.stub-acme-web]") != NULL;
+    int names_upper = manifest != NULL && strstr(manifest, "[toolchains.stub-_55pper-web]") != NULL;
+    int keeps_dir = manifest != NULL && strstr(manifest, "dir = \"@acme/web\"") != NULL;
+    free(manifest);
+    int status = test_case.status;
+    fr_migrate_outcome outcome = test_case.outcome;
+    close_case(&test_case);
+
+    ASSERT_EQm(last_message, FR_OK, status);
+    ASSERT_EQm(last_message, FR_MIGRATE_DONE, outcome);
+    ASSERT(names_scoped);
+    ASSERT(names_plain);
+    ASSERT(names_upper);
+    ASSERT(keeps_dir);
+    PASS();
+}
+
 TEST a_collapsed_detection_stays_the_outer_ones_without_instances(void) {
     migrate_case test_case;
     open_instances_case(&test_case, "collapsed", "");
@@ -1105,6 +1156,7 @@ int main(int argc, char **argv) {
     GREATEST_MAIN_BEGIN();
     RUN_TEST(a_handed_back_instance_migrates_as_its_own);
     RUN_TEST(an_instance_outside_the_asking_directory_is_a_malformed_result);
+    RUN_TEST(a_directory_a_task_name_refuses_is_escaped_and_stays_its_own);
     RUN_TEST(a_collapsed_detection_stays_the_outer_ones_without_instances);
     RUN_TEST(an_instance_inside_the_derived_tree_is_a_malformed_result);
     RUN_TEST(an_instance_that_climbs_out_is_a_malformed_result);
