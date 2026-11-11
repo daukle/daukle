@@ -312,6 +312,7 @@ static int run_pipeline(fr_migrate_state *state, fr_migrate_outcome *out_outcome
     if (fr_migrate_session_a(state, err) != FR_OK) return FR_ERR;
     if (fr_migrate_collect_foreign(state, err) != FR_OK) return FR_ERR;
     if (fr_migrate_session_b(state, err) != FR_OK) return FR_ERR;
+    fr_migrate_notes_print(state, stderr);
     if (state->blockers.count == 0 && fr_migrate_check_owned(state, err) != FR_OK) return FR_ERR;
     if (state->blockers.count > 0) {
         fr_blockers_print(&state->blockers, stderr);
