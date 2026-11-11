@@ -335,6 +335,21 @@ static int check_proof(const cJSON *result, const char *who, fr_blockers *blocke
     return FR_OK;
 }
 
+/* Notes are what a migration reports without blocking: a choice it froze, a part it did not
+   carry. Each is a sentence, so anything but a string is a mistake in the migrator. */
+static int check_notes(const cJSON *result, const char *who, fr_error *err) {
+    const cJSON *notes = member(result, "notes");
+    if (notes == NULL) return FR_OK;
+    if (!fr_json_is_array_or_empty_table(notes)) {
+        return malformed(err, who, "notes", "must be a list of strings");
+    }
+    const cJSON *note = NULL;
+    cJSON_ArrayForEach(note, notes) {
+        if (!is_string(note)) return malformed(err, who, "notes", "must be a list of strings");
+    }
+    return FR_OK;
+}
+
 int fr_migrate_check_run_result(const cJSON *result, const char *label, fr_blockers *blockers,
                                 fr_error *err) {
     char who[256];
@@ -346,6 +361,7 @@ int fr_migrate_check_run_result(const cJSON *result, const char *label, fr_block
     if (check_owned(result, who, err) != FR_OK) return FR_ERR;
     if (check_instances(result, who, err) != FR_OK) return FR_ERR;
     if (check_files(result, who, err) != FR_OK) return FR_ERR;
+    if (check_notes(result, who, err) != FR_OK) return FR_ERR;
     return check_proof(result, who, blockers, err);
 }
 

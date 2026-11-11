@@ -619,6 +619,49 @@ TEST a_report_records_a_migration(void) {
     PASS();
 }
 
+TEST a_note_is_printed_whatever_the_outcome(void) {
+    migrate_case test_case;
+    open_case(&test_case, "notes-printed", "hello");
+    serve_stub_catalog(&test_case, FIXTURES "/plugin-notes.lua", "faketool.conf");
+    run_case(&test_case);
+    int status = test_case.status;
+    fr_migrate_outcome outcome = test_case.outcome;
+    int frozen = printed_holds(&test_case, "daukle migrate: migrator stub: frozen WITH_TOOLS=ON");
+    int install = printed_holds(&test_case, "not migrated: install rules in CMakeLists.txt");
+    close_case(&test_case);
+
+    ASSERT_EQm(last_message, FR_OK, status);
+    ASSERT_EQ(FR_MIGRATE_DONE, outcome);
+    ASSERTm(last_message, frozen);
+    ASSERT(install);
+    PASS();
+}
+
+TEST a_report_records_every_note(void) {
+    reported_run run = run_reported("report-notes", "hello", FIXTURES "/plugin-notes.lua", "faketool.conf");
+    ASSERT_EQ(FR_OK, run.status);
+    ASSERT(run.report != NULL);
+    const cJSON *note = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(run.report, "notes"), 0);
+    ASSERT_STR_EQ("migrator stub", report_string(note, "source"));
+    ASSERT_STR_EQ("frozen WITH_TOOLS=ON", report_string(note, "note"));
+    cJSON_Delete(run.report);
+    PASS();
+}
+
+TEST a_note_that_is_not_a_string_is_malformed(void) {
+    migrate_case test_case;
+    open_case(&test_case, "notes-malformed", "hello");
+    serve_stub_catalog(&test_case, FIXTURES "/plugin-notes-malformed.lua", "faketool.conf");
+    run_case(&test_case);
+    int status = test_case.status;
+    int named = error_holds(&test_case, "migrator stub returned a malformed result: notes must be a list of strings");
+    close_case(&test_case);
+
+    ASSERT_EQ(FR_ERR, status);
+    ASSERTm(last_message, named);
+    PASS();
+}
+
 TEST a_report_records_every_blocker(void) {
     reported_run run = run_reported("report-blocked", "hello", FIXTURES "/plugin-blocker.lua",
                                     "faketool.conf");
@@ -1185,6 +1228,9 @@ int main(int argc, char **argv) {
     RUN_TEST(done_with_nothing_to_finish_says_so);
     RUN_TEST(a_chunk_that_gates_on_the_manifest_name_loads_during_migrate);
     RUN_TEST(a_report_records_a_migration);
+    RUN_TEST(a_note_is_printed_whatever_the_outcome);
+    RUN_TEST(a_report_records_every_note);
+    RUN_TEST(a_note_that_is_not_a_string_is_malformed);
     RUN_TEST(a_report_records_every_blocker);
     RUN_TEST(a_report_records_what_the_proof_found_different);
     RUN_TEST(a_report_records_a_failed_proof_task);

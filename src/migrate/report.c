@@ -118,6 +118,41 @@ static cJSON *proof_json(const fr_migrate_state *state) {
     return proof;
 }
 
+static const cJSON *notes_of(const fr_migrate_kept *kept) {
+    return cJSON_GetObjectItemCaseSensitive(kept->result, "notes");
+}
+
+void fr_migrate_notes_print(const fr_migrate_state *state, FILE *out) {
+    for (size_t index = 0; index < state->kept_count; index++) {
+        const cJSON *note = NULL;
+        cJSON_ArrayForEach(note, notes_of(&state->kept[index])) {
+            if (cJSON_IsString(note)) {
+                fprintf(out, "daukle migrate: migrator %s: %s\n", state->kept[index].label,
+                        note->valuestring);
+            }
+        }
+    }
+}
+
+static cJSON *notes_json(const fr_migrate_state *state) {
+    cJSON *array = cJSON_CreateArray();
+    if (array == NULL) return NULL;
+    char source[256];
+    for (size_t index = 0; index < state->kept_count; index++) {
+        snprintf(source, sizeof source, "migrator %s", state->kept[index].label);
+        const cJSON *note = NULL;
+        cJSON_ArrayForEach(note, notes_of(&state->kept[index])) {
+            if (!cJSON_IsString(note)) continue;
+            cJSON *entry = cJSON_CreateObject();
+            if (entry == NULL) continue;
+            cJSON_AddStringToObject(entry, "source", source);
+            cJSON_AddStringToObject(entry, "note", note->valuestring);
+            cJSON_AddItemToArray(array, entry);
+        }
+    }
+    return array;
+}
+
 int fr_migrate_report_write(const char *path, const fr_migrate_state *state, int status,
                             fr_migrate_outcome outcome, const fr_error *run_err, fr_error *err) {
     cJSON *report = cJSON_CreateObject();
@@ -127,6 +162,7 @@ int fr_migrate_report_write(const char *path, const fr_migrate_state *state, int
     if (status != FR_OK) cJSON_AddStringToObject(report, "error", run_err->message);
     cJSON_AddItemToObject(report, "detected", detected_json(state));
     cJSON_AddItemToObject(report, "blockers", blockers_json(&state->blockers));
+    cJSON_AddItemToObject(report, "notes", notes_json(state));
     cJSON_AddItemToObject(report, "proof", proof_json(state));
     char *text = cJSON_PrintUnformatted(report);
     cJSON_Delete(report);
